@@ -18,6 +18,7 @@ import { connectDB, disconnectDB } from './config/db.js';
 import { configureCloudinary } from './config/cloudinary.js';
 import Role from './models/Role.js';
 import { seedAdminAccount } from './seeders/adminSeeder.js';
+import './models/index.js'; // Register the complete ERD model set before startup.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
