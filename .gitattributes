@@ -1,0 +1,26 @@
+# Keep source and configuration files consistent across Windows, WSL, and Linux.
+* text=auto
+
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.drawio text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.env text eol=lf
+*.lock text eol=lf
+
+# Windows-only scripts keep their native line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Do not normalize binary assets as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
