@@ -35,11 +35,8 @@ export const BusinessRules = Object.freeze({
   GBR_02: {
     id: 'GBR-02',
     title: 'Role-Based Access Control (RBAC)',
-    description:
-      'Every protected route declares one or more required permissions. ' +
-      'The roleMiddleware resolves the requester's role → permission set and denies access ' +
-      'if the required permission is absent (403 Forbidden).',
-    layer: 'Middleware – roleMiddleware.js (requirePermission)',
+    description: 'Every protected route declares one or more required permissions. The roleMiddleware resolves the requester's role -> permission set and denies access if the required permission is absent (403 Forbidden).',
+    layer: 'Middleware - roleMiddleware.js (requirePermission)',
     messages: ['MSG04', 'MSG05'],
   },
 

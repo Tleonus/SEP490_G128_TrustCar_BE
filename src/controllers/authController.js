@@ -162,4 +162,5 @@ export default {
   changePassword,
   forgotPassword,
   resetPassword,
+  adminOnly,
 };

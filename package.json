@@ -8,7 +8,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "dev": "nodemon --experimental-vm-modules src/server.js",
+    "dev": "npx nodemon --experimental-vm-modules src/server.js",
     "start": "node src/server.js",
     "test": "node --experimental-vm-modules node_modules/.bin/jest --runInBand --detectOpenHandles --forceExit",
     "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
@@ -16,7 +16,6 @@
     "lint": "eslint src/ --ext .js"
   },
   "dependencies": {
-
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.5.0",
     "cors": "^2.8.5",
@@ -39,7 +38,9 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "extensionsToTreatAsEsm": [".js"],
+    "extensionsToTreatAsEsm": [
+      ".js"
+    ],
     "transform": {},
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1"
