@@ -1,0 +1,14 @@
+---
+description: Read shared project documentation before every task and request database approval
+alwaysApply: true
+---
+
+# Hướng dẫn Cursor
+
+Đường dẫn tính từ gốc repository. Trước khi làm tác vụ, bắt buộc đọc `AGENTS.md`, `README.md`, `docs/README.md`, rồi đọc các docs chung và frontend/backend được chỉ định. Nguồn chuẩn là `docs/`, không chỉ file rule này.
+
+Stack: Next.js/React frontend; Node.js/Express backend; Mongoose/MongoDB.
+
+Nếu sửa bất kỳ thứ gì liên quan database: đọc `docs/database-rules.md`, giải thích ngắn gọn nhưng đủ chi tiết và xin phép trước; chỉ sửa/chạy sau khi người dùng đồng ý rõ ràng. Bao gồm query, schema, migration, seed, test và config DB.
+
+Không đọc được docs thì báo và yêu cầu nội dung; không đoán. Nêu tài liệu đã đọc, phạm vi thay đổi và kết quả kiểm tra thực tế.

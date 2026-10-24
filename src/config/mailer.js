@@ -12,19 +12,7 @@
  *   await sendMail({ to, subject, html, text });
  */
 
-// Optional MailerSend import – if the package is installed we use it, otherwise we fall back to SMTP.
-let MailerSend, EmailParams, Sender, Recipient;
-try {
-  // Dynamic import works in ESM; if the package is missing this will throw and we continue without it.
-  const mailerModule = await import('@mailersend/nodejs');
-  MailerSend = mailerModule.MailerSend;
-  EmailParams = mailerModule.EmailParams;
-  Sender = mailerModule.Sender;
-  Recipient = mailerModule.Recipient;
-} catch (e) {
-  // No MailerSend package – will use SMTP fallback only.
-  console.warn('⚠️  MailerSend package not found – SMTP fallback will be used.');
-}
+import { MailerSend, EmailParams, Sender, Recipient } from '@mailersend/nodejs';
 import nodemailer from 'nodemailer';
 
 // ── MailerSend Primary Transport ──────────────────────────────────────────────
