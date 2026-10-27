@@ -4,15 +4,12 @@
  * Contains ZERO business logic; delegates everything to publicCarService.js.
  *
  * Routes handled (FE-01, FE-02, FE-03):
- * - GET /api/v1/public/cars             → listAvailableCars (with filters)
- * - GET /api/v1/public/cars/filters     → getFilterOptions (dropdown metadata)
- * - GET /api/v1/public/cars/featured    → getFeaturedCars (homepage showcase)
- * - GET /api/v1/public/cars/:id         → getCarDetail
+ * - GET /api/v1/public/cars           → listAvailableCars (with filters)
+ * - GET /api/v1/public/cars/filters   → getFilterOptions (dropdown metadata)
+ * - GET /api/v1/public/cars/:id       → getCarDetail
  */
 
 import * as publicCarService from '../services/publicCarService.js';
-import Car from '../models/Car.js';
-import { CarStatus } from '../constants/appConstants.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 
 /**
@@ -54,28 +51,6 @@ export const getFilterOptions = async (_req, res, next) => {
 };
 
 /**
- * @route   GET /api/v1/public/cars/featured?limit=8
- * @access  Public (no auth required)
- * @desc    Returns the latest available/CPO-approved cars for homepage showcase.
- *          Ref: FE-01 (featured section)
- */
-export const getFeaturedCars = async (req, res, next) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 8, 20);
-    const cars = await Car.find({
-      status: { $in: [CarStatus.AVAILABLE, CarStatus.APPROVED_CPO] },
-      isActive: true,
-    })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
-    return sendSuccess(res, 200, 'Featured vehicles retrieved successfully.', cars);
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
  * @route   GET /api/v1/public/cars/:id
  * @access  Public
  * @param   id - MongoDB ObjectId OR vehicleCode (TC-YYYY-NNNN)
@@ -91,4 +66,4 @@ export const getCarDetail = async (req, res, next) => {
   }
 };
 
-export default { listAvailableCars, getFilterOptions, getFeaturedCars, getCarDetail };
+export default { listAvailableCars, getFilterOptions, getCarDetail };

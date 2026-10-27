@@ -126,31 +126,6 @@ router.get(
   carController.listCars
 );
 
-// Featured cars – public-like endpoint (no extra params)
-router.get(
-  '/featured',
-  // No permission needed for featured list (could be public), but keep token guard from router.use(verifyToken)
-  // If you want to allow unauthenticated, move this route to publicCarRoutes.
-  async (req, res, next) => {
-    try {
-      const limit = parseInt(req.query.limit, 10) || 8;
-      // Import Car and CarStatus inside handler to avoid circular deps
-      const Car = (await import('../models/Car.js')).default;
-      const { CarStatus } = await import('../constants/appConstants.js');
-      const cars = await Car.find({
-        status: { $in: [CarStatus.AVAILABLE, CarStatus.APPROVED_CPO] },
-        isActive: true,
-      })
-        .sort({ createdAt: -1 })
-        .limit(limit)
-        .lean();
-      return res.json({ success: true, data: cars });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
 /**
  * @route   GET /api/v1/manage/cars/:id
  * @access  car:read

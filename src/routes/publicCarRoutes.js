@@ -75,15 +75,6 @@ const listCarsQuerySchema = Joi.object({
 router.get('/filters', publicCarController.getFilterOptions);
 
 /**
- * @route   GET /api/v1/public/cars/featured?limit=8
- * @access  Public
- * @desc    Returns the newest AVAILABLE/CPO-approved cars for the homepage.
- *          Must be before /:id so Express doesn't capture "featured" as an ID.
- *          Ref: FE-01 (homepage featured section)
- */
-router.get('/featured', publicCarController.getFeaturedCars);
-
-/**
  * @route   GET /api/v1/public/cars
  * @access  Public
  * @desc    Paginated list of available vehicles with optional filters.
