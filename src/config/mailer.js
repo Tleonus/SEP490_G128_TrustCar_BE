@@ -12,7 +12,7 @@
  *   await sendMail({ to, subject, html, text });
  */
 
-import { MailerSend, EmailParams, Sender, Recipient } from '@mailersend/nodejs';
+import { MailerSend, EmailParams, Sender, Recipient } from 'mailersend';
 import nodemailer from 'nodemailer';
 
 // ── MailerSend Primary Transport ──────────────────────────────────────────────
