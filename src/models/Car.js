@@ -249,6 +249,12 @@ const CarSchema = new mongoose.Schema(
       enum: ['FRESH', 'SLOW', 'STAGNANT'],
       default: 'FRESH',
     },
+    // Chủ đứng tên đăng ký: công ty (CTY) hay cá nhân (CN)
+    ownerType: {
+      type: String,
+      enum: ['COMPANY', 'INDIVIDUAL'],
+      default: 'INDIVIDUAL',
+    },
 
     priceHistory: {
       type:    [PriceHistorySchema],
@@ -352,15 +358,12 @@ const CarSchema = new mongoose.Schema(
 );
 
 // ── Indexes ────────────────────────────────────────────────────────────────
-CarSchema.index({ vin: 1 });
 CarSchema.index({ licensePlate: 1 });
-CarSchema.index({ status: 1 });
 CarSchema.index({ make: 1, model: 1 });
 CarSchema.index({ year: 1 });
 CarSchema.index({ price: 1 });
 CarSchema.index({ mileage: 1 });
 CarSchema.index({ status: 1, isActive: 1 });
-CarSchema.index({ vehicleCode: 1 });
 CarSchema.index({ make: 1, status: 1, price: 1 }); // Public filter compound index
 
 // ── Virtual: primaryImage ─────────────────────────────────────────────────

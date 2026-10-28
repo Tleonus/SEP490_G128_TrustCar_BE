@@ -10,9 +10,9 @@
   "scripts": {
     "dev": "npx nodemon --experimental-vm-modules src/server.js",
     "start": "node src/server.js",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest --runInBand --detectOpenHandles --forceExit",
-    "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --detectOpenHandles --forceExit",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "lint": "eslint src/ --ext .js"
   },
   "dependencies": {
