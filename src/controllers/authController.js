@@ -58,24 +58,15 @@ export const refreshToken = async (req, res, next) => {
 /**
  * @route   POST /api/v1/auth/logout
  * @access  Protected (verifyToken)
- * @desc    Client-side token invalidation. Server acknowledges and logs the event.
- *          True stateless JWT logout is handled client-side by discarding the token.
+ * @desc    Revokes every access and refresh token of the user on all devices.
  */
 export const logout = async (req, res, next) => {
   try {
-    // Log the logout event for audit (GBR-24)
-    const ActivityLog = (await import('../models/ActivityLog.js')).default;
-    const { ActivityEventType } = await import('../constants/appConstants.js');
-
-    await ActivityLog.log({
-      eventType:        ActivityEventType.USER_LOGOUT,
-      performedBy:      req.userId,
-      performedByEmail: req.user?.email,
-      targetModel:      'User',
-      targetId:         req.userId,
-      summary:          'User logged out',
-      ipAddress:        req.ip,
-      userAgent:        req.headers['user-agent'],
+    await authService.logout({
+      userId:    req.userId,
+      email:     req.user?.email,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
     });
 
     return sendSuccess(res, 200, MSG.MSG09.message);

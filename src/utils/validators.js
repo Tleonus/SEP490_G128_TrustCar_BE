@@ -122,15 +122,16 @@ export const normalizePhone = (phone) => {
 
 // ── Password Complexity ────────────────────────────────────────────────────
 /**
- * Minimum 8 chars, at least:
+ * 8–128 chars, at least:
  *   - 1 uppercase (A-Z)
  *   - 1 lowercase (a-z)
  *   - 1 digit (0-9)
- *   - 1 special character (!@#$%^&*-_=+)
+ * Allowed characters: Latin letters, digits and the special characters !@#$%^&*-_=+
+ * (special characters are optional; no spaces or accented letters).
  *
  * Ref: GBR-22
  */
-export const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_=+])[A-Za-z\d!@#$%^&*\-_=+]{8,}$/;
+export const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[A-Za-z\d!@#$%^&*\-_=+]{8,128}$/;
 
 /**
  * @param {string} password
@@ -194,7 +195,8 @@ export const joiPassword = () =>
     .pattern(PASSWORD_REGEX)
     .messages({
       'string.min':          'Password must be at least 8 characters.',
-      'string.pattern.base': 'Password must include uppercase, lowercase, digit, and special character.',
+      'string.max':          'Password cannot exceed 128 characters.',
+      'string.pattern.base': 'Password must include uppercase, lowercase and digit, and may only contain letters, digits and !@#$%^&*-_=+.',
     });
 
 /** Vehicle production year */
