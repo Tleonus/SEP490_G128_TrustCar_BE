@@ -5,14 +5,16 @@
  * Enforces:
  * - GBR-01: Valid, unexpired JWT Bearer token required on all protected routes.
  * - GBR-21: Active session enforcement (deactivated accounts rejected even with valid JWT).
+ * - Only access tokens are accepted, and only while their `tv` claim matches the
+ *   user's tokenVersion (logout / password change / reset revoke older tokens).
  *
  * Exports:
  * - verifyToken: Middleware that validates JWT and attaches req.user.
  * - optionalAuth: Same as verifyToken but does not fail if no token is present.
  */
 
-import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import { TokenType, verifyTokenOfType, isTokenCurrent } from '../utils/authTokens.js';
 import { AppError } from '../utils/apiResponse.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
 
@@ -45,10 +47,10 @@ export const verifyToken = async (req, res, next) => {
       return next(new AppError(MSG.MSG01.message, MSG.MSG01.httpStatus, MSG.MSG01.code));
     }
 
-    // Verify signature and expiry
+    // Verify signature, expiry, issuer/audience and that it is an access token
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
+      decoded = verifyTokenOfType(token, TokenType.ACCESS);
     } catch (jwtError) {
       if (jwtError.name === 'TokenExpiredError') {
         return next(new AppError(MSG.MSG02.message, MSG.MSG02.httpStatus, MSG.MSG02.code));
@@ -57,11 +59,14 @@ export const verifyToken = async (req, res, next) => {
     }
 
     // GBR-21: Secondary DB check – account must still be active
-    const user = await User.findById(decoded.userId).populate('role').lean();
+    const user = await User.findById(decoded.userId).select('+tokenVersion').populate('role').lean();
 
-    if (!user) {
+    // Unknown user, or token issued before the latest logout / password change
+    if (!user || !isTokenCurrent(decoded, user)) {
       return next(new AppError(MSG.MSG03.message, MSG.MSG03.httpStatus, MSG.MSG03.code));
     }
+
+    delete user.tokenVersion; // keep revocation data out of req.user
 
     if (!user.isActive) {
       return next(new AppError(MSG.MSG06.message, MSG.MSG06.httpStatus, MSG.MSG06.code));
@@ -91,13 +96,14 @@ export const optionalAuth = async (req, res, next) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
+      decoded = verifyTokenOfType(token, TokenType.ACCESS);
     } catch {
-      return next(); // Invalid token – continue anonymously
+      return next(); // Invalid / wrong-type token – continue anonymously
     }
 
-    const user = await User.findById(decoded.userId).lean();
-    if (user && user.isActive) {
+    const user = await User.findById(decoded.userId).select('+tokenVersion').lean();
+    if (user && user.isActive && isTokenCurrent(decoded, user)) {
+      delete user.tokenVersion;
       req.user     = user;
       req.userId   = user._id.toString();
       req.userRole = user.roleName;

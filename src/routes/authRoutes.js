@@ -11,6 +11,7 @@ import { Router } from 'express';
 import Joi from 'joi';
 import * as authController from '../controllers/authController.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
+import { authorizeRoles } from '../middlewares/roleMiddleware.js';
 import { validate } from '../middlewares/validateMiddleware.js';
 import { joiPassword } from '../utils/validators.js';
 

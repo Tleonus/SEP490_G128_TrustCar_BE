@@ -38,3 +38,7 @@ desktop.ini
 
 # ── Temp uploads ───────────────────────────────────────────────────────
 uploads/temp/
+
+# ── Local reference files (not for git) ───────────────────────────────
+listxe.pdf
+trustcar_erd.drawio.png
