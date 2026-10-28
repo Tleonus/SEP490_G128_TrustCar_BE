@@ -1,428 +1,278 @@
 /**
  * @file auth.test.js
- * @description Integration tests for Authentication endpoints.
+ * @description Integration tests for /api/v1/auth running the REAL app code
+ * (routes, Joi validation, controllers, services, middlewares) on top of the
+ * in-memory persistence harness in tests/helpers/fakeAuthModels.js.
  *
- * Tests:
- * - POST /api/v1/auth/login        → Valid login, invalid credentials, validation errors
- * - POST /api/v1/auth/refresh       → Token refresh
- * - GET  /api/v1/auth/me           → Authenticated profile retrieval
- * - POST /api/v1/auth/logout       → Session logout
- * - PATCH /api/v1/auth/change-password → Password change flow
- * - POST /api/v1/auth/forgot-password  → Password reset initiation
- * - POST /api/v1/auth/reset-password   → Password reset execution
- *
- * Uses a self-contained Express app with mocked services to avoid real DB calls.
+ * No MongoDB connection is opened.
  */
 
-import { jest } from '@jest/globals';
 import { default as request } from 'supertest';
-import express from 'express';
-import jwt from 'jsonwebtoken';
+import { setupAuthHarness } from './helpers/fakeAuthModels.js';
 
-// ── Setup ──────────────────────────────────────────────────────────────────
-const JWT_SECRET = 'test-secret-key-for-jest';
-process.env.JWT_SECRET = JWT_SECRET;
-process.env.NODE_ENV = 'test';
+const h = await setupAuthHarness();
 
-// Mock user data
-const mockAdmin = {
-  _id:      '507f1f77bcf86cd799439011',
-  fullName: 'Test Admin',
-  email:    'admin@trustcar.vn',
-  roleName: 'ADMIN',
-  isActive: true,
-  role:     { _id: '507f1f77bcf86cd799439001', name: 'ADMIN' },
-};
+/** POST/GET helpers that give every request its own client IP (see harness). */
+const post = (url) => request(h.app).post(url).set('X-Forwarded-For', h.nextIp());
 
-// Generate valid tokens for testing
-const validAccessToken = jwt.sign(
-  { userId: mockAdmin._id, email: mockAdmin.email, roleName: mockAdmin.roleName },
-  JWT_SECRET,
-  { expiresIn: '15m' }
-);
+beforeEach(() => h.reset());
 
-const validRefreshToken = jwt.sign(
-  { userId: mockAdmin._id },
-  JWT_SECRET,
-  { expiresIn: '7d' }
-);
+// ════════════════════════════════════════════════════════════════════════════
+// HARNESS SELF-CHECKS — the fake persistence must behave like MongoDB for the
+// operations the auth code relies on, otherwise green tests mean nothing.
+// ════════════════════════════════════════════════════════════════════════════
+describe('Test harness – in-memory persistence', () => {
+  test('select:false fields are hidden unless explicitly selected', async () => {
+    const { id } = await h.createUser();
 
-// ── Build test app ────────────────────────────────────────────────────────
-const testApp = express();
-testApp.use(express.json());
+    const plain = await h.User.findById(id);
+    const withHidden = await h.User.findById(id).select('+password +tokenVersion');
 
-// Simplified auth middleware for testing
-const testVerifyToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ success: false, message: 'Access denied. No token provided.', code: 'NO_TOKEN' });
-  }
-  try {
-    const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
-    req.user   = mockAdmin;
-    req.userId = decoded.userId;
-    next();
-  } catch {
-    return res.status(401).json({ success: false, message: 'Invalid or expired token.', code: 'TOKEN_INVALID' });
-  }
-};
-
-// ── Auth routes ────────────────────────────────────────────────────────────
-
-// POST /api/v1/auth/login
-testApp.post('/api/v1/auth/login', (req, res) => {
-  const { email, password } = req.body;
-
-  // Validation
-  if (!email || !password) {
-    return res.status(422).json({
-      success: false,
-      message: 'Validation failed.',
-      code:    'VALIDATION_ERROR',
-      errors:  [
-        ...(!email    ? [{ field: 'email',    message: 'Email is required.' }]    : []),
-        ...(!password ? [{ field: 'password', message: 'Password is required.' }] : []),
-      ],
-    });
-  }
-
-  // Invalid credentials
-  if (email !== mockAdmin.email || password !== 'Admin@2024!') {
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid email or password.',
-      code:    'INVALID_CREDENTIALS',
-    });
-  }
-
-  // Success
-  return res.status(200).json({
-    success: true,
-    message: 'Login successful.',
-    data: {
-      user:         { _id: mockAdmin._id, fullName: mockAdmin.fullName, email: mockAdmin.email, roleName: mockAdmin.roleName },
-      accessToken:  validAccessToken,
-      refreshToken: validRefreshToken,
-    },
+    expect(plain.password).toBeUndefined();
+    expect(plain.tokenVersion).toBeUndefined();
+    expect(withHidden.password).toMatch(/^\$2[aby]\$/); // stored as bcrypt hash
+    expect(withHidden.tokenVersion).toBe(0);
   });
-});
 
-// POST /api/v1/auth/refresh
-testApp.post('/api/v1/auth/refresh', (req, res) => {
-  const { refreshToken: token } = req.body;
-  if (!token) {
-    return res.status(422).json({ success: false, message: 'Refresh token is required.', code: 'VALIDATION_ERROR' });
-  }
+  test('updateOne $inc increments a counter', async () => {
+    const { id } = await h.createUser();
+    await h.User.updateOne({ _id: id }, { $inc: { tokenVersion: 1 } });
+    await h.User.updateOne({ _id: id }, { $inc: { tokenVersion: 1 } });
+    expect(h.stored(id).tokenVersion).toBe(2);
+  });
 
-  try {
-    jwt.verify(token, JWT_SECRET);
-    const newAccessToken = jwt.sign(
-      { userId: mockAdmin._id, email: mockAdmin.email, roleName: mockAdmin.roleName },
-      JWT_SECRET,
-      { expiresIn: '15m' }
+  test('findOneAndUpdate matches dot paths and $gt, applies $set/$unset/$inc once', async () => {
+    const { id } = await h.createUser();
+    h.stored(id).passwordResetToken = { token: 'abc', expiresAt: new Date(Date.now() + 60_000) };
+
+    const filter = {
+      'passwordResetToken.token':     'abc',
+      'passwordResetToken.expiresAt': { $gt: new Date() },
+      isActive: true,
+    };
+    const update = { $set: { fullName: 'Changed' }, $unset: { passwordResetToken: 1 }, $inc: { tokenVersion: 1 } };
+
+    const first  = await h.User.findOneAndUpdate(filter, update, { new: true });
+    const second = await h.User.findOneAndUpdate(filter, update, { new: true });
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    expect(h.stored(id).passwordResetToken).toBeUndefined();
+    expect(h.stored(id).tokenVersion).toBe(1);
+    expect(h.stored(id).fullName).toBe('Changed');
+  });
+
+  test('findOneAndUpdate does not match an expired date', async () => {
+    const { id } = await h.createUser();
+    h.stored(id).passwordResetToken = { token: 'old', expiresAt: new Date(Date.now() - 1) };
+    const res = await h.User.findOneAndUpdate(
+      { 'passwordResetToken.token': 'old', 'passwordResetToken.expiresAt': { $gt: new Date() } },
+      { $unset: { passwordResetToken: 1 } },
+      { new: true }
     );
-    return res.status(200).json({ success: true, message: 'Access token refreshed.', data: { accessToken: newAccessToken } });
-  } catch {
-    return res.status(401).json({ success: false, message: 'Invalid refresh token.', code: 'REFRESH_TOKEN_INVALID' });
-  }
-});
+    expect(res).toBeNull();
+  });
 
-// GET /api/v1/auth/me
-testApp.get('/api/v1/auth/me', testVerifyToken, (req, res) => {
-  return res.status(200).json({
-    success: true,
-    message: 'Profile retrieved successfully.',
-    data:    { _id: mockAdmin._id, fullName: mockAdmin.fullName, email: mockAdmin.email, roleName: mockAdmin.roleName },
+  test('save() hashes a modified password and persists only modified paths', async () => {
+    const { id } = await h.createUser({ password: 'TrustCar2026' });
+    const doc = await h.User.findById(id).select('+password');
+    doc.password = 'NewPass2026';
+    await doc.save();
+
+    const reloaded = await h.User.findById(id).select('+password');
+    expect(await reloaded.comparePassword('NewPass2026')).toBe(true);
+    expect(h.stored(id).tokenVersion).toBe(0); // untouched hidden field kept
   });
 });
 
-// POST /api/v1/auth/logout
-testApp.post('/api/v1/auth/logout', testVerifyToken, (req, res) => {
-  return res.status(200).json({ success: true, message: 'Logged out successfully.' });
-});
+// ════════════════════════════════════════════════════════════════════════════
+// SMOKE — real login endpoint end-to-end through the harness
+// ════════════════════════════════════════════════════════════════════════════
+describe('POST /api/v1/auth/login (smoke)', () => {
+  test('returns tokens and a user without secrets for valid credentials', async () => {
+    const { email, password } = await h.createUser();
 
-// PATCH /api/v1/auth/change-password
-testApp.patch('/api/v1/auth/change-password', testVerifyToken, (req, res) => {
-  const { currentPassword, newPassword, confirmPassword } = req.body;
+    const res = await post('/api/v1/auth/login').send({ email, password });
 
-  if (!currentPassword || !newPassword || !confirmPassword) {
-    return res.status(422).json({ success: false, message: 'Validation failed.', code: 'VALIDATION_ERROR' });
-  }
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.accessToken).toEqual(expect.any(String));
+    expect(res.body.data.refreshToken).toEqual(expect.any(String));
+    expect(res.body.data.user.email).toBe(email);
+    expect(res.body.data.user.password).toBeUndefined();
+    expect(res.body.data.user.tokenVersion).toBeUndefined();
+  });
 
-  if (newPassword !== confirmPassword) {
-    return res.status(422).json({ success: false, message: 'Passwords do not match.', code: 'VALIDATION_ERROR' });
-  }
-
-  if (currentPassword !== 'Admin@2024!') {
-    return res.status(401).json({ success: false, message: 'Current password is incorrect.', code: 'CURRENT_PASSWORD_WRONG' });
-  }
-
-  return res.status(200).json({ success: true, message: 'Password changed successfully. Please log in again.' });
-});
-
-// POST /api/v1/auth/forgot-password
-testApp.post('/api/v1/auth/forgot-password', (req, res) => {
-  const { email } = req.body;
-  if (!email) {
-    return res.status(422).json({ success: false, message: 'Validation failed.', code: 'VALIDATION_ERROR' });
-  }
-  // Always succeed (security: don't reveal email existence)
-  return res.status(200).json({
-    success: true,
-    message: 'If this email is registered, a password reset link has been sent.',
+  test('rejects a body without password via Joi validation (422)', async () => {
+    const res = await post('/api/v1/auth/login').send({ email: 'a@trustcar.vn' });
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
   });
 });
 
-// POST /api/v1/auth/reset-password
-testApp.post('/api/v1/auth/reset-password', (req, res) => {
-  const { token, newPassword, confirmPassword } = req.body;
-  if (!token || !newPassword || !confirmPassword) {
-    return res.status(422).json({ success: false, message: 'Validation failed.', code: 'VALIDATION_ERROR' });
-  }
-  if (newPassword !== confirmPassword) {
-    return res.status(422).json({ success: false, message: 'Passwords do not match.', code: 'VALIDATION_ERROR' });
-  }
-  return res.status(200).json({ success: true, message: 'Password has been reset successfully. You may now log in.' });
+// ════════════════════════════════════════════════════════════════════════════
+// LOGIN — REQ-001…005, REQ-029, REQ-030
+// ════════════════════════════════════════════════════════════════════════════
+describe('POST /api/v1/auth/login', () => {
+  const login = (body) => post('/api/v1/auth/login').send(body);
+
+  test('AC-01: issued access token works on a protected route', async () => {
+    const { email, password } = await h.createUser();
+    const res = await login({ email, password });
+
+    const me = await request(h.app).get('/api/v1/auth/me')
+      .set('X-Forwarded-For', h.nextIp())
+      .set('Authorization', `Bearer ${res.body.data.accessToken}`);
+
+    expect(me.status).toBe(200);
+    expect(me.body.data.email).toBe(email);
+  });
+
+  test('AC-02: 10 wrong passwords never lock the account; the correct one still works', async () => {
+    const { email, password } = await h.createUser();
+
+    for (let i = 0; i < 10; i += 1) {
+      const bad = await login({ email, password: 'WrongPass1' });
+      expect(bad.status).toBe(401);
+      expect(bad.body.code).toBe('INVALID_CREDENTIALS');
+    }
+
+    const ok = await login({ email, password });
+    expect(ok.status).toBe(200);
+  });
+
+  test('AC-03: unknown email returns the same error as a wrong password', async () => {
+    const { email } = await h.createUser();
+
+    const unknown = await login({ email: 'nobody@trustcar.vn', password: 'TrustCar2026' });
+    const wrong   = await login({ email, password: 'WrongPass1' });
+
+    expect(unknown.status).toBe(401);
+    expect(unknown.body).toEqual(wrong.body);
+  });
+
+  test('AC-04: deactivated account – wrong password → INVALID_CREDENTIALS, right password → ACCOUNT_INACTIVE', async () => {
+    const { email, password } = await h.createUser({ isActive: false });
+
+    const wrong = await login({ email, password: 'WrongPass1' });
+    const right = await login({ email, password });
+
+    expect(wrong.status).toBe(401);
+    expect(wrong.body.code).toBe('INVALID_CREDENTIALS');
+    expect(right.status).toBe(401);
+    expect(right.body.code).toBe('ACCOUNT_INACTIVE');
+    expect(right.body.data).toBeUndefined();
+  });
+
+  test('email is matched case-insensitively', async () => {
+    const { password } = await h.createUser({ email: 'mixed@trustcar.vn' });
+    const res = await login({ email: 'MIXED@TrustCar.vn', password });
+    expect(res.status).toBe(200);
+  });
+
+  test('AC-19 (login): success and wrong password are logged; unknown email is not', async () => {
+    const { id, email, password } = await h.createUser();
+
+    await login({ email, password });
+    await login({ email, password: 'WrongPass1' });
+    await login({ email: 'nobody@trustcar.vn', password: 'WrongPass1' });
+
+    expect(h.logs.map((l) => l.eventType)).toEqual(['USER_LOGIN', 'LOGIN_FAILED']);
+    expect(h.logs.every((l) => String(l.targetId) === id)).toBe(true);
+  });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// TEST SUITES
-// ═══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// REFRESH — REQ-007, REQ-008, REQ-009
+// ════════════════════════════════════════════════════════════════════════════
+describe('POST /api/v1/auth/refresh', () => {
+  const loginTokens = async (overrides) => {
+    const u = await h.createUser(overrides);
+    const res = await post('/api/v1/auth/login').send({ email: u.email, password: u.password });
+    return { ...u, ...res.body.data };
+  };
+  const refresh = (refreshToken) => post('/api/v1/auth/refresh').send({ refreshToken });
 
-describe('Authentication Endpoints', () => {
+  test('REQ-008: a valid refresh token yields a working access token', async () => {
+    const { refreshToken } = await loginTokens();
 
-  // ── POST /api/v1/auth/login ────────────────────────────────────────────
-  describe('POST /api/v1/auth/login', () => {
-    it('should login successfully with valid credentials', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/login')
-        .send({ email: 'admin@trustcar.vn', password: 'Admin@2024!' });
+    const res = await refresh(refreshToken);
+    const me = await request(h.app).get('/api/v1/auth/me')
+      .set('X-Forwarded-For', h.nextIp())
+      .set('Authorization', `Bearer ${res.body.data.accessToken}`);
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data).toHaveProperty('accessToken');
-      expect(res.body.data).toHaveProperty('refreshToken');
-      expect(res.body.data.user.email).toBe('admin@trustcar.vn');
-    });
-
-    it('should reject login with wrong password', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/login')
-        .send({ email: 'admin@trustcar.vn', password: 'WrongPass123!' });
-
-      expect(res.status).toBe(401);
-      expect(res.body.success).toBe(false);
-      expect(res.body.code).toBe('INVALID_CREDENTIALS');
-    });
-
-    it('should reject login with missing email', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/login')
-        .send({ password: 'Admin@2024!' });
-
-      expect(res.status).toBe(422);
-      expect(res.body.success).toBe(false);
-      expect(res.body.errors).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ field: 'email' }),
-        ])
-      );
-    });
-
-    it('should reject login with missing password', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/login')
-        .send({ email: 'admin@trustcar.vn' });
-
-      expect(res.status).toBe(422);
-      expect(res.body.success).toBe(false);
-    });
+    expect(res.status).toBe(200);
+    expect(me.status).toBe(200);
   });
 
-  // ── POST /api/v1/auth/refresh ──────────────────────────────────────────
-  describe('POST /api/v1/auth/refresh', () => {
-    it('should refresh access token with valid refresh token', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/refresh')
-        .send({ refreshToken: validRefreshToken });
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data).toHaveProperty('accessToken');
-    });
-
-    it('should reject invalid refresh token', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/refresh')
-        .send({ refreshToken: 'invalid.token.here' });
-
-      expect(res.status).toBe(401);
-      expect(res.body.success).toBe(false);
-    });
-
-    it('should reject missing refresh token', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/refresh')
-        .send({});
-
-      expect(res.status).toBe(422);
-    });
+  test('AC-06: an access token is rejected by the refresh endpoint', async () => {
+    const { accessToken } = await loginTokens();
+    const res = await refresh(accessToken);
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('REFRESH_TOKEN_INVALID');
   });
 
-  // ── GET /api/v1/auth/me ────────────────────────────────────────────────
-  describe('GET /api/v1/auth/me', () => {
-    it('should return user profile with valid token', async () => {
-      const res = await request(testApp)
-        .get('/api/v1/auth/me')
-        .set('Authorization', `Bearer ${validAccessToken}`);
+  test('REQ-009: revoked refresh token (tokenVersion bumped) is rejected', async () => {
+    const { id, refreshToken } = await loginTokens();
+    h.stored(id).tokenVersion += 1;
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.email).toBe(mockAdmin.email);
-      expect(res.body.data.roleName).toBe('ADMIN');
-    });
+    const res = await refresh(refreshToken);
 
-    it('should reject request without token', async () => {
-      const res = await request(testApp).get('/api/v1/auth/me');
-
-      expect(res.status).toBe(401);
-      expect(res.body.success).toBe(false);
-    });
-
-    it('should reject request with expired token', async () => {
-      const expiredToken = jwt.sign(
-        { userId: mockAdmin._id },
-        JWT_SECRET,
-        { expiresIn: '0s' }
-      );
-
-      const res = await request(testApp)
-        .get('/api/v1/auth/me')
-        .set('Authorization', `Bearer ${expiredToken}`);
-
-      expect(res.status).toBe(401);
-    });
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('REFRESH_TOKEN_INVALID');
   });
 
-  // ── POST /api/v1/auth/logout ───────────────────────────────────────────
-  describe('POST /api/v1/auth/logout', () => {
-    it('should logout successfully with valid token', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/logout')
-        .set('Authorization', `Bearer ${validAccessToken}`);
+  test('REQ-009: refresh for a deactivated account is rejected', async () => {
+    const { id, refreshToken } = await loginTokens();
+    h.stored(id).isActive = false;
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.message).toContain('Logged out');
-    });
+    const res = await refresh(refreshToken);
+
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('REFRESH_TOKEN_INVALID');
   });
 
-  // ── PATCH /api/v1/auth/change-password ─────────────────────────────────
-  describe('PATCH /api/v1/auth/change-password', () => {
-    it('should change password with correct current password', async () => {
-      const res = await request(testApp)
-        .patch('/api/v1/auth/change-password')
-        .set('Authorization', `Bearer ${validAccessToken}`)
-        .send({
-          currentPassword: 'Admin@2024!',
-          newPassword:     'NewPass@2024!',
-          confirmPassword: 'NewPass@2024!',
-        });
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-    });
-
-    it('should reject with wrong current password', async () => {
-      const res = await request(testApp)
-        .patch('/api/v1/auth/change-password')
-        .set('Authorization', `Bearer ${validAccessToken}`)
-        .send({
-          currentPassword: 'WrongOld@123!',
-          newPassword:     'NewPass@2024!',
-          confirmPassword: 'NewPass@2024!',
-        });
-
-      expect(res.status).toBe(401);
-      expect(res.body.code).toBe('CURRENT_PASSWORD_WRONG');
-    });
-
-    it('should reject when passwords do not match', async () => {
-      const res = await request(testApp)
-        .patch('/api/v1/auth/change-password')
-        .set('Authorization', `Bearer ${validAccessToken}`)
-        .send({
-          currentPassword: 'Admin@2024!',
-          newPassword:     'NewPass@2024!',
-          confirmPassword: 'DifferentPass@2024!',
-        });
-
-      expect(res.status).toBe(422);
-    });
+  test('REQ-009: garbage refresh token is rejected', async () => {
+    const res = await refresh('not-a-jwt');
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('REFRESH_TOKEN_INVALID');
   });
+});
 
-  // ── POST /api/v1/auth/forgot-password ──────────────────────────────────
-  describe('POST /api/v1/auth/forgot-password', () => {
-    it('should accept valid email and return success (always)', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/forgot-password')
-        .send({ email: 'admin@trustcar.vn' });
+// ════════════════════════════════════════════════════════════════════════════
+// SAME BEHAVIOUR FOR EVERY ACCOUNT TYPE — DoD #6, REQ-028
+// ════════════════════════════════════════════════════════════════════════════
+describe.each(['ADMIN', 'SALES_STAFF'])('full session lifecycle for role %s', (roleName) => {
+  test('login → /me → logout → token rejected', async () => {
+    const { email, password } = await h.createUser({ roleName });
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-    });
+    const { body: { data } } = await post('/api/v1/auth/login').send({ email, password });
+    const auth = { Authorization: `Bearer ${data.accessToken}` };
+    const get  = () => request(h.app).get('/api/v1/auth/me').set('X-Forwarded-For', h.nextIp()).set(auth);
 
-    it('should accept unknown email without revealing existence', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/forgot-password')
-        .send({ email: 'nonexistent@example.com' });
+    const me = await get();
+    expect(me.status).toBe(200);
+    expect(me.body.data.roleName).toBe(roleName);
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-    });
-
-    it('should reject missing email', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/forgot-password')
-        .send({});
-
-      expect(res.status).toBe(422);
-    });
+    expect((await post('/api/v1/auth/logout').set(auth)).status).toBe(200);
+    expect((await get()).status).toBe(401);
   });
+});
 
-  // ── POST /api/v1/auth/reset-password ───────────────────────────────────
-  describe('POST /api/v1/auth/reset-password', () => {
-    it('should reset password with valid token and matching passwords', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/reset-password')
-        .send({
-          token:           'valid-reset-token-123',
-          newPassword:     'ResetPass@2024!',
-          confirmPassword: 'ResetPass@2024!',
-        });
+describe('GET /api/v1/auth/me – REQ-028', () => {
+  test('never returns password, reset link or revocation data', async () => {
+    const { id, email, password } = await h.createUser();
+    await post('/api/v1/auth/forgot-password').send({ email });
+    expect(h.stored(id).passwordResetToken).toBeDefined();
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-    });
+    const { body: { data } } = await post('/api/v1/auth/login').send({ email, password });
+    const me = await request(h.app).get('/api/v1/auth/me')
+      .set('X-Forwarded-For', h.nextIp())
+      .set('Authorization', `Bearer ${data.accessToken}`);
 
-    it('should reject when passwords do not match', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/reset-password')
-        .send({
-          token:           'valid-reset-token-123',
-          newPassword:     'ResetPass@2024!',
-          confirmPassword: 'DifferentPass!',
-        });
-
-      expect(res.status).toBe(422);
-    });
-
-    it('should reject missing fields', async () => {
-      const res = await request(testApp)
-        .post('/api/v1/auth/reset-password')
-        .send({});
-
-      expect(res.status).toBe(422);
-    });
+    expect(me.status).toBe(200);
+    expect(me.body.data.password).toBeUndefined();
+    expect(me.body.data.passwordResetToken).toBeUndefined();
+    expect(me.body.data.tokenVersion).toBeUndefined();
   });
 });

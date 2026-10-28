@@ -208,13 +208,6 @@ export const ActivityEventType = Object.freeze({
   APPOINTMENT_COMPLETED: 'APPOINTMENT_COMPLETED',
 });
 
-// ── Brute-Force / Account Lock Thresholds ─────────────────────────────────────
-// Ref: GBR-12
-export const AUTH_LOCK = Object.freeze({
-  MAX_FAILED_ATTEMPTS:    5,
-  LOCK_DURATION_MINUTES:  30,
-});
-
 // ── File Upload Constraints ───────────────────────────────────────────────────
 // Ref: MSG32, MSG33
 export const UPLOAD = Object.freeze({

@@ -3,9 +3,9 @@
  * @description Authentication business logic for the TrustCar platform.
  *
  * Responsibilities:
- * - Login with brute-force protection (GBR-12)
- * - JWT access + refresh token generation
- * - Password change and reset flow
+ * - Login (no account lock; GBR-12 retired – brute force is rate-limited per IP)
+ * - JWT access + refresh tokens with type and tokenVersion claims (authTokens.js)
+ * - Logout / password change / password reset revoke every session (tokenVersion)
  * - Activity logging for all auth events (GBR-24)
  *
  * This layer contains ZERO Express req/res references.
@@ -13,56 +13,31 @@
  * (no separate Repository class – the model IS the DAL in this architecture).
  */
 
-import jwt from 'jsonwebtoken';
 import dayjs from 'dayjs';
 import User from '../models/User.js';
 import ActivityLog from '../models/ActivityLog.js';
 import { generateCryptoToken } from '../utils/codeGenerator.js';
+import logger from '../utils/logger.js';
 import { sendMail } from '../config/mailer.js';
 import { AppError } from '../utils/apiResponse.js';
-import { AUTH_LOCK, ActivityEventType } from '../constants/appConstants.js';
+import { ActivityEventType } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
+import {
+  TokenType,
+  signAccessToken,
+  signRefreshToken,
+  verifyTokenOfType,
+  isTokenCurrent,
+} from '../utils/authTokens.js';
 
-// ════════════════════════════════════════════════════════════════════════════
-// TOKEN GENERATION HELPERS
-// ════════════════════════════════════════════════════════════════════════════
+const invalidCredentials = () =>
+  new AppError(MSG.MSG07.message, MSG.MSG07.httpStatus, MSG.MSG07.code);
 
-/**
- * Generates a signed JWT access token.
- * @param {object} payload - { userId, email, roleName }
- * @returns {string} Signed JWT.
- */
-const generateAccessToken = (payload) => {
-  return jwt.sign(payload, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
-    issuer:    'TrustCar',
-    audience:  'TrustCar-Client',
-  });
-};
-
-/**
- * Generates a signed JWT refresh token.
- * @param {object} payload - { userId }
- * @returns {string} Signed JWT.
- */
-const generateRefreshToken = (payload) => {
-  return jwt.sign(payload, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
-    issuer:    'TrustCar',
-    audience:  'TrustCar-Client',
-  });
-};
-
-/**
- * Builds the token payload from a User document.
- * @param {object} user - Mongoose User document.
- * @returns {{ userId, email, roleName }}
- */
-const buildTokenPayload = (user) => ({
-  userId:   user._id.toString(),
-  email:    user.email,
-  roleName: user.roleName,
-});
+/** Escapes user-controlled text before it is placed into an HTML email body. */
+const escapeHtml = (value = '') =>
+  String(value).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
 
 // ════════════════════════════════════════════════════════════════════════════
 // AUTH SERVICE METHODS
@@ -70,7 +45,8 @@ const buildTokenPayload = (user) => ({
 
 /**
  * Authenticates a user by email and password.
- * Enforces brute-force lock (GBR-12) and logs the event (GBR-24).
+ * The password is checked BEFORE the account status so a wrong password never
+ * reveals whether an account exists or is deactivated. Logs the event (GBR-24).
  *
  * @param {object} params
  * @param {string} params.email
@@ -81,94 +57,57 @@ const buildTokenPayload = (user) => ({
  * @throws {AppError}
  */
 export const login = async ({ email, password, ipAddress, userAgent }) => {
-  // Find user with password field (excluded by default)
   const user = await User.findOne({ email: email.toLowerCase() })
-    .select('+password +failedLoginAttempts +lockedUntil +passwordResetToken')
+    .select('+password +tokenVersion')
     .populate('role');
 
-  // ── Unknown email → generic error (security: don't reveal email existence)
-  if (!user) {
-    throw new AppError(MSG.MSG07.message, MSG.MSG07.httpStatus, MSG.MSG07.code);
-  }
+  // ── Unknown email → generic error, nothing to audit against
+  if (!user) throw invalidCredentials();
 
-  // ── Account deactivated (GBR-21)
-  if (!user.isActive) {
-    throw new AppError(MSG.MSG06.message, MSG.MSG06.httpStatus, MSG.MSG06.code);
-  }
+      // -- Account locked check (GBR-12)
+      if (user.isLocked) {
+        const unlocksAt = dayjs(user.lockedUntil).format('HH:mm DD/MM/YYYY');
+        await ActivityLog.log({
+          eventType:        ActivityEventType.USER_LOGIN_FAILED,
+          performedBy:      user._id,
+          performedByEmail: user.email,
+          targetModel:      'User',
+          targetId:         user._id,
+          summary:          `Login blocked - account locked until ${unlocksAt}`,
+          ipAddress,
+          userAgent,
+        });
 
-  // ── Account locked check (GBR-12)
-  if (user.isLocked) {
-    const unlocksAt = dayjs(user.lockedUntil).format('HH:mm DD/MM/YYYY');
-    await ActivityLog.log({
-      eventType: ActivityEventType.LOGIN_FAILED,
-      performedBy: user._id,
-      performedByEmail: user.email,
-<<<<<<< Updated upstream
-      targetModel:      'User',
-      targetId:         user._id,
-      summary:          `Login blocked – account locked until ${unlocksAt}`,
-=======
-      targetModel: 'User',
-      targetId: user._id,
-      summary: 'Failed login attempt (wrong password)',
->>>>>>> Stashed changes
-      ipAddress,
-      userAgent,
-    });
-    throw new AppError(MSG.MSG10.message, MSG.MSG10.httpStatus, MSG.MSG10.code);
-  }
-
-  // ── Wrong password
+        throw new AppError(MSG.MSG10.message, MSG.MSG10.httpStatus, MSG.MSG10.code);
+      }
   const isPasswordCorrect = await user.comparePassword(password);
   if (!isPasswordCorrect) {
-    await user.incrementFailedAttempts(); // GBR-12
-
-    const remaining = AUTH_LOCK.MAX_FAILED_ATTEMPTS - user.failedLoginAttempts;
-    const isNowLocked = user.isLocked;
-
-    // Write audit log
     await ActivityLog.log({
       eventType:        ActivityEventType.LOGIN_FAILED,
       performedBy:      user._id,
       performedByEmail: user.email,
       targetModel:      'User',
       targetId:         user._id,
-      summary:          isNowLocked
-        ? `Account locked after ${AUTH_LOCK.MAX_FAILED_ATTEMPTS} failed attempts`
-        : `Failed login attempt (${user.failedLoginAttempts}/${AUTH_LOCK.MAX_FAILED_ATTEMPTS})`,
+      summary:          'Failed login attempt (wrong password)',
       ipAddress,
       userAgent,
     });
-
-    if (isNowLocked) {
-      throw new AppError(MSG.MSG10.message, MSG.MSG10.httpStatus, MSG.MSG10.code);
-    }
-
-    throw new AppError(
-      MSG.MSG11.message.replace('{remaining}', Math.max(0, remaining)),
-      MSG.MSG11.httpStatus,
-      MSG.MSG11.code
-    );
+    throw invalidCredentials();
   }
 
-  // ── SUCCESS: Reset failed attempts & update last login (GBR-12)
-  await user.resetFailedAttempts();
+  // ── Correct password but account deactivated (GBR-21)
+  if (!user.isActive) {
+    throw new AppError(MSG.MSG06.message, MSG.MSG06.httpStatus, MSG.MSG06.code);
+  }
 
   user.lastLoginAt = new Date();
   user.lastLoginIp = ipAddress || null;
   await user.save({ validateBeforeSave: false });
 
-<<<<<<< Updated upstream
-  // ── Generate tokens
-  const payload      = buildTokenPayload(user);
-  const accessToken  = generateAccessToken(payload);
-  const refreshToken = generateRefreshToken({ userId: user._id.toString() });
-=======
-  const accessToken = signAccessToken(user);
-  const refreshToken = signRefreshToken(user);
->>>>>>> Stashed changes
-
-  // ── Audit log: successful login (GBR-24)
+    // -- Generate tokens
+    const payload      = buildTokenPayload(user);
+    const accessToken  = generateAccessToken(payload);
+    const refreshToken = generateRefreshToken({ userId: user._id.toString() });
   await ActivityLog.log({
     eventType: ActivityEventType.USER_LOGIN,
     performedBy: user._id,
@@ -181,71 +120,70 @@ export const login = async ({ email, password, ipAddress, userAgent }) => {
   });
 
   return {
-    user:         user.toSafeObject(),
+    user: user.toSafeObject(),
     accessToken,
     refreshToken,
   };
 };
 
 /**
- * Refreshes the access token using a valid refresh token.
+ * Issues a new access token from a refresh token that is valid, of type
+ * `refresh`, not revoked (tokenVersion matches) and belongs to an active user.
  * @param {string} refreshToken
  * @returns {Promise<{ accessToken: string }>}
- * @throws {AppError}
+ * @throws {AppError} MSG15 for every failure reason.
  */
 export const refreshAccessToken = async (refreshToken) => {
-  if (!refreshToken) {
-    throw new AppError(MSG.MSG15.message, MSG.MSG15.httpStatus, MSG.MSG15.code);
-  }
+  const invalidRefresh = () =>
+    new AppError(MSG.MSG15.message, MSG.MSG15.httpStatus, MSG.MSG15.code);
+
+  if (!refreshToken) throw invalidRefresh();
 
   let decoded;
   try {
-    decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    decoded = verifyTokenOfType(refreshToken, TokenType.REFRESH);
   } catch {
-    throw new AppError(MSG.MSG15.message, MSG.MSG15.httpStatus, MSG.MSG15.code);
+    throw invalidRefresh();
   }
 
-  const user = await User.findById(decoded.userId).populate('role');
-  if (!user || !user.isActive) {
-    throw new AppError(MSG.MSG15.message, MSG.MSG15.httpStatus, MSG.MSG15.code);
+  const user = await User.findById(decoded.userId).select('+tokenVersion');
+  if (!user || !user.isActive || !isTokenCurrent(decoded, user)) {
+    throw invalidRefresh();
   }
 
-  const newAccessToken = generateAccessToken(buildTokenPayload(user));
-  return { accessToken: newAccessToken };
+  return { accessToken: signAccessToken(user) };
 };
 
 /**
-<<<<<<< Updated upstream
- * Changes the authenticated user's own password.
-=======
- * Logs the user out of every device by bumping tokenVersion, which makes all
- * previously issued access and refresh tokens fail verification.
- *
- * @param {object} params
- * @param {string} params.userId
- * @param {string} [params.email]
- * @param {string} [params.ipAddress]
- * @param {string} [params.userAgent]
- * @returns {Promise<void>}
- */
-export const logout = async ({ userId, email, ipAddress, userAgent }) => {
-  await User.updateOne({ _id: userId }, { $inc: { tokenVersion: 1 } });
+    /**
+     * Logs the user out of every device by bumping tokenVersion, which makes all
+     * previously issued access and refresh tokens fail verification.
+     *
+     * @param {object} params
+     * @param {string} [params.userId]
+     * @param {string} [params.email]
+     * @param {string} [params.ipAddress]
+     * @param {string} [params.userAgent]
+     * @returns {Promise<void>}
+     */
+    export const logout = async ({ userId, email, ipAddress, userAgent }) => {
+      await User.updateOne({ _id: userId }, { $inc: { tokenVersion: 1 } });
 
-  await ActivityLog.log({
-    eventType: ActivityEventType.USER_LOGOUT,
-    performedBy: userId,
-    performedByEmail: email,
-    targetModel: 'User',
-    targetId: userId,
-    summary: 'User logged out (all sessions revoked)',
-    ipAddress,
-    userAgent,
-  });
-};
+      await ActivityLog.log({
+        eventType:        ActivityEventType.USER_LOGOUT,
+        performedBy:      userId,
+        performedByEmail: email,
+        targetModel:      'User',
+        targetId:         userId,
+        summary:          'User logged out (all sessions revoked)',
+        ipAddress,
+        userAgent,
+      });
+    };
 
-/**
- * Changes the authenticated user's own password and revokes all of their sessions.
->>>>>>> Stashed changes
+    /**
+     * Changes the authenticated user's own password.
+     */
  * Ref: GBR-22, GBR-23
  *
  * @param {object} params
@@ -256,12 +194,13 @@ export const logout = async ({ userId, email, ipAddress, userAgent }) => {
  * @returns {Promise<void>}
  */
 export const changePassword = async ({ userId, currentPassword, newPassword, ipAddress }) => {
-  const user = await User.findById(userId).select('+password');
+  const user = await User.findById(userId).select('+password +tokenVersion');
   if (!user) throw new AppError(MSG.MSG17.message, 404, MSG.MSG17.code);
 
+  // 400 (not 401): a wrong current password must not look like an expired session to clients
   const isCurrentCorrect = await user.comparePassword(currentPassword);
   if (!isCurrentCorrect) {
-    throw new AppError('Current password is incorrect.', 401, 'CURRENT_PASSWORD_WRONG');
+    throw new AppError('Current password is incorrect.', 400, 'CURRENT_PASSWORD_WRONG');
   }
 
   const isSamePassword = await user.comparePassword(newPassword);
@@ -269,12 +208,9 @@ export const changePassword = async ({ userId, currentPassword, newPassword, ipA
     throw new AppError(MSG.MSG13.message, 422, MSG.MSG13.code);
   }
 
-  user.password = newPassword; // Pre-save hook will hash this
-<<<<<<< Updated upstream
-=======
-  user.tokenVersion = (user.tokenVersion ?? 0) + 1; // revoke every session, including this one
->>>>>>> Stashed changes
-  await user.save();
+        user.password = newPassword; // Pre-save hook will hash this
+        user.tokenVersion = (user.tokenVersion ?? 0) + 1; // revoke every session, including this one
+        await user.save();
 
   await ActivityLog.log({
     eventType: ActivityEventType.PASSWORD_CHANGED,
@@ -305,28 +241,14 @@ export const forgotPassword = async (email) => {
 
   const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
 
-<<<<<<< Updated upstream
-  await sendMail({
-    to:      user.email,
-    toName:  user.fullName,
-    subject: 'TrustCar – Password Reset Request',
-    html: `
-      <h2>Password Reset</h2>
-      <p>Hello ${user.fullName},</p>
-      <p>You requested a password reset. Click the link below to set a new password:</p>
-      <p><a href="${resetUrl}">${resetUrl}</a></p>
-      <p>This link expires in <strong>1 hour</strong>.</p>
-      <p>If you did not request this, please ignore this email.</p>
-    `,
-  });
-=======
-  // A delivery failure must not change the response (it would reveal that the
-  // email is registered); log it server-side without the reset link.
+  const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+
+  // Do not reveal whether email exists in the response (it would reveal that the email is registered)
+  // log it server-side without the reset link.
   try {
-    await sendMail({
+    await sendEmail({
       to: user.email,
-      toName: user.fullName,
-      subject: 'TrustCar – Password Reset Request',
+      subject: 'TrustCar - Password Reset Request',
       html: `
         <h2>Password Reset</h2>
         <p>Hello ${escapeHtml(user.fullName)},</p>
@@ -337,10 +259,11 @@ export const forgotPassword = async (email) => {
       `,
     });
   } catch (error) {
-    logger.error(`Password reset email failed for user ${user._id}: ${error.message}`);
+    logger.error(`[Password reset email failed for user ${user._id}: ${error.message}`);
     return;
   }
->>>>>>> Stashed changes
+
+  await ActivityLog.log({
 
   await ActivityLog.log({
     eventType: ActivityEventType.PASSWORD_RESET,
@@ -353,52 +276,46 @@ export const forgotPassword = async (email) => {
 };
 
 /**
- * Resets a user's password using the reset token.
+ * Resets a user's password using the reset token and revokes all sessions.
+ * Token check, password write, link removal and tokenVersion bump happen in a
+ * single atomic update, so a link can succeed at most once even under
+ * concurrent requests. The password is hashed here because atomic updates
+ * bypass the pre-save hook.
  * @param {object} params
  * @param {string} params.token
  * @param {string} params.newPassword
  * @returns {Promise<void>}
  */
 export const resetPassword = async ({ token, newPassword }) => {
-<<<<<<< Updated upstream
-  const user = await User.findOne({
-    'passwordResetToken.token':     token,
-=======
   const invalidLink = () => new AppError(MSG.MSG14.message, MSG.MSG14.httpStatus, MSG.MSG14.code);
   const validLinkFilter = () => ({
-    'passwordResetToken.token': token,
->>>>>>> Stashed changes
-    'passwordResetToken.expiresAt': { $gt: new Date() },
-    isActive: true,
-  }).select('+passwordResetToken +password');
+    hashedResetToken: token,
+    passwordResetTokenExpiresAt: { $gt: new Date() },
+    isActive: true
+  });
 
-  if (!user) {
-    throw new AppError(MSG.MSG14.message, 400, MSG.MSG14.code);
-  }
+  // Plug the check to ensure token hasn't expired on this public endpoint
+  if (!(await User.exists(validLinkFilter()))) throw invalidLink();
 
-<<<<<<< Updated upstream
-  user.password           = newPassword;
-  user.passwordResetToken = undefined;
-  user.failedLoginAttempts = 0;
-  user.lockedUntil        = null;
-  await user.save();
-=======
-  const hashedPassword = await User.hashPassword(newPassword);
+  const hashedPassword = await user.hashPassword(newPassword);
 
   // The same condition is re-applied atomically: a concurrent request may have
-  // consumed the link between the pre-check and this update.
-  const user = await User.findOneAndUpdate(
+  // used the token first, so we use findOneAndUpdate.
+  user = await User.findOneAndUpdate(
     validLinkFilter(),
     {
-      $set: { password: hashedPassword },
-      $unset: { passwordResetToken: 1 },
+      $set: {
+        password: hashedPassword,
+        passwordResetToken: undefined,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
       $inc: { tokenVersion: 1 },
     },
     { new: true }
   );
 
   if (!user) throw invalidLink();
->>>>>>> Stashed changes
 
   await ActivityLog.log({
     eventType: ActivityEventType.PASSWORD_RESET,
@@ -427,6 +344,7 @@ export const getMyProfile = async (userId) => {
 export default {
   login,
   refreshAccessToken,
+  logout,
   changePassword,
   forgotPassword,
   resetPassword,
