@@ -23,10 +23,10 @@ const START_TIME = Date.now();
  */
 export const liveness = (_req, res) => {
   return sendSuccess(res, 200, 'TrustCar API is running.', {
-    service:   'TrustCar-Backend',
-    version:   process.env.npm_package_version || '1.0.0',
-    env:       process.env.NODE_ENV || 'development',
-    uptime:    `${Math.floor((Date.now() - START_TIME) / 1000)}s`,
+    service: 'TrustCar-Backend',
+    version: process.env.npm_package_version || '1.0.0',
+    env: process.env.NODE_ENV || 'development',
+    uptime: `${Math.floor((Date.now() - START_TIME) / 1000)}s`,
     timestamp: dayjs().toISOString(),
   });
 };
@@ -46,17 +46,17 @@ export const readiness = (_req, res) => {
 
   if (isReady) {
     return sendSuccess(res, 200, 'Service is ready.', {
-      database:  dbStatusMap[dbState],
-      uptime:    `${Math.floor((Date.now() - START_TIME) / 1000)}s`,
+      database: dbStatusMap[dbState],
+      uptime: `${Math.floor((Date.now() - START_TIME) / 1000)}s`,
       timestamp: dayjs().toISOString(),
     });
   }
 
   return res.status(503).json({
-    success:   false,
-    message:   'Service is not ready – database connection unavailable.',
-    code:      'SERVICE_UNAVAILABLE',
-    database:  dbStatusMap[dbState] || 'unknown',
+    success: false,
+    message: 'Service is not ready – database connection unavailable.',
+    code: 'SERVICE_UNAVAILABLE',
+    database: dbStatusMap[dbState] || 'unknown',
     timestamp: dayjs().toISOString(),
   });
 };

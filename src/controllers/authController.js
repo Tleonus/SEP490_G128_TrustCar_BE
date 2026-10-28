@@ -31,8 +31,8 @@ export const login = async (req, res, next) => {
     const result = await authService.login({ email, password, ipAddress, userAgent });
 
     return sendSuccess(res, 200, 'Login successful.', {
-      user:         result.user,
-      accessToken:  result.accessToken,
+      user: result.user,
+      accessToken: result.accessToken,
       refreshToken: result.refreshToken,
     });
   } catch (error) {
@@ -63,6 +63,7 @@ export const refreshToken = async (req, res, next) => {
  */
 export const logout = async (req, res, next) => {
   try {
+<<<<<<< Updated upstream
     // Log the logout event for audit (GBR-24)
     const ActivityLog = (await import('../models/ActivityLog.js')).default;
     const { ActivityEventType } = await import('../constants/appConstants.js');
@@ -76,6 +77,13 @@ export const logout = async (req, res, next) => {
       summary:          'User logged out',
       ipAddress:        req.ip,
       userAgent:        req.headers['user-agent'],
+=======
+    await authService.logout({
+      userId: req.userId,
+      email: req.user?.email,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+>>>>>>> Stashed changes
     });
 
     return sendSuccess(res, 200, MSG.MSG09.message);
@@ -108,10 +116,10 @@ export const changePassword = async (req, res, next) => {
     const { currentPassword, newPassword } = req.body;
 
     await authService.changePassword({
-      userId:          req.userId,
+      userId: req.userId,
       currentPassword,
       newPassword,
-      ipAddress:       req.ip,
+      ipAddress: req.ip,
     });
 
     return sendSuccess(res, 200, 'Password changed successfully. Please log in again.');
