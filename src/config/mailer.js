@@ -33,10 +33,10 @@ if (!mailersendClient) {
 
   if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
     smtpTransport = nodemailer.createTransport({
-      host:   SMTP_HOST,
-      port:   Number(SMTP_PORT) || 587,
+      host: SMTP_HOST,
+      port: Number(SMTP_PORT) || 587,
       secure: process.env.SMTP_SECURE === 'true',
-      auth:   { user: SMTP_USER, pass: SMTP_PASS },
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
     });
     console.log(`✅  Mailer: Nodemailer SMTP fallback ready (host: ${SMTP_HOST})`);
   } else {
@@ -64,11 +64,11 @@ if (!mailersendClient) {
  */
 export const sendMail = async ({ to, toName = '', subject, html, text }) => {
   const fromEmail = process.env.MAILERSEND_FROM_EMAIL || process.env.SMTP_USER || 'noreply@trustcar.vn';
-  const fromName  = process.env.MAILERSEND_FROM_NAME  || 'TrustCar Platform';
+  const fromName = process.env.MAILERSEND_FROM_NAME || 'TrustCar Platform';
 
   // ── MailerSend Path ───────────────────────────────────────────────────────
   if (mailersendClient) {
-    const sentFrom  = new Sender(fromEmail, fromName);
+    const sentFrom = new Sender(fromEmail, fromName);
     const recipients = [new Recipient(to, toName || to)];
 
     const emailParams = new EmailParams()
@@ -86,11 +86,11 @@ export const sendMail = async ({ to, toName = '', subject, html, text }) => {
   // ── SMTP Fallback Path ───────────────────────────────────────────────────
   if (smtpTransport) {
     await smtpTransport.sendMail({
-      from:    `"${fromName}" <${fromEmail}>`,
+      from: `"${fromName}" <${fromEmail}>`,
       to,
       subject,
       html,
-      text:    text || html.replace(/<[^>]*>/g, ''),
+      text: text || html.replace(/<[^>]*>/g, ''),
     });
     console.log(`📧  Email sent via SMTP to: ${to} | Subject: "${subject}"`);
     return;

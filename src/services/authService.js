@@ -64,7 +64,22 @@ export const login = async ({ email, password, ipAddress, userAgent }) => {
   // ── Unknown email → generic error, nothing to audit against
   if (!user) throw invalidCredentials();
 
-  // ── Wrong password → generic error (no lock)
+      // -- Account locked check (GBR-12)
+      if (user.isLocked) {
+        const unlocksAt = dayjs(user.lockedUntil).format('HH:mm DD/MM/YYYY');
+        await ActivityLog.log({
+          eventType:        ActivityEventType.USER_LOGIN_FAILED,
+          performedBy:      user._id,
+          performedByEmail: user.email,
+          targetModel:      'User',
+          targetId:         user._id,
+          summary:          `Login blocked - account locked until ${unlocksAt}`,
+          ipAddress,
+          userAgent,
+        });
+
+        throw new AppError(MSG.MSG10.message, MSG.MSG10.httpStatus, MSG.MSG10.code);
+      }
   const isPasswordCorrect = await user.comparePassword(password);
   if (!isPasswordCorrect) {
     await ActivityLog.log({
@@ -89,16 +104,17 @@ export const login = async ({ email, password, ipAddress, userAgent }) => {
   user.lastLoginIp = ipAddress || null;
   await user.save({ validateBeforeSave: false });
 
-  const accessToken  = signAccessToken(user);
-  const refreshToken = signRefreshToken(user);
-
+    // -- Generate tokens
+    const payload      = buildTokenPayload(user);
+    const accessToken  = generateAccessToken(payload);
+    const refreshToken = generateRefreshToken({ userId: user._id.toString() });
   await ActivityLog.log({
-    eventType:        ActivityEventType.USER_LOGIN,
-    performedBy:      user._id,
+    eventType: ActivityEventType.USER_LOGIN,
+    performedBy: user._id,
     performedByEmail: user.email,
-    targetModel:      'User',
-    targetId:         user._id,
-    summary:          `Successful login from ${ipAddress || 'unknown IP'}`,
+    targetModel: 'User',
+    targetId: user._id,
+    summary: `Successful login from ${ipAddress || 'unknown IP'}`,
     ipAddress,
     userAgent,
   });
@@ -139,33 +155,35 @@ export const refreshAccessToken = async (refreshToken) => {
 };
 
 /**
- * Logs the user out of every device by bumping tokenVersion, which makes all
- * previously issued access and refresh tokens fail verification.
- *
- * @param {object} params
- * @param {string} params.userId
- * @param {string} [params.email]
- * @param {string} [params.ipAddress]
- * @param {string} [params.userAgent]
- * @returns {Promise<void>}
- */
-export const logout = async ({ userId, email, ipAddress, userAgent }) => {
-  await User.updateOne({ _id: userId }, { $inc: { tokenVersion: 1 } });
+    /**
+     * Logs the user out of every device by bumping tokenVersion, which makes all
+     * previously issued access and refresh tokens fail verification.
+     *
+     * @param {object} params
+     * @param {string} [params.userId]
+     * @param {string} [params.email]
+     * @param {string} [params.ipAddress]
+     * @param {string} [params.userAgent]
+     * @returns {Promise<void>}
+     */
+    export const logout = async ({ userId, email, ipAddress, userAgent }) => {
+      await User.updateOne({ _id: userId }, { $inc: { tokenVersion: 1 } });
 
-  await ActivityLog.log({
-    eventType:        ActivityEventType.USER_LOGOUT,
-    performedBy:      userId,
-    performedByEmail: email,
-    targetModel:      'User',
-    targetId:         userId,
-    summary:          'User logged out (all sessions revoked)',
-    ipAddress,
-    userAgent,
-  });
-};
+      await ActivityLog.log({
+        eventType:        ActivityEventType.USER_LOGOUT,
+        performedBy:      userId,
+        performedByEmail: email,
+        targetModel:      'User',
+        targetId:         userId,
+        summary:          'User logged out (all sessions revoked)',
+        ipAddress,
+        userAgent,
+      });
+    };
 
-/**
- * Changes the authenticated user's own password and revokes all of their sessions.
+    /**
+     * Changes the authenticated user's own password.
+     */
  * Ref: GBR-22, GBR-23
  *
  * @param {object} params
@@ -190,17 +208,17 @@ export const changePassword = async ({ userId, currentPassword, newPassword, ipA
     throw new AppError(MSG.MSG13.message, 422, MSG.MSG13.code);
   }
 
-  user.password      = newPassword; // Pre-save hook will hash this
-  user.tokenVersion = (user.tokenVersion ?? 0) + 1; // revoke every session, including this one
-  await user.save();
+        user.password = newPassword; // Pre-save hook will hash this
+        user.tokenVersion = (user.tokenVersion ?? 0) + 1; // revoke every session, including this one
+        await user.save();
 
   await ActivityLog.log({
-    eventType:        ActivityEventType.PASSWORD_CHANGED,
-    performedBy:      user._id,
+    eventType: ActivityEventType.PASSWORD_CHANGED,
+    performedBy: user._id,
     performedByEmail: user.email,
-    targetModel:      'User',
-    targetId:         user._id,
-    summary:          'User changed their own password',
+    targetModel: 'User',
+    targetId: user._id,
+    summary: 'User changed their own password',
     ipAddress,
   });
 };
@@ -215,21 +233,22 @@ export const forgotPassword = async (email) => {
   // Security: do not reveal whether email exists – always succeed silently
   if (!user) return;
 
-  const resetToken  = await generateCryptoToken(32);
-  const expiresAt   = dayjs().add(1, 'hour').toDate();
+  const resetToken = await generateCryptoToken(32);
+  const expiresAt = dayjs().add(1, 'hour').toDate();
 
   user.passwordResetToken = { token: resetToken, expiresAt };
   await user.save({ validateBeforeSave: false });
 
   const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
 
-  // A delivery failure must not change the response (it would reveal that the
-  // email is registered); log it server-side without the reset link.
+  const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+
+  // Do not reveal whether email exists in the response (it would reveal that the email is registered)
+  // log it server-side without the reset link.
   try {
-    await sendMail({
-      to:      user.email,
-      toName:  user.fullName,
-      subject: 'TrustCar – Password Reset Request',
+    await sendEmail({
+      to: user.email,
+      subject: 'TrustCar - Password Reset Request',
       html: `
         <h2>Password Reset</h2>
         <p>Hello ${escapeHtml(user.fullName)},</p>
@@ -240,17 +259,19 @@ export const forgotPassword = async (email) => {
       `,
     });
   } catch (error) {
-    logger.error(`Password reset email failed for user ${user._id}: ${error.message}`);
+    logger.error(`[Password reset email failed for user ${user._id}: ${error.message}`);
     return;
   }
 
   await ActivityLog.log({
-    eventType:        ActivityEventType.PASSWORD_RESET,
-    performedBy:      user._id,
+
+  await ActivityLog.log({
+    eventType: ActivityEventType.PASSWORD_RESET,
+    performedBy: user._id,
     performedByEmail: user.email,
-    targetModel:      'User',
-    targetId:         user._id,
-    summary:          'Password reset email dispatched',
+    targetModel: 'User',
+    targetId: user._id,
+    summary: 'Password reset email dispatched',
   });
 };
 
@@ -268,24 +289,28 @@ export const forgotPassword = async (email) => {
 export const resetPassword = async ({ token, newPassword }) => {
   const invalidLink = () => new AppError(MSG.MSG14.message, MSG.MSG14.httpStatus, MSG.MSG14.code);
   const validLinkFilter = () => ({
-    'passwordResetToken.token':     token,
-    'passwordResetToken.expiresAt': { $gt: new Date() },
-    isActive: true,
+    hashedResetToken: token,
+    passwordResetTokenExpiresAt: { $gt: new Date() },
+    isActive: true
   });
 
-  // Cheap pre-check so a bogus token never costs a bcrypt hash on this public endpoint
+  // Plug the check to ensure token hasn't expired on this public endpoint
   if (!(await User.exists(validLinkFilter()))) throw invalidLink();
 
-  const hashedPassword = await User.hashPassword(newPassword);
+  const hashedPassword = await user.hashPassword(newPassword);
 
   // The same condition is re-applied atomically: a concurrent request may have
-  // consumed the link between the pre-check and this update.
-  const user = await User.findOneAndUpdate(
+  // used the token first, so we use findOneAndUpdate.
+  user = await User.findOneAndUpdate(
     validLinkFilter(),
     {
-      $set:   { password: hashedPassword },
-      $unset: { passwordResetToken: 1 },
-      $inc:   { tokenVersion: 1 },
+      $set: {
+        password: hashedPassword,
+        passwordResetToken: undefined,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+      $inc: { tokenVersion: 1 },
     },
     { new: true }
   );
@@ -293,12 +318,12 @@ export const resetPassword = async ({ token, newPassword }) => {
   if (!user) throw invalidLink();
 
   await ActivityLog.log({
-    eventType:        ActivityEventType.PASSWORD_RESET,
-    performedBy:      user._id,
+    eventType: ActivityEventType.PASSWORD_RESET,
+    performedBy: user._id,
     performedByEmail: user.email,
-    targetModel:      'User',
-    targetId:         user._id,
-    summary:          'Password successfully reset via token',
+    targetModel: 'User',
+    targetId: user._id,
+    summary: 'Password successfully reset via token',
   });
 };
 

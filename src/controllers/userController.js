@@ -25,7 +25,7 @@ export const createUser = async (req, res, next) => {
     const user = await userService.createUser({
       ...req.body,
       createdByUserId: req.userId,
-      ipAddress:       req.ip,
+      ipAddress: req.ip,
     });
     return sendSuccess(res, 201, 'User account created successfully.', user);
   } catch (error) {
@@ -69,11 +69,11 @@ export const updateUser = async (req, res, next) => {
   try {
     const { roleName, ...updates } = req.body;
     const user = await userService.updateUser({
-      userId:          req.params.id,
+      userId: req.params.id,
       updates,
-      newRoleName:     roleName,
+      newRoleName: roleName,
       updatedByUserId: req.userId,
-      ipAddress:       req.ip,
+      ipAddress: req.ip,
     });
     return sendSuccess(res, 200, 'User updated successfully.', user);
   } catch (error) {
@@ -88,9 +88,9 @@ export const updateUser = async (req, res, next) => {
 export const deactivateUser = async (req, res, next) => {
   try {
     await userService.deactivateUser({
-      targetUserId:    req.params.id,
+      targetUserId: req.params.id,
       requestingUserId: req.userId,
-      ipAddress:       req.ip,
+      ipAddress: req.ip,
     });
     return sendSuccess(res, 200, 'User account deactivated successfully.');
   } catch (error) {
@@ -105,9 +105,9 @@ export const deactivateUser = async (req, res, next) => {
 export const activateUser = async (req, res, next) => {
   try {
     await userService.activateUser({
-      targetUserId:     req.params.id,
+      targetUserId: req.params.id,
       requestingUserId: req.userId,
-      ipAddress:        req.ip,
+      ipAddress: req.ip,
     });
     return sendSuccess(res, 200, 'User account activated successfully.');
   } catch (error) {
