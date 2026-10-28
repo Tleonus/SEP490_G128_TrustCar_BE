@@ -31,8 +31,8 @@ export const login = async (req, res, next) => {
     const result = await authService.login({ email, password, ipAddress, userAgent });
 
     return sendSuccess(res, 200, 'Login successful.', {
-      user:         result.user,
-      accessToken:  result.accessToken,
+      user: result.user,
+      accessToken: result.accessToken,
       refreshToken: result.refreshToken,
     });
   } catch (error) {
@@ -70,6 +70,8 @@ export const logout = async (req, res, next) => {
     });
 
     return sendSuccess(res, 200, MSG.MSG09.message);
+
+    return sendSuccess(res, 200, MSG.MSG09.message);
   } catch (error) {
     next(error);
   }
@@ -99,10 +101,10 @@ export const changePassword = async (req, res, next) => {
     const { currentPassword, newPassword } = req.body;
 
     await authService.changePassword({
-      userId:          req.userId,
+      userId: req.userId,
       currentPassword,
       newPassword,
-      ipAddress:       req.ip,
+      ipAddress: req.ip,
     });
 
     return sendSuccess(res, 200, 'Password changed successfully. Please log in again.');

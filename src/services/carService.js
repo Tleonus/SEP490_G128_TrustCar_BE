@@ -40,7 +40,7 @@ import { SystemMessages as MSG } from '../constants/systemMessages.js';
  */
 const assertVinUnique = async (vin, currentId = null) => {
   const filter = {
-    vin:    vin.toUpperCase(),
+    vin: vin.toUpperCase(),
     status: { $ne: CarStatus.DELISTED },
   };
   if (currentId) filter._id = { $ne: currentId };
@@ -57,7 +57,7 @@ const assertVinUnique = async (vin, currentId = null) => {
 const assertPlateUnique = async (plate, currentId = null) => {
   const filter = {
     licensePlate: plate.toUpperCase(),
-    status:       { $in: [CarStatus.INCOMING, CarStatus.MAINTENANCE, CarStatus.AVAILABLE, CarStatus.RESERVED] },
+    status: { $in: [CarStatus.INCOMING, CarStatus.MAINTENANCE, CarStatus.AVAILABLE, CarStatus.RESERVED] },
   };
   if (currentId) filter._id = { $ne: currentId };
 
@@ -114,24 +114,24 @@ export const createCar = async (data, userId, ipAddress) => {
   const car = await Car.create({
     ...data,
     vehicleCode,
-    vin:          data.vin.toUpperCase(),
+    vin: data.vin.toUpperCase(),
     licensePlate: data.licensePlate.toUpperCase(),
-    status:       CarStatus.INCOMING,
+    status: CarStatus.INCOMING,
     priceHistory: [{
-      price:     data.price,
+      price: data.price,
       changedBy: userId,
-      reason:    'Initial intake price',
+      reason: 'Initial intake price',
     }],
     createdBy: userId,
   });
 
   await ActivityLog.log({
-    eventType:    ActivityEventType.CAR_CREATED,
-    performedBy:  userId,
-    targetModel:  'Car',
-    targetId:     car._id,
-    targetCode:   car.vehicleCode,
-    summary:      `Vehicle ${car.vehicleCode} (${car.make} ${car.model} ${car.year}) created`,
+    eventType: ActivityEventType.CAR_CREATED,
+    performedBy: userId,
+    targetModel: 'Car',
+    targetId: car._id,
+    targetCode: car.vehicleCode,
+    summary: `Vehicle ${car.vehicleCode} (${car.make} ${car.model} ${car.year}) created`,
     ipAddress,
   });
 
@@ -149,21 +149,21 @@ export const getCars = async (query) => {
 
   const filter = { isActive: true };
   if (query.status) filter.status = query.status;
-  if (query.make)   filter.make   = { $regex: query.make, $options: 'i' };
-  if (query.model)  filter.model  = { $regex: query.model, $options: 'i' };
-  if (query.year)   filter.year   = Number(query.year);
+  if (query.make) filter.make = { $regex: query.make, $options: 'i' };
+  if (query.model) filter.model = { $regex: query.model, $options: 'i' };
+  if (query.year) filter.year = Number(query.year);
 
   if (query.search) {
     filter.$or = [
-      { vehicleCode:   { $regex: query.search, $options: 'i' } },
-      { vin:           { $regex: query.search, $options: 'i' } },
-      { licensePlate:  { $regex: query.search, $options: 'i' } },
-      { make:          { $regex: query.search, $options: 'i' } },
-      { model:         { $regex: query.search, $options: 'i' } },
+      { vehicleCode: { $regex: query.search, $options: 'i' } },
+      { vin: { $regex: query.search, $options: 'i' } },
+      { licensePlate: { $regex: query.search, $options: 'i' } },
+      { make: { $regex: query.search, $options: 'i' } },
+      { model: { $regex: query.search, $options: 'i' } },
     ];
   }
 
-  const sortBy  = query.sortBy  || 'createdAt';
+  const sortBy = query.sortBy || 'createdAt';
   const sortDir = query.sortDir === 'asc' ? 1 : -1;
 
   const [items, total] = await Promise.all([
@@ -238,21 +238,21 @@ export const updateCar = async ({ carId, updates, userId, ipAddress }) => {
   // GBR-07: Price change → append to history
   if (updates.price !== undefined && updates.price !== car.price) {
     car.priceHistory.push({
-      price:     updates.price,
+      price: updates.price,
       changedBy: userId,
-      reason:    updates.priceChangeReason || null,
+      reason: updates.priceChangeReason || null,
     });
     car.price = updates.price;
     delete updates.price;
 
     await ActivityLog.log({
-      eventType:   ActivityEventType.CAR_PRICE_UPDATED,
+      eventType: ActivityEventType.CAR_PRICE_UPDATED,
       performedBy: userId,
       targetModel: 'Car',
-      targetId:    car._id,
-      targetCode:  car.vehicleCode,
-      changes:     { before: { price: before.price }, after: { price: car.price } },
-      summary:     `Price updated from ${before.price} to ${car.price} VND`,
+      targetId: car._id,
+      targetCode: car.vehicleCode,
+      changes: { before: { price: before.price }, after: { price: car.price } },
+      summary: `Price updated from ${before.price} to ${car.price} VND`,
       ipAddress,
     });
   }
@@ -272,13 +272,13 @@ export const updateCar = async ({ carId, updates, userId, ipAddress }) => {
   await car.save();
 
   await ActivityLog.log({
-    eventType:   ActivityEventType.CAR_UPDATED,
+    eventType: ActivityEventType.CAR_UPDATED,
     performedBy: userId,
     targetModel: 'Car',
-    targetId:    car._id,
-    targetCode:  car.vehicleCode,
-    changes:     { before, after: { price: car.price, mileage: car.mileage, licensePlate: car.licensePlate } },
-    summary:     `Vehicle ${car.vehicleCode} fields updated`,
+    targetId: car._id,
+    targetCode: car.vehicleCode,
+    changes: { before, after: { price: car.price, mileage: car.mileage, licensePlate: car.licensePlate } },
+    summary: `Vehicle ${car.vehicleCode} fields updated`,
     ipAddress,
   });
 
@@ -304,10 +304,10 @@ export const updateCarStatus = async ({ carId, targetStatus, userId, reason, ipA
   const previousStatus = car.status;
   assertValidTransition(previousStatus, targetStatus); // GBR-05
 
-  car.status          = targetStatus;
+  car.status = targetStatus;
   car.statusChangedBy = userId;
   car.statusChangedAt = new Date();
-  car.updatedBy       = userId;
+  car.updatedBy = userId;
 
   if (targetStatus === CarStatus.SOLD) {
     car.soldAt = new Date();
@@ -316,14 +316,14 @@ export const updateCarStatus = async ({ carId, targetStatus, userId, reason, ipA
   await car.save();
 
   await ActivityLog.log({
-    eventType:   ActivityEventType.CAR_STATUS_CHANGED,
+    eventType: ActivityEventType.CAR_STATUS_CHANGED,
     performedBy: userId,
     targetModel: 'Car',
-    targetId:    car._id,
-    targetCode:  car.vehicleCode,
-    changes:     { before: { status: previousStatus }, after: { status: targetStatus } },
-    summary:     `Status: ${previousStatus} → ${targetStatus}`,
-    metadata:    { reason },
+    targetId: car._id,
+    targetCode: car.vehicleCode,
+    changes: { before: { status: previousStatus }, after: { status: targetStatus } },
+    summary: `Status: ${previousStatus} → ${targetStatus}`,
+    metadata: { reason },
     ipAddress,
   });
 
@@ -368,8 +368,8 @@ export const uploadCarImages = async ({ carId, files, setFirstAsPrimary, userId,
       car.images.forEach((img) => { img.isPrimary = false; });
     }
     car.images.push({
-      url:       result.url,
-      publicId:  result.publicId,
+      url: result.url,
+      publicId: result.publicId,
       isPrimary: setFirstAsPrimary && idx === 0 && !hasExistingPrimary,
     });
   });
@@ -378,12 +378,12 @@ export const uploadCarImages = async ({ carId, files, setFirstAsPrimary, userId,
   await car.save();
 
   await ActivityLog.log({
-    eventType:   ActivityEventType.CAR_IMAGE_ADDED,
+    eventType: ActivityEventType.CAR_IMAGE_ADDED,
     performedBy: userId,
     targetModel: 'Car',
-    targetId:    car._id,
-    targetCode:  car.vehicleCode,
-    summary:     `${uploaded.length} image(s) uploaded to ${car.vehicleCode}`,
+    targetId: car._id,
+    targetCode: car.vehicleCode,
+    summary: `${uploaded.length} image(s) uploaded to ${car.vehicleCode}`,
     ipAddress,
   });
 
@@ -425,12 +425,12 @@ export const deleteCarImage = async ({ carId, imageId, userId, ipAddress }) => {
   await car.save();
 
   await ActivityLog.log({
-    eventType:   ActivityEventType.CAR_IMAGE_REMOVED,
+    eventType: ActivityEventType.CAR_IMAGE_REMOVED,
     performedBy: userId,
     targetModel: 'Car',
-    targetId:    car._id,
-    targetCode:  car.vehicleCode,
-    summary:     `Image removed from ${car.vehicleCode}`,
+    targetId: car._id,
+    targetCode: car.vehicleCode,
+    summary: `Image removed from ${car.vehicleCode}`,
     ipAddress,
   });
 
@@ -452,17 +452,17 @@ export const softDeleteCar = async ({ carId, userId, ipAddress }) => {
 
   assertNotSold(car);
 
-  car.isActive  = false;
+  car.isActive = false;
   car.updatedBy = userId;
   await car.save({ validateBeforeSave: false });
 
   await ActivityLog.log({
-    eventType:   ActivityEventType.CAR_STATUS_CHANGED,
+    eventType: ActivityEventType.CAR_STATUS_CHANGED,
     performedBy: userId,
     targetModel: 'Car',
-    targetId:    car._id,
-    targetCode:  car.vehicleCode,
-    summary:     `Vehicle ${car.vehicleCode} soft-deleted`,
+    targetId: car._id,
+    targetCode: car.vehicleCode,
+    summary: `Vehicle ${car.vehicleCode} soft-deleted`,
     ipAddress,
   });
 };

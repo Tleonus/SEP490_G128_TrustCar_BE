@@ -27,22 +27,22 @@ import { SystemMessages as MSG } from '../constants/systemMessages.js';
 
 // ── Fields exposed on public listing (excludes internal notes, audit fields) ──
 const PUBLIC_LIST_PROJECTION = {
-  vehicleCode:     1,
-  make:            1,
-  model:           1,
-  variant:         1,
-  year:            1,
-  bodyType:        1,
-  fuelType:        1,
-  transmission:    1,
-  driveType:       1,
-  mileage:         1,
-  price:           1,
-  status:          1,
-  images:          1,
-  conditionGrade:  1,
-  description:     1,
-  createdAt:       1,
+  vehicleCode: 1,
+  make: 1,
+  model: 1,
+  variant: 1,
+  year: 1,
+  bodyType: 1,
+  fuelType: 1,
+  transmission: 1,
+  driveType: 1,
+  mileage: 1,
+  price: 1,
+  status: 1,
+  images: 1,
+  conditionGrade: 1,
+  description: 1,
+  createdAt: 1,
   'specifications.numberOfSeats': 1,
   'specifications.engineDisplacementCC': 1,
   'specifications.horsePower': 1,
@@ -53,11 +53,11 @@ const PUBLIC_LIST_PROJECTION = {
 // ── Fields exposed on public detail view (full specs, no internal notes) ──
 const PUBLIC_DETAIL_PROJECTION = {
   internalNotes: 0, // Exclude internal notes
-  priceHistory:  0, // Price history is staff-only
-  createdBy:     0,
-  updatedBy:     0,
+  priceHistory: 0, // Price history is staff-only
+  createdBy: 0,
+  updatedBy: 0,
   statusChangedBy: 0,
-  isActive:      0,
+  isActive: 0,
 };
 
 /**
@@ -70,7 +70,7 @@ const PUBLIC_DETAIL_PROJECTION = {
 const buildPublicFilter = (query) => {
   // GBR-11: AVAILABLE ONLY – immutable base filter
   const filter = {
-    status:   CarStatus.AVAILABLE,
+    status: CarStatus.AVAILABLE,
     isActive: true,
   };
 
@@ -132,9 +132,9 @@ const buildPublicFilter = (query) => {
   if (query.search) {
     const regex = { $regex: query.search, $options: 'i' };
     filter.$or = [
-      { make:        regex },
-      { model:       regex },
-      { variant:     regex },
+      { make: regex },
+      { model: regex },
+      { variant: regex },
       { vehicleCode: regex },
       { description: regex },
     ];
@@ -149,7 +149,7 @@ const buildPublicFilter = (query) => {
  */
 const buildPublicSort = (query) => {
   const ALLOWED_SORT_FIELDS = ['price', 'year', 'mileage', 'createdAt'];
-  const sortBy  = ALLOWED_SORT_FIELDS.includes(query.sortBy) ? query.sortBy : 'createdAt';
+  const sortBy = ALLOWED_SORT_FIELDS.includes(query.sortBy) ? query.sortBy : 'createdAt';
   const sortDir = query.sortDir === 'asc' ? 1 : -1;
   return { [sortBy]: sortDir };
 };
@@ -168,7 +168,7 @@ const buildPublicSort = (query) => {
 export const getAvailableCars = async (query) => {
   const { page, limit, skip } = parsePagination(query, PAGINATION.MAX_LIMIT);
   const filter = buildPublicFilter(query);
-  const sort   = buildPublicSort(query);
+  const sort = buildPublicSort(query);
 
   const [items, total] = await Promise.all([
     Car.find(filter, PUBLIC_LIST_PROJECTION)
@@ -181,21 +181,21 @@ export const getAvailableCars = async (query) => {
 
   // Filter summary for front-end breadcrumb / active filter display
   const filterSummary = {};
-  if (query.brand || query.make)  filterSummary.brand        = query.brand || query.make;
-  if (query.model)                filterSummary.model        = query.model;
-  if (query.bodyType)             filterSummary.bodyType     = query.bodyType;
-  if (query.fuelType)             filterSummary.fuelType     = query.fuelType;
-  if (query.transmission)        filterSummary.transmission  = query.transmission;
-  if (query.priceMin)             filterSummary.priceMin     = Number(query.priceMin);
-  if (query.priceMax)             filterSummary.priceMax     = Number(query.priceMax);
-  if (query.yearMin)              filterSummary.yearMin      = Number(query.yearMin);
-  if (query.yearMax)              filterSummary.yearMax      = Number(query.yearMax);
-  if (query.mileageMax)           filterSummary.mileageMax   = Number(query.mileageMax);
-  if (query.search)               filterSummary.search       = query.search;
+  if (query.brand || query.make) filterSummary.brand = query.brand || query.make;
+  if (query.model) filterSummary.model = query.model;
+  if (query.bodyType) filterSummary.bodyType = query.bodyType;
+  if (query.fuelType) filterSummary.fuelType = query.fuelType;
+  if (query.transmission) filterSummary.transmission = query.transmission;
+  if (query.priceMin) filterSummary.priceMin = Number(query.priceMin);
+  if (query.priceMax) filterSummary.priceMax = Number(query.priceMax);
+  if (query.yearMin) filterSummary.yearMin = Number(query.yearMin);
+  if (query.yearMax) filterSummary.yearMax = Number(query.yearMax);
+  if (query.mileageMax) filterSummary.mileageMax = Number(query.mileageMax);
+  if (query.search) filterSummary.search = query.search;
 
   return {
     items,
-    pagination:    buildPaginationMeta(total, page, limit),
+    pagination: buildPaginationMeta(total, page, limit),
     filterSummary,
   };
 };
@@ -211,7 +211,7 @@ export const getPublicCarDetail = async (carId) => {
   // Support lookup by either _id or vehicleCode
   const isObjectId = /^[0-9a-fA-F]{24}$/.test(carId);
   const filter = isObjectId
-    ? { _id: carId,       status: CarStatus.AVAILABLE, isActive: true }
+    ? { _id: carId, status: CarStatus.AVAILABLE, isActive: true }
     : { vehicleCode: carId, status: CarStatus.AVAILABLE, isActive: true };
 
   const car = await Car.findOne(filter, PUBLIC_DETAIL_PROJECTION).lean();
@@ -252,12 +252,12 @@ export const getPublicFilterOptions = async () => {
   ]);
 
   return {
-    brands:       brands.sort(),
+    brands: brands.sort(),
     bodyTypes,
     fuelTypes,
     transmissions,
-    priceRange:   priceRange[0] || { minPrice: 0, maxPrice: 0 },
-    yearRange:    yearRange[0]  || { minYear: 2000, maxYear: new Date().getFullYear() },
+    priceRange: priceRange[0] || { minPrice: 0, maxPrice: 0 },
+    yearRange: yearRange[0] || { minYear: 2000, maxYear: new Date().getFullYear() },
   };
 };
 
