@@ -4,7 +4,9 @@
  *
  * Key features:
  * - Password hashing via bcryptjs pre-save hook.
- * - Failed login attempt tracking and account lock (GBR-12).
+ * - Legacy lock fields (failedLoginAttempts, lockedUntil) kept for existing data;
+ *   login no longer locks accounts (GBR-12 retired 2026-10-24).
+ * - tokenVersion counter for revoking all sessions of a user.
  * - Active session enforcement via isActive flag (GBR-21).
  * - Role reference for RBAC (GBR-02).
  * - Virtual `isLocked` computed from lockedUntil.
@@ -14,7 +16,7 @@
 
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { Roles, AUTH_LOCK } from '../constants/appConstants.js';
+import { Roles } from '../constants/appConstants.js';
 
 // ── Subdocument: Password Reset Token ─────────────────────────────────────
 const PasswordResetSchema = new mongoose.Schema(
@@ -88,18 +90,30 @@ const UserSchema = new mongoose.Schema(
       index:   true,
     },
 
-    // ── Brute-Force Protection (GBR-12) ───────────────────────────────────
+    // ── Legacy Brute-Force Fields (GBR-12, retired) ───────────────────────
+    // No longer written by login; kept so existing documents stay valid and
+    // admin reactivation can still clear them.
     failedLoginAttempts: {
       type:    Number,
       default: 0,
       min:     0,
-      max:     AUTH_LOCK.MAX_FAILED_ATTEMPTS + 5, // Slight buffer for edge cases
+      max:     10,
     },
 
     lockedUntil: {
       type:    Date,
       default: null,
-      // When non-null and in the future, the account is locked (GBR-12)
+    },
+
+    // ── Session Revocation ────────────────────────────────────────────────
+    // Monotonic counter embedded in every issued JWT. Bumping it on logout /
+    // password change / password reset invalidates all previously issued
+    // tokens on every device.
+    tokenVersion: {
+      type:    Number,
+      default: 0,
+      min:     0,
+      select:  false,
     },
 
     // ── Session Metadata ──────────────────────────────────────────────────
@@ -155,13 +169,25 @@ UserSchema.virtual('isLocked').get(function () {
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
   try {
-    const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 12;
-    this.password = await bcrypt.hash(this.password, saltRounds);
+    this.password = await this.constructor.hashPassword(this.password);
     next();
   } catch (err) {
     next(err);
   }
 });
+
+// ── Static Methods ─────────────────────────────────────────────────────────
+
+/**
+ * Hashes a plaintext password with bcrypt. Shared by the pre-save hook and by
+ * flows that write the password through an atomic update (which bypasses hooks).
+ * @param {string} plainPassword
+ * @returns {Promise<string>}
+ */
+UserSchema.statics.hashPassword = async function (plainPassword) {
+  const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 12;
+  return bcrypt.hash(plainPassword, saltRounds);
+};
 
 // ── Instance Methods ───────────────────────────────────────────────────────
 
@@ -175,34 +201,6 @@ UserSchema.methods.comparePassword = async function (candidatePassword) {
 };
 
 /**
- * Increments failed login attempts and locks the account if threshold reached.
- * Ref: GBR-12
- * @returns {Promise<void>}
- */
-UserSchema.methods.incrementFailedAttempts = async function () {
-  this.failedLoginAttempts += 1;
-
-  if (this.failedLoginAttempts >= AUTH_LOCK.MAX_FAILED_ATTEMPTS) {
-    this.lockedUntil = new Date(Date.now() + AUTH_LOCK.LOCK_DURATION_MINUTES * 60 * 1000);
-  }
-
-  await this.save({ validateBeforeSave: false });
-};
-
-/**
- * Resets brute-force counters after a successful login.
- * Ref: GBR-12
- * @returns {Promise<void>}
- */
-UserSchema.methods.resetFailedAttempts = async function () {
-  if (this.failedLoginAttempts !== 0 || this.lockedUntil !== null) {
-    this.failedLoginAttempts = 0;
-    this.lockedUntil         = null;
-    await this.save({ validateBeforeSave: false });
-  }
-};
-
-/**
  * Returns a safe public representation of the user (no password, no internal fields).
  * @returns {object}
  */
@@ -212,6 +210,7 @@ UserSchema.methods.toSafeObject = function () {
   delete obj.passwordResetToken;
   delete obj.failedLoginAttempts;
   delete obj.lockedUntil;
+  delete obj.tokenVersion;
   return obj;
 };
 
