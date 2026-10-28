@@ -166,6 +166,15 @@ export const updateUser = async ({ userId, updates, newRoleName, updatedByUserId
   if (updates.phone    !== undefined) user.phone    = updates.phone;
   if (updates.avatar   !== undefined) user.avatar   = updates.avatar;
 
+  // Customer accounts are self-registered; they can never be turned into staff.
+  if (newRoleName && user.roleName === Roles.CUSTOMER) {
+    throw new AppError(
+      'The role of a customer account cannot be changed.',
+      MSG.MSG42.httpStatus,
+      MSG.MSG42.code
+    );
+  }
+
   // Role change (Admin only – enforced at route level, GBR-03)
   if (newRoleName && newRoleName !== user.roleName) {
     const newRole  = await resolveRole(newRoleName);

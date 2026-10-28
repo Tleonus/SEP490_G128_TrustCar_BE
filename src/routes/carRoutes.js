@@ -8,16 +8,17 @@ import { Router } from 'express';
 import Joi from 'joi';
 import * as carController from '../controllers/carController.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
-import { requirePermission, requireAdmin } from '../middlewares/roleMiddleware.js';
+import { requirePermission, requireAdmin, requireRole } from '../middlewares/roleMiddleware.js';
 import { validate, validateParams, objectIdParamSchema } from '../middlewares/validateMiddleware.js';
 import { uploadMultiple, requireFile } from '../middlewares/uploadMiddleware.js';
-import { Permissions, CarStatus, FuelType, Transmission, DriveType, BodyType } from '../constants/appConstants.js';
+import { Roles, Permissions, CarStatus, FuelType, Transmission, DriveType, BodyType } from '../constants/appConstants.js';
 import { joiVIN, joiPlate, joiVehicleYear, joiPrice } from '../utils/validators.js';
 
 const router = Router();
 
 // Auth guard on all routes
-router.use(verifyToken);
+// Internal inventory management: staff only (customer accounts are rejected).
+router.use(verifyToken, requireRole(Roles.ADMIN, Roles.SALES_STAFF));
 
 // ── DTO Schemas ────────────────────────────────────────────────────────────
 

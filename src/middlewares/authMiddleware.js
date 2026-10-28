@@ -9,7 +9,10 @@
  *   user's tokenVersion (logout / password change / reset revoke older tokens).
  *
  * Exports:
- * - verifyToken: Middleware that validates JWT and attaches req.user.
+ * - verifyToken: Middleware that validates JWT and attaches req.user; customers
+ *   whose profile is incomplete are rejected with PROFILE_INCOMPLETE.
+ * - verifyTokenAllowIncomplete: Same, but lets incomplete customer profiles through
+ *   (used by /auth/me, /auth/logout and /auth/complete-profile).
  * - optionalAuth: Same as verifyToken but does not fail if no token is present.
  */
 
@@ -32,13 +35,15 @@ const extractToken = (req) => {
 };
 
 /**
- * @middleware verifyToken
- * Validates JWT, checks expiry, and confirms the associated account is still active.
- * Attaches the full user document (minus password) to req.user.
+ * Builds the token-verification middleware.
+ * Validates JWT, checks expiry, confirms the account is still active and – unless
+ * allowIncomplete – that a customer's profile is complete.
+ * Attaches the user (minus password) and its profile status to req.
  *
  * Ref: GBR-01, GBR-21
+ * @param {{ allowIncomplete?: boolean }} [options]
  */
-export const verifyToken = async (req, res, next) => {
+const authenticate = ({ allowIncomplete = false } = {}) => async (req, res, next) => {
   try {
     const token = extractToken(req);
 
@@ -59,17 +64,24 @@ export const verifyToken = async (req, res, next) => {
     }
 
     // GBR-21: Secondary DB check – account must still be active
-    const user = await User.findById(decoded.userId).select('+tokenVersion').populate('role').lean();
+    // '+password' only to know whether one is set (profile status); removed below.
+    const user = await User.findById(decoded.userId).select('+tokenVersion +password').populate('role').lean();
 
     // Unknown user, or token issued before the latest logout / password change
     if (!user || !isTokenCurrent(decoded, user)) {
       return next(new AppError(MSG.MSG03.message, MSG.MSG03.httpStatus, MSG.MSG03.code));
     }
 
+    const profileStatus = User.getProfileStatus(user);
     delete user.tokenVersion; // keep revocation data out of req.user
+    delete user.password;
 
     if (!user.isActive) {
       return next(new AppError(MSG.MSG06.message, MSG.MSG06.httpStatus, MSG.MSG06.code));
+    }
+
+    if (!profileStatus.profileCompleted && !allowIncomplete) {
+      return next(new AppError(MSG.MSG74.message, MSG.MSG74.httpStatus, MSG.MSG74.code));
     }
 
     // Attach user context to request (never includes password – lean() + select behaviour)
@@ -77,12 +89,19 @@ export const verifyToken = async (req, res, next) => {
     req.userId    = user._id.toString();
     req.userRole  = user.roleName;
     req.token     = token;
+    req.profileStatus = profileStatus;
 
     next();
   } catch (error) {
     next(error);
   }
 };
+
+/** @middleware verifyToken – protected routes; incomplete customer profiles get 403. */
+export const verifyToken = authenticate();
+
+/** @middleware verifyTokenAllowIncomplete – routes a customer needs to finish their profile. */
+export const verifyTokenAllowIncomplete = authenticate({ allowIncomplete: true });
 
 /**
  * @middleware optionalAuth
@@ -115,4 +134,4 @@ export const optionalAuth = async (req, res, next) => {
   }
 };
 
-export default { verifyToken, optionalAuth };
+export default { verifyToken, verifyTokenAllowIncomplete, optionalAuth };

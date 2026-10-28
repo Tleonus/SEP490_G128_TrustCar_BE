@@ -64,8 +64,8 @@ export const login = async ({ email, password, ipAddress, userAgent }) => {
   // ── Unknown email → generic error, nothing to audit against
   if (!user) throw invalidCredentials();
 
-  // ── Wrong password → generic error (no lock)
-  const isPasswordCorrect = await user.comparePassword(password);
+  // ── Wrong password, or account without a password (Google-only) → generic error (no lock)
+  const isPasswordCorrect = Boolean(user.password) && await user.comparePassword(password);
   if (!isPasswordCorrect) {
     await ActivityLog.log({
       eventType:        ActivityEventType.LOGIN_FAILED,
@@ -309,11 +309,14 @@ export const resetPassword = async ({ token, newPassword }) => {
  */
 export const getMyProfile = async (userId) => {
   const user = await User.findById(userId)
+    .select('+password') // only to compute profile status; never returned
     .populate('role', 'name permissions')
     .lean();
 
   if (!user) throw new AppError(MSG.MSG17.message, 404, MSG.MSG17.code);
-  return user;
+  const profileStatus = User.getProfileStatus(user);
+  delete user.password;
+  return { ...user, ...profileStatus };
 };
 
 export default {

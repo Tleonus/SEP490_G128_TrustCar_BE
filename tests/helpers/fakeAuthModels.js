@@ -11,9 +11,15 @@
  * - `ActivityLog.log` writes to an in-memory array.
  * - `sendMail` (external side effect) is replaced by a recorder that can be
  *   switched into failure mode.
+ * - `verifyGoogleIdToken` (Firebase) is replaced by a stub whose next result
+ *   is set per test (`h.google.next(...)`).
+ * - Unique indexes of User (email, firebaseUid, customer, customer phone) are
+ *   emulated: a violating write throws a MongoServerError-like E11000 error.
  *
  * Supported query surface (keep in sync with what the auth code actually uses):
- *   findOne / findById / exists / updateOne / findOneAndUpdate
+ *   User:     findOne / findById / exists / create / updateOne / findOneAndUpdate / save
+ *   Customer: find / findOne / findById / create / updateOne / deleteOne
+ *   Role:     findOne (fixed in-memory roles)
  *   chain: .select('+a -b') .populate() .lean() and await
  *   update operators: $set, $unset, $inc
  *   filter operators: equality (dot paths), $gt, $gte, $lt, $lte, $ne
@@ -174,7 +180,24 @@ export const setupAuthHarness = async () => {
     default: {},
   }));
 
+  const google = { result: null };
+  class GoogleTokenError extends Error {
+    constructor(kind, message) { super(message); this.kind = kind; this.name = 'GoogleTokenError'; }
+  }
+  jest.unstable_mockModule('../../src/config/firebase.js', () => ({
+    GoogleTokenError,
+    verifyGoogleIdToken: jest.fn(async () => {
+      const next = google.result;
+      if (!next) throw new GoogleTokenError('INVALID', 'no stubbed Google identity');
+      if (next instanceof Error) throw next;
+      return { ...next };
+    }),
+    default: {},
+  }));
+
   const { default: User }        = await import('../../src/models/User.js');
+  const { default: Customer }    = await import('../../src/models/Customer.js');
+  const { default: Role }        = await import('../../src/models/Role.js');
   const { default: ActivityLog } = await import('../../src/models/ActivityLog.js');
   const { default: app }         = await import('../../src/app.js');
 
@@ -187,6 +210,25 @@ export const setupAuthHarness = async () => {
   const findRaw = (filter) => [...users.values()].find((u) => matches(u, filter)) || null;
   const query = (resolver) => new FakeQuery(User, users, hidden, resolver);
 
+  /** Emulates the unique indexes declared on User. */
+  const assertUnique = (candidate, id) => {
+    const others = [...users.values()].filter((u) => String(u._id) !== String(id));
+    const rules = [
+      ['email',       (u) => u.email === candidate.email],
+      ['firebaseUid', (u) => typeof candidate.firebaseUid === 'string' && u.firebaseUid === candidate.firebaseUid],
+      ['customer',    (u) => candidate.customer && u.customer && String(u.customer) === String(candidate.customer)],
+      ['phone',       (u) => candidate.roleName === 'CUSTOMER' && typeof candidate.phone === 'string'
+                              && u.roleName === 'CUSTOMER' && u.phone === candidate.phone],
+    ];
+    const hit = rules.find(([, clash]) => others.some(clash));
+    if (hit) {
+      const [field] = hit;
+      throw Object.assign(new Error(`E11000 duplicate key error collection: users index: ${field}_1`), {
+        name: 'MongoServerError', code: 11000, keyPattern: { [field]: 1 }, keyValue: { [field]: candidate[field] },
+      });
+    }
+  };
+
   jest.spyOn(User, 'findOne').mockImplementation((filter) => query(() => findRaw(filter)));
   jest.spyOn(User, 'findById').mockImplementation((id) => query(() => users.get(String(id)) || null));
 
@@ -197,7 +239,12 @@ export const setupAuthHarness = async () => {
 
   jest.spyOn(User, 'updateOne').mockImplementation((filter, update) => {
     const raw = findRaw(filter);
-    if (raw) applyUpdate(raw, update);
+    if (raw) {
+      const next = clone(raw);
+      applyUpdate(next, update);
+      assertUnique(next, raw._id);
+      applyUpdate(raw, update);
+    }
     return Promise.resolve({ acknowledged: true, matchedCount: raw ? 1 : 0, modifiedCount: raw ? 1 : 0 });
   });
 
@@ -208,6 +255,9 @@ export const setupAuthHarness = async () => {
     let snapshot = null;
     if (raw) {
       const before = clone(raw);
+      const next = clone(raw);
+      applyUpdate(next, update);
+      assertUnique(next, raw._id);
       applyUpdate(raw, update);
       snapshot = options.new ? raw : before;
     }
@@ -215,25 +265,77 @@ export const setupAuthHarness = async () => {
   });
 
   jest.spyOn(User.prototype, 'save').mockImplementation(async function save(options = {}) {
-    if (this.isModified('password')) this.password = await User.hashPassword(this.password);
+    if (this.isModified('password') && this.password) this.password = await User.hashPassword(this.password);
     if (options.validateBeforeSave !== false) await this.validate();
 
     const id = this._id.toString();
-    if (this.isNew || !users.has(id)) {
-      users.set(id, this.toObject({ depopulate: true, virtuals: false }));
-    } else {
-      const raw = users.get(id);
+    const writeModified = (target) => {
       this.modifiedPaths().forEach((path) => {
         const value = this.get(path);
-        if (value === undefined) unsetPath(raw, path);
-        else setPath(raw, path, clone(value?.toObject ? value.toObject() : value));
+        if (value === undefined) unsetPath(target, path);
+        else setPath(target, path, clone(value?.toObject ? value.toObject() : value));
       });
+    };
+    if (this.isNew || !users.has(id)) {
+      const raw = this.toObject({ depopulate: true, virtuals: false });
+      assertUnique(raw, id);
+      users.set(id, raw);
+    } else {
+      const next = clone(users.get(id));
+      writeModified(next);
+      assertUnique(next, id);
+      writeModified(users.get(id));
     }
     this.isNew = false;
     return this;
   });
 
+  jest.spyOn(User, 'create').mockImplementation(async (data) => {
+    const doc = new User(data);
+    await doc.save();
+    return doc;
+  });
+
   const hashSpy = jest.spyOn(User, 'hashPassword');
+
+  // ── Customer (showroom profiles) ───────────────────────────────────────────
+  const customers = new Map();
+  const customerList = (filter) => [...customers.values()].filter((c) => matches(c, filter));
+  const listQuery = (resolver) => {
+    const q = {
+      select: () => q, sort: () => q, limit: () => q, lean: () => q, populate: () => q,
+      then: (ok, ko) => Promise.resolve().then(resolver).then(ok, ko),
+    };
+    return q;
+  };
+  jest.spyOn(Customer, 'find').mockImplementation((filter) => listQuery(() => customerList(filter).map(clone)));
+  jest.spyOn(Customer, 'findOne').mockImplementation((filter) => listQuery(() => clone(customerList(filter)[0] ?? null)));
+  jest.spyOn(Customer, 'findById').mockImplementation((id) => listQuery(() => clone(customers.get(String(id)) ?? null)));
+  jest.spyOn(Customer, 'create').mockImplementation(async (data) => {
+    const doc = new Customer(data);
+    await doc.validate();
+    customers.set(doc._id.toString(), doc.toObject({ depopulate: true, virtuals: false }));
+    return doc;
+  });
+  jest.spyOn(Customer, 'updateOne').mockImplementation(async (filter, update) => {
+    const raw = customerList(filter)[0];
+    if (raw) applyUpdate(raw, update);
+    return { acknowledged: true, matchedCount: raw ? 1 : 0, modifiedCount: raw ? 1 : 0 };
+  });
+  jest.spyOn(Customer, 'deleteOne').mockImplementation(async (filter) => {
+    const raw = customerList(filter)[0];
+    if (raw) customers.delete(String(raw._id));
+    return { acknowledged: true, deletedCount: raw ? 1 : 0 };
+  });
+
+  // ── Roles (fixed ids so tests can compare) ────────────────────────────────
+  const roleIds = Object.fromEntries(
+    ['ADMIN', 'SALES_STAFF', 'CUSTOMER'].map((name) => [name, new mongoose.Types.ObjectId()])
+  );
+  jest.spyOn(Role, 'findOne').mockImplementation((filter = {}) => listQuery(() => {
+    const name = filter.name;
+    return roleIds[name] && filter.isActive !== false ? { _id: roleIds[name], name, isActive: true } : null;
+  }));
 
   jest.spyOn(ActivityLog, 'log').mockImplementation(async (entry) => { logs.push(entry); });
 
@@ -246,6 +348,15 @@ export const setupAuthHarness = async () => {
     logs,
     mail,
     hashSpy,
+    Customer,
+    customers,
+    roleIds,
+
+    /** Controls the stubbed Firebase verification for the next calls. */
+    google: {
+      next(identity) { google.result = identity; },
+      fail(kind) { google.result = new GoogleTokenError(kind, `stubbed ${kind}`); },
+    },
 
     /** Clears all in-memory state between tests. */
     reset() {
@@ -254,21 +365,31 @@ export const setupAuthHarness = async () => {
       mail.sent.length = 0;
       mail.fail = false;
       hashSpy.mockClear();
+      customers.clear();
+      google.result = null;
     },
 
     /** Inserts a valid user directly into the store (password hashed). */
     async createUser(overrides = {}) {
-      const plain = overrides.password || 'TrustCar2026';
+      // password: null → account without password (Google-only customer)
+      const plain = overrides.password === null ? undefined : (overrides.password || 'TrustCar2026');
+      const roleName = overrides.roleName || 'ADMIN';
       const doc = new User({
         fullName: 'Test User',
         email:    `user${users.size + 1}@trustcar.vn`,
-        role:     new mongoose.Types.ObjectId(),
-        roleName: 'ADMIN',
+        role:     roleIds[roleName],
+        roleName,
         ...overrides,
         password: plain,
       });
       await doc.save();
       return { id: doc._id.toString(), email: doc.email, password: plain };
+    },
+
+    /** Inserts a showroom Customer directly into the store. */
+    async createCustomer(overrides = {}) {
+      const doc = await Customer.create({ fullName: 'Khach Showroom', phone: '0901234567', ...overrides });
+      return doc._id.toString();
     },
 
     /** Raw stored record (all fields, including select:false ones). */
