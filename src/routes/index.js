@@ -21,6 +21,7 @@ import authRoutes        from './authRoutes.js';
 import userRoutes        from './userRoutes.js';
 import carRoutes         from './carRoutes.js';
 import publicCarRoutes   from './publicCarRoutes.js';
+import inventoryRoutes   from './inventoryRoutes.js';
 
 const router = Router();
 
@@ -39,5 +40,8 @@ router.use('/manage/cars', carRoutes);
 
 // ── Public Catalog (No Auth) ───────────────────────────────────────────────
 router.use('/public/cars', publicCarRoutes);
+
+// ── Inventory Aging & Markdown (Staff & Admin) ───────────────────────────
+router.use('/inventory', inventoryRoutes);
 
 export default router;
