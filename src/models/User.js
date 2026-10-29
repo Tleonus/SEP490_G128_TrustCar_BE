@@ -33,7 +33,9 @@ const UserSchema = new mongoose.Schema(
     // ── Identity ────────────────────────────────────────────────────────
     fullName: {
       type:      String,
-      required:  [true, 'Full name is required.'],
+      // Customers created through Google may start without a name and fill it
+      // in when completing their profile (see profileStatus).
+      required:  [function () { return this.roleName !== Roles.CUSTOMER; }, 'Full name is required.'],
       trim:      true,
       maxlength: [100, 'Full name cannot exceed 100 characters.'],
     },
@@ -61,9 +63,30 @@ const UserSchema = new mongoose.Schema(
     // ── Authentication ───────────────────────────────────────────────────
     password: {
       type:     String,
-      required: [true, 'Password is required.'],
+      // Only a customer account linked to Google may exist without a password
+      // (until the profile is completed). When firebaseUid was not loaded we
+      // cannot tell, so the rule is not applied.
+      required: [
+        function () {
+          if (this.roleName !== Roles.CUSTOMER) return true;
+          return this.isSelected('firebaseUid') && !this.firebaseUid;
+        },
+        'Password is required.',
+      ],
       minlength: 8,
       select:   false, // Never returned in queries unless explicitly .select('+password')
+    },
+
+    // Firebase Authentication UID of the linked Google identity (customers only).
+    firebaseUid: {
+      type:   String,
+      select: false,
+    },
+
+    // Customer (showroom profile) this customer account is linked to.
+    customer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref:  'Customer',
     },
 
     passwordResetToken: {
@@ -151,6 +174,19 @@ const UserSchema = new mongoose.Schema(
 UserSchema.index({ email: 1 });
 UserSchema.index({ roleName: 1 });
 UserSchema.index({ isActive: 1 });
+UserSchema.index(
+  { firebaseUid: 1 },
+  { unique: true, partialFilterExpression: { firebaseUid: { $type: 'string' } } }
+);
+UserSchema.index(
+  { customer: 1 },
+  { unique: true, partialFilterExpression: { customer: { $type: 'objectId' } } }
+);
+// One phone number per customer account (staff phones are not constrained).
+UserSchema.index(
+  { phone: 1 },
+  { unique: true, partialFilterExpression: { roleName: Roles.CUSTOMER, phone: { $type: 'string' } } }
+);
 
 // ── Virtuals ───────────────────────────────────────────────────────────────
 /**
@@ -167,7 +203,8 @@ UserSchema.virtual('isLocked').get(function () {
  * Uses bcryptjs with BCRYPT_SALT_ROUNDS env variable (default 12).
  */
 UserSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
+  // Google-only customers have no password yet – nothing to hash.
+  if (!this.isModified('password') || !this.password) return next();
   try {
     this.password = await this.constructor.hashPassword(this.password);
     next();
@@ -201,16 +238,42 @@ UserSchema.methods.comparePassword = async function (candidatePassword) {
 };
 
 /**
- * Returns a safe public representation of the user (no password, no internal fields).
+ * Profile completeness of an account (document or lean object).
+ * Staff accounts are always complete; a customer is complete once it has a
+ * full name, a phone number and a password. The password must have been
+ * loaded (select '+password') for the result to be accurate.
+ *
+ * @param {object} user
+ * @returns {{ profileCompleted: boolean, missingFields: string[] }}
+ */
+UserSchema.statics.getProfileStatus = function (user) {
+  if (user.roleName !== Roles.CUSTOMER) return { profileCompleted: true, missingFields: [] };
+  const missingFields = [];
+  if (!user.fullName) missingFields.push('fullName');
+  if (!user.phone) missingFields.push('phone');
+  if (!user.password) missingFields.push('password');
+  return { profileCompleted: missingFields.length === 0, missingFields };
+};
+
+/** Profile completeness of this document (load '+password' first). */
+UserSchema.methods.profileStatus = function () {
+  return this.constructor.getProfileStatus(this);
+};
+
+/**
+ * Returns a safe public representation of the user (no password, no internal fields),
+ * including its profile completeness. Load '+password' first for an accurate status.
  * @returns {object}
  */
 UserSchema.methods.toSafeObject = function () {
   const obj = this.toObject({ virtuals: true });
+  Object.assign(obj, this.profileStatus());
   delete obj.password;
   delete obj.passwordResetToken;
   delete obj.failedLoginAttempts;
   delete obj.lockedUntil;
   delete obj.tokenVersion;
+  delete obj.firebaseUid;
   return obj;
 };
 
