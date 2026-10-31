@@ -89,16 +89,16 @@ export const login = async ({ email, password, ipAddress, userAgent }) => {
   user.lastLoginIp = ipAddress || null;
   await user.save({ validateBeforeSave: false });
 
-  const accessToken = signAccessToken(user);
+  const accessToken  = signAccessToken(user);
   const refreshToken = signRefreshToken(user);
 
   await ActivityLog.log({
-    eventType: ActivityEventType.USER_LOGIN,
-    performedBy: user._id,
+    eventType:        ActivityEventType.USER_LOGIN,
+    performedBy:      user._id,
     performedByEmail: user.email,
-    targetModel: 'User',
-    targetId: user._id,
-    summary: `Successful login from ${ipAddress || 'unknown IP'}`,
+    targetModel:      'User',
+    targetId:         user._id,
+    summary:          `Successful login from ${ipAddress || 'unknown IP'}`,
     ipAddress,
     userAgent,
   });
@@ -153,12 +153,12 @@ export const logout = async ({ userId, email, ipAddress, userAgent }) => {
   await User.updateOne({ _id: userId }, { $inc: { tokenVersion: 1 } });
 
   await ActivityLog.log({
-    eventType: ActivityEventType.USER_LOGOUT,
-    performedBy: userId,
+    eventType:        ActivityEventType.USER_LOGOUT,
+    performedBy:      userId,
     performedByEmail: email,
-    targetModel: 'User',
-    targetId: userId,
-    summary: 'User logged out (all sessions revoked)',
+    targetModel:      'User',
+    targetId:         userId,
+    summary:          'User logged out (all sessions revoked)',
     ipAddress,
     userAgent,
   });
@@ -190,17 +190,17 @@ export const changePassword = async ({ userId, currentPassword, newPassword, ipA
     throw new AppError(MSG.MSG13.message, 422, MSG.MSG13.code);
   }
 
-  user.password = newPassword; // Pre-save hook will hash this
+  user.password      = newPassword; // Pre-save hook will hash this
   user.tokenVersion = (user.tokenVersion ?? 0) + 1; // revoke every session, including this one
   await user.save();
 
   await ActivityLog.log({
-    eventType: ActivityEventType.PASSWORD_CHANGED,
-    performedBy: user._id,
+    eventType:        ActivityEventType.PASSWORD_CHANGED,
+    performedBy:      user._id,
     performedByEmail: user.email,
-    targetModel: 'User',
-    targetId: user._id,
-    summary: 'User changed their own password',
+    targetModel:      'User',
+    targetId:         user._id,
+    summary:          'User changed their own password',
     ipAddress,
   });
 };
@@ -215,8 +215,8 @@ export const forgotPassword = async (email) => {
   // Security: do not reveal whether email exists – always succeed silently
   if (!user) return;
 
-  const resetToken = await generateCryptoToken(32);
-  const expiresAt = dayjs().add(1, 'hour').toDate();
+  const resetToken  = await generateCryptoToken(32);
+  const expiresAt   = dayjs().add(1, 'hour').toDate();
 
   user.passwordResetToken = { token: resetToken, expiresAt };
   await user.save({ validateBeforeSave: false });
@@ -227,8 +227,8 @@ export const forgotPassword = async (email) => {
   // email is registered); log it server-side without the reset link.
   try {
     await sendMail({
-      to: user.email,
-      toName: user.fullName,
+      to:      user.email,
+      toName:  user.fullName,
       subject: 'TrustCar – Password Reset Request',
       html: `
         <h2>Password Reset</h2>
@@ -245,12 +245,12 @@ export const forgotPassword = async (email) => {
   }
 
   await ActivityLog.log({
-    eventType: ActivityEventType.PASSWORD_RESET,
-    performedBy: user._id,
+    eventType:        ActivityEventType.PASSWORD_RESET,
+    performedBy:      user._id,
     performedByEmail: user.email,
-    targetModel: 'User',
-    targetId: user._id,
-    summary: 'Password reset email dispatched',
+    targetModel:      'User',
+    targetId:         user._id,
+    summary:          'Password reset email dispatched',
   });
 };
 
@@ -268,7 +268,7 @@ export const forgotPassword = async (email) => {
 export const resetPassword = async ({ token, newPassword }) => {
   const invalidLink = () => new AppError(MSG.MSG14.message, MSG.MSG14.httpStatus, MSG.MSG14.code);
   const validLinkFilter = () => ({
-    'passwordResetToken.token': token,
+    'passwordResetToken.token':     token,
     'passwordResetToken.expiresAt': { $gt: new Date() },
     isActive: true,
   });
@@ -283,9 +283,9 @@ export const resetPassword = async ({ token, newPassword }) => {
   const user = await User.findOneAndUpdate(
     validLinkFilter(),
     {
-      $set: { password: hashedPassword },
+      $set:   { password: hashedPassword },
       $unset: { passwordResetToken: 1 },
-      $inc: { tokenVersion: 1 },
+      $inc:   { tokenVersion: 1 },
     },
     { new: true }
   );
@@ -293,12 +293,12 @@ export const resetPassword = async ({ token, newPassword }) => {
   if (!user) throw invalidLink();
 
   await ActivityLog.log({
-    eventType: ActivityEventType.PASSWORD_RESET,
-    performedBy: user._id,
+    eventType:        ActivityEventType.PASSWORD_RESET,
+    performedBy:      user._id,
     performedByEmail: user.email,
-    targetModel: 'User',
-    targetId: user._id,
-    summary: 'Password successfully reset via token',
+    targetModel:      'User',
+    targetId:         user._id,
+    summary:          'Password successfully reset via token',
   });
 };
 

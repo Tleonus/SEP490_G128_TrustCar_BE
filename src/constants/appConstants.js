@@ -83,7 +83,11 @@ export const Roles = Object.freeze({
   ADMIN:       'ADMIN',
   SALES_STAFF: 'SALES_STAFF',
   INSPECTOR:   'INSPECTOR',
+  CUSTOMER:    'CUSTOMER', // self-registered website customer – no internal permissions
 });
+
+// Internal (staff) roles – the only roles Admin can assign via user management.
+export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
 
 // ── Granular Permissions ───────────────────────────────────────────────────────
 // Ref: FE-13
@@ -146,6 +150,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.CAR_UPDATE,
     Permissions.CAR_STATUS_CHANGE,
   ],
+
+  [Roles.CUSTOMER]: [],
 });
 
 // ── Vehicle Specification Enums ───────────────────────────────────────────────
@@ -194,6 +200,9 @@ export const ActivityEventType = Object.freeze({
   ACCOUNT_LOCKED:        'ACCOUNT_LOCKED',
   PASSWORD_CHANGED:      'PASSWORD_CHANGED',
   PASSWORD_RESET:        'PASSWORD_RESET',
+  CUSTOMER_REGISTERED:   'CUSTOMER_REGISTERED',
+  GOOGLE_LINKED:         'GOOGLE_LINKED',
+  PROFILE_COMPLETED:     'PROFILE_COMPLETED',
 
   // User Management
   USER_CREATED:          'USER_CREATED',

@@ -60,19 +60,27 @@ RoleSchema.index({ name: 1 });
  */
 RoleSchema.statics.seedDefaultRoles = async function () {
   const { ROLE_PERMISSIONS } = await import('../constants/appConstants.js');
-  const count = await this.countDocuments();
-  if (count > 0) return;
+  const descriptions = {
+    [Roles.ADMIN]:       'Full system access – can manage all resources and users.',
+    [Roles.SALES_STAFF]: 'Operational access – inventory, customers, leads, and appointments.',
+    [Roles.CUSTOMER]:    'Self-registered website customer – no internal permissions.',
+  };
 
-  const defaults = Object.values(Roles).map((roleName) => ({
-    name:        roleName,
-    description: roleName === Roles.ADMIN
-      ? 'Full system access – can manage all resources and users.'
-      : 'Operational access – inventory, customers, leads, and appointments.',
-    permissions: ROLE_PERMISSIONS[roleName] || [],
-  }));
+  // Idempotent: only inserts default roles that are missing, so databases seeded
+  // before a role was introduced (e.g. CUSTOMER) receive it on next startup.
+  const existing = await this.find({}, { name: 1 }).lean();
+  const existingNames = new Set(existing.map((r) => r.name));
+  const missing = Object.values(Roles)
+    .filter((roleName) => !existingNames.has(roleName))
+    .map((roleName) => ({
+      name:        roleName,
+      description: descriptions[roleName],
+      permissions: ROLE_PERMISSIONS[roleName] || [],
+    }));
 
-  await this.insertMany(defaults);
-  console.log('🌱  Roles seeded: ADMIN, SALES_STAFF');
+  if (missing.length === 0) return;
+  await this.insertMany(missing);
+  console.log(`🌱  Roles seeded: ${missing.map((r) => r.name).join(', ')}`);
 };
 
 const Role = mongoose.model('Role', RoleSchema);
