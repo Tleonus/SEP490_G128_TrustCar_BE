@@ -204,7 +204,7 @@ describe('POST /api/v1/auth/forgot-password + /reset-password', () => {
     await forgot(user.email);
 
     const { html } = h.mail.sent[0];
-    expect(html).toContain('Hello &lt;b&gt;X&lt;/b&gt; &amp; &quot;Y&quot;,');
+    expect(html).toContain('Xin chào &lt;b&gt;X&lt;/b&gt; &amp; &quot;Y&quot;,');
     expect(html).not.toContain('<b>X</b>');
     expect(html).toContain(`reset-password?token=${linkOf(user.id)}`);
   });
