@@ -74,7 +74,11 @@ export const AppointmentStatus = Object.freeze({
 export const Roles = Object.freeze({
   ADMIN:       'ADMIN',
   SALES_STAFF: 'SALES_STAFF',
+  CUSTOMER:    'CUSTOMER', // self-registered website customer – no internal permissions
 });
+
+// Internal (staff) roles – the only roles Admin can assign via user management.
+export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
 
 // ── Granular Permissions ───────────────────────────────────────────────────────
 // Ref: FE-13
@@ -131,6 +135,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.APPOINTMENT_UPDATE,
     Permissions.REPORT_VIEW,
   ],
+
+  [Roles.CUSTOMER]: [],
 });
 
 // ── Vehicle Specification Enums ───────────────────────────────────────────────
@@ -179,6 +185,9 @@ export const ActivityEventType = Object.freeze({
   ACCOUNT_LOCKED:        'ACCOUNT_LOCKED',
   PASSWORD_CHANGED:      'PASSWORD_CHANGED',
   PASSWORD_RESET:        'PASSWORD_RESET',
+  CUSTOMER_REGISTERED:   'CUSTOMER_REGISTERED',
+  GOOGLE_LINKED:         'GOOGLE_LINKED',
+  PROFILE_COMPLETED:     'PROFILE_COMPLETED',
 
   // User Management
   USER_CREATED:          'USER_CREATED',
@@ -206,13 +215,6 @@ export const ActivityEventType = Object.freeze({
   APPOINTMENT_CONFIRMED: 'APPOINTMENT_CONFIRMED',
   APPOINTMENT_CANCELLED: 'APPOINTMENT_CANCELLED',
   APPOINTMENT_COMPLETED: 'APPOINTMENT_COMPLETED',
-});
-
-// ── Brute-Force / Account Lock Thresholds ─────────────────────────────────────
-// Ref: GBR-12
-export const AUTH_LOCK = Object.freeze({
-  MAX_FAILED_ATTEMPTS:    5,
-  LOCK_DURATION_MINUTES:  30,
 });
 
 // ── File Upload Constraints ───────────────────────────────────────────────────

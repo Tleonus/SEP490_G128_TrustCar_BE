@@ -1,6 +1,6 @@
 /**
  * @file systemMessages.js
- * @description Standardized error codes and messages (MSG01 – MSG68) for the
+ * @description Standardized error codes and messages (MSG01 – MSG74) for the
  * TrustCar platform. All API error responses reference these codes to enable
  * consistent front-end handling and support ticket correlation.
  *
@@ -28,9 +28,7 @@ export const SystemMessages = Object.freeze({
   MSG07: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect.',                         httpStatus: 401 },
   MSG08: { code: 'EMAIL_NOT_FOUND',      message: 'No account is registered with this email address.',       httpStatus: 404 },
   MSG09: { code: 'LOGOUT_SUCCESS',       message: 'You have been logged out successfully.',                  httpStatus: 200 },
-  MSG10: { code: 'ACCOUNT_LOCKED',       message: 'Account is locked due to too many failed login attempts. Try again in 30 minutes.', httpStatus: 423 },
-  MSG11: { code: 'LOGIN_ATTEMPT_WARN',   message: 'Invalid credentials. Account will be locked after {remaining} more failed attempt(s).', httpStatus: 401 },
-  MSG12: { code: 'WEAK_PASSWORD',        message: 'Password must be at least 8 characters and include uppercase, lowercase, digit, and special character.', httpStatus: 422 },
+  MSG12: { code: 'WEAK_PASSWORD',        message: 'Password must be 8-128 characters and include uppercase, lowercase and digit; only letters, digits and !@#$%^&*-_=+ are allowed.', httpStatus: 422 },
   MSG13: { code: 'PASSWORD_SAME',        message: 'New password must be different from the current password.', httpStatus: 422 },
   MSG14: { code: 'RESET_TOKEN_INVALID',  message: 'Password reset token is invalid or has expired.',         httpStatus: 400 },
   MSG15: { code: 'REFRESH_TOKEN_INVALID', message: 'Refresh token is invalid or has expired.',               httpStatus: 401 },
@@ -123,6 +121,16 @@ export const SystemMessages = Object.freeze({
   MSG66: { code: 'DUPLICATE_KEY',        message: 'A record with this unique value already exists.',          httpStatus: 409 },
   MSG67: { code: 'INVALID_REQUEST',      message: 'The request is malformed or contains invalid JSON.',       httpStatus: 400 },
   MSG68: { code: 'OPERATION_NOT_ALLOWED', message: 'This operation is not allowed in the current context.',   httpStatus: 405 },
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // CUSTOMER REGISTRATION – MSG69 to MSG74
+  // ════════════════════════════════════════════════════════════════════════════
+  MSG69: { code: 'PHONE_ALREADY_EXISTS',     message: 'This phone number is already used by another account.',      httpStatus: 409 },
+  MSG70: { code: 'GOOGLE_TOKEN_INVALID',     message: 'Google sign-in could not be verified. Please try again.',    httpStatus: 401 },
+  MSG71: { code: 'GOOGLE_LOGIN_NOT_ALLOWED', message: 'Google sign-in is not available for staff accounts.',        httpStatus: 403 },
+  MSG72: { code: 'GOOGLE_ACCOUNT_CONFLICT',  message: 'This email is already linked to a different Google account.', httpStatus: 409 },
+  MSG73: { code: 'GOOGLE_AUTH_UNAVAILABLE',  message: 'Google sign-in is temporarily unavailable. Please try again later.', httpStatus: 503 },
+  MSG74: { code: 'PROFILE_INCOMPLETE',       message: 'Please complete your profile (phone, password, full name) to continue.', httpStatus: 403 },
 });
 
 export default SystemMessages;

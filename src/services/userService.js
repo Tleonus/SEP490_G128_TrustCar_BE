@@ -73,22 +73,22 @@ export const createUser = async ({
 
   const user = await User.create({
     fullName,
-    email:     email.toLowerCase(),
+    email: email.toLowerCase(),
     password,
     phone,
-    role:      role._id,
-    roleName:  role.name,
+    role: role._id,
+    roleName: role.name,
     createdBy: createdByUserId,
   });
 
   await ActivityLog.log({
-    eventType:        ActivityEventType.USER_CREATED,
-    performedBy:      createdByUserId,
-    targetModel:      'User',
-    targetId:         user._id,
-    summary:          `New ${role.name} account created for ${email}`,
+    eventType: ActivityEventType.USER_CREATED,
+    performedBy: createdByUserId,
+    targetModel: 'User',
+    targetId: user._id,
+    summary: `New ${role.name} account created for ${email}`,
     ipAddress,
-    metadata:         { roleName: role.name, email },
+    metadata: { roleName: role.name, email },
   });
 
   return user.toSafeObject();
@@ -104,14 +104,14 @@ export const getUsers = async (query) => {
   const { page, limit, skip } = parsePagination(query);
 
   const filter = {};
-  if (query.roleName)          filter.roleName = query.roleName.toUpperCase();
+  if (query.roleName) filter.roleName = query.roleName.toUpperCase();
   if (query.isActive !== undefined) {
     filter.isActive = query.isActive === 'true' || query.isActive === true;
   }
   if (query.search) {
     filter.$or = [
       { fullName: { $regex: query.search, $options: 'i' } },
-      { email:    { $regex: query.search, $options: 'i' } },
+      { email: { $regex: query.search, $options: 'i' } },
     ];
   }
 
@@ -163,26 +163,35 @@ export const updateUser = async ({ userId, updates, newRoleName, updatedByUserId
 
   // Apply simple field updates
   if (updates.fullName !== undefined) user.fullName = updates.fullName;
-  if (updates.phone    !== undefined) user.phone    = updates.phone;
-  if (updates.avatar   !== undefined) user.avatar   = updates.avatar;
+  if (updates.phone !== undefined) user.phone = updates.phone;
+  if (updates.avatar !== undefined) user.avatar = updates.avatar;
+
+  // Customer accounts are self-registered; they can never be turned into staff.
+  if (newRoleName && user.roleName === Roles.CUSTOMER) {
+    throw new AppError(
+      'The role of a customer account cannot be changed.',
+      MSG.MSG42.httpStatus,
+      MSG.MSG42.code
+    );
+  }
 
   // Role change (Admin only – enforced at route level, GBR-03)
   if (newRoleName && newRoleName !== user.roleName) {
-    const newRole  = await resolveRole(newRoleName);
-    user.role      = newRole._id;
-    user.roleName  = newRole.name;
+    const newRole = await resolveRole(newRoleName);
+    user.role = newRole._id;
+    user.roleName = newRole.name;
   }
 
   user.updatedBy = updatedByUserId;
   await user.save();
 
   await ActivityLog.log({
-    eventType:        ActivityEventType.USER_UPDATED,
-    performedBy:      updatedByUserId,
-    targetModel:      'User',
-    targetId:         user._id,
-    changes:          { before, after: { fullName: user.fullName, phone: user.phone, roleName: user.roleName } },
-    summary:          `User profile updated for ${user.email}`,
+    eventType: ActivityEventType.USER_UPDATED,
+    performedBy: updatedByUserId,
+    targetModel: 'User',
+    targetId: user._id,
+    changes: { before, after: { fullName: user.fullName, phone: user.phone, roleName: user.roleName } },
+    summary: `User profile updated for ${user.email}`,
     ipAddress,
   });
 
@@ -211,16 +220,16 @@ export const deactivateUser = async ({ targetUserId, requestingUserId, ipAddress
     throw new AppError('This account is already inactive.', 409, 'ACCOUNT_ALREADY_INACTIVE');
   }
 
-  user.isActive  = false;
+  user.isActive = false;
   user.updatedBy = requestingUserId;
   await user.save({ validateBeforeSave: false });
 
   await ActivityLog.log({
-    eventType:        ActivityEventType.USER_DEACTIVATED,
-    performedBy:      requestingUserId,
-    targetModel:      'User',
-    targetId:         user._id,
-    summary:          `Account deactivated for ${user.email}`,
+    eventType: ActivityEventType.USER_DEACTIVATED,
+    performedBy: requestingUserId,
+    targetModel: 'User',
+    targetId: user._id,
+    summary: `Account deactivated for ${user.email}`,
     ipAddress,
   });
 };
@@ -242,19 +251,19 @@ export const activateUser = async ({ targetUserId, requestingUserId, ipAddress }
     throw new AppError(MSG.MSG19.message, MSG.MSG19.httpStatus, MSG.MSG19.code);
   }
 
-  user.isActive  = true;
+  user.isActive = true;
   user.updatedBy = requestingUserId;
   // Clear any stale lock on reactivation
   user.failedLoginAttempts = 0;
-  user.lockedUntil         = null;
+  user.lockedUntil = null;
   await user.save({ validateBeforeSave: false });
 
   await ActivityLog.log({
-    eventType:        ActivityEventType.USER_ACTIVATED,
-    performedBy:      requestingUserId,
-    targetModel:      'User',
-    targetId:         user._id,
-    summary:          `Account reactivated for ${user.email}`,
+    eventType: ActivityEventType.USER_ACTIVATED,
+    performedBy: requestingUserId,
+    targetModel: 'User',
+    targetId: user._id,
+    summary: `Account reactivated for ${user.email}`,
     ipAddress,
   });
 };

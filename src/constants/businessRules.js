@@ -35,11 +35,8 @@ export const BusinessRules = Object.freeze({
   GBR_02: {
     id: 'GBR-02',
     title: 'Role-Based Access Control (RBAC)',
-    description:
-      'Every protected route declares one or more required permissions. ' +
-      'The roleMiddleware resolves the requester's role → permission set and denies access ' +
-      'if the required permission is absent (403 Forbidden).',
-    layer: 'Middleware – roleMiddleware.js (requirePermission)',
+    description: 'Every protected route declares one or more required permissions. The roleMiddleware resolves the requester's role -> permission set and denies access if the required permission is absent (403 Forbidden).',
+    layer: 'Middleware - roleMiddleware.js (requirePermission)',
     messages: ['MSG04', 'MSG05'],
   },
 
@@ -55,15 +52,14 @@ export const BusinessRules = Object.freeze({
 
   GBR_12: {
     id: 'GBR-12',
-    title: 'Brute-Force Account Locking',
+    title: 'Brute-Force Account Locking (RETIRED)',
     description:
-      'After AUTH_LOCK.MAX_FAILED_ATTEMPTS (5) consecutive failed login attempts the account ' +
-      'is locked for AUTH_LOCK.LOCK_DURATION_MINUTES (30) minutes. ' +
-      'A successful login resets the failedLoginAttempts counter to 0. ' +
-      'An ActivityLog entry of type ACCOUNT_LOCKED is written on lock.',
-    layer: 'Service – authService.js (login)',
-    thresholds: { maxAttempts: 5, lockMinutes: 30 },
-    messages: ['MSG10', 'MSG11'],
+      'Retired 2026-10-24 (KAN-9): failed logins no longer lock the account. ' +
+      'Every wrong email/password returns MSG07. Brute-force protection relies on ' +
+      'the /api/v1/auth rate limiter (30 requests / 15 minutes / IP).',
+    layer: 'Middleware – app.js (authLimiter)',
+    retired: true,
+    messages: ['MSG07'],
   },
 
   GBR_21: {
@@ -81,9 +77,10 @@ export const BusinessRules = Object.freeze({
     id: 'GBR-22',
     title: 'Password Complexity Policy',
     description:
-      'Passwords must be ≥ 8 characters and contain at minimum: ' +
-      '1 uppercase letter, 1 lowercase letter, 1 digit, 1 special character ' +
-      '(!@#$%^&*-_=+). Enforced at the DTO validation layer before the service.',
+      'Passwords must be 8-128 characters and contain at minimum: ' +
+      '1 uppercase letter, 1 lowercase letter, 1 digit. Only Latin letters, digits and ' +
+      'the special characters !@#$%^&*-_=+ are allowed (special characters optional). ' +
+      'Enforced at the DTO validation layer before the service.',
     layer: 'Validation – validators.js (passwordSchema) | Joi DTO schemas',
     messages: ['MSG12'],
   },

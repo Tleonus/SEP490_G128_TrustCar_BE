@@ -8,16 +8,17 @@ import { Router } from 'express';
 import Joi from 'joi';
 import * as carController from '../controllers/carController.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
-import { requirePermission, requireAdmin } from '../middlewares/roleMiddleware.js';
+import { requirePermission, requireAdmin, requireRole } from '../middlewares/roleMiddleware.js';
 import { validate, validateParams, objectIdParamSchema } from '../middlewares/validateMiddleware.js';
 import { uploadMultiple, requireFile } from '../middlewares/uploadMiddleware.js';
-import { Permissions, CarStatus, FuelType, Transmission, DriveType, BodyType } from '../constants/appConstants.js';
+import { Roles, Permissions, CarStatus, FuelType, Transmission, DriveType, BodyType } from '../constants/appConstants.js';
 import { joiVIN, joiPlate, joiVehicleYear, joiPrice } from '../utils/validators.js';
 
 const router = Router();
 
 // Auth guard on all routes
-router.use(verifyToken);
+// Internal inventory management: staff only (customer accounts are rejected).
+router.use(verifyToken, requireRole(Roles.ADMIN, Roles.SALES_STAFF));
 
 // ── DTO Schemas ────────────────────────────────────────────────────────────
 
@@ -124,6 +125,31 @@ router.get(
   '/',
   requirePermission(Permissions.CAR_READ),
   carController.listCars
+);
+
+// Featured cars – public-like endpoint (no extra params)
+router.get(
+  '/featured',
+  // No permission needed for featured list (could be public), but keep token guard from router.use(verifyToken)
+  // If you want to allow unauthenticated, move this route to publicCarRoutes.
+  async (req, res, next) => {
+    try {
+      const limit = parseInt(req.query.limit, 10) || 8;
+      // Import Car and CarStatus inside handler to avoid circular deps
+      const Car = (await import('../models/Car.js')).default;
+      const { CarStatus } = await import('../constants/appConstants.js');
+      const cars = await Car.find({
+        status: { $in: [CarStatus.AVAILABLE, CarStatus.APPROVED_CPO] },
+        isActive: true,
+      })
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .lean();
+      return res.json({ success: true, data: cars });
+    } catch (err) {
+      next(err);
+    }
+  }
 );
 
 /**
