@@ -7,6 +7,32 @@
 
 import mongoose from 'mongoose';
 
+const CriteriaSchema = new mongoose.Schema(
+  {
+    noMajorAccident: {
+      type: Boolean,
+      required: true,
+    },
+    noWaterDamage: {
+      type: Boolean,
+      required: true,
+    },
+    engineGearboxIntact: {
+      type: Boolean,
+      required: true,
+    },
+    verifiedOdo: {
+      type: Boolean,
+      required: true,
+    },
+    electricalSystemPassed: {
+      type: Boolean,
+      required: true,
+    },
+  },
+  { _id: false }
+);
+
 const InspectionRecordSchema = new mongoose.Schema(
   {
     carId: {
@@ -19,49 +45,32 @@ const InspectionRecordSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
-    // Checklist fields – Pass/Fail values
-    chassisCondition: {
-      type: String,
-      enum: ['PASS', 'FAIL'],
+    criteria: {
+      type: CriteriaSchema,
       required: true,
     },
-    engineCondition: {
-      type: String,
-      enum: ['PASS', 'FAIL'],
+    odo: {
+      type: Number,
       required: true,
+      min: 0,
     },
-    floodCheck: {
-      type: String,
-      enum: ['PASS', 'FAIL'],
-      required: true,
-    },
-    odoVerification: {
-      type: String,
-      enum: ['PASS', 'FAIL'],
-      required: true,
-    },
-    electricalSystem: {
-      type: String,
-      enum: ['PASS', 'FAIL'],
-      required: true,
-    },
-    summaryReport: {
+    notes: {
       type: String,
       trim: true,
-      default: null,
+      default: '',
     },
-    inspectionDate: {
-      type: Date,
-      default: () => new Date(),
+    evidenceImages: {
+      type: [String],
+      default: [],
     },
-    // Audit fields
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+    result: {
+      type: String,
+      enum: ['PASSED', 'FAILED'],
+      required: true,
     },
-    updatedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+    cpoCertificateId: {
+      type: String,
+      trim: true,
       default: null,
     },
   },
@@ -73,9 +82,9 @@ const InspectionRecordSchema = new mongoose.Schema(
 );
 
 // Indexes for fast lookup
-InspectionRecordSchema.index({ carId: 1 });
+InspectionRecordSchema.index({ carId: 1, createdAt: -1 });
 InspectionRecordSchema.index({ inspectorId: 1 });
-InspectionRecordSchema.index({ inspectionDate: -1 });
+InspectionRecordSchema.index({ cpoCertificateId: 1 });
 
 const InspectionRecord = mongoose.model('InspectionRecord', InspectionRecordSchema);
 export default InspectionRecord;

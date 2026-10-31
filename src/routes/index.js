@@ -22,6 +22,7 @@ import userRoutes        from './userRoutes.js';
 import carRoutes         from './carRoutes.js';
 import publicCarRoutes   from './publicCarRoutes.js';
 import inventoryRoutes   from './inventoryRoutes.js';
+import inspectionRoutes  from './inspectionRoutes.js';
 
 const router = Router();
 
@@ -43,5 +44,8 @@ router.use('/public/cars', publicCarRoutes);
 
 // ── Inventory Aging & Markdown (Staff & Admin) ───────────────────────────
 router.use('/inventory', inventoryRoutes);
+
+// ── Car Inspection Workflow & Approval Engine (Inspector & Admin) ─────────
+router.use('/inspections', inspectionRoutes);
 
 export default router;
