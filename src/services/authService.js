@@ -68,12 +68,12 @@ export const login = async ({ email, password, ipAddress, userAgent }) => {
   const isPasswordCorrect = Boolean(user.password) && await user.comparePassword(password);
   if (!isPasswordCorrect) {
     await ActivityLog.log({
-      eventType:        ActivityEventType.LOGIN_FAILED,
-      performedBy:      user._id,
+      eventType: ActivityEventType.LOGIN_FAILED,
+      performedBy: user._id,
       performedByEmail: user.email,
-      targetModel:      'User',
-      targetId:         user._id,
-      summary:          'Failed login attempt (wrong password)',
+      targetModel: 'User',
+      targetId: user._id,
+      summary: 'Failed login attempt (wrong password)',
       ipAddress,
       userAgent,
     });
