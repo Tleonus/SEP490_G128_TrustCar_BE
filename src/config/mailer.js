@@ -44,6 +44,19 @@ if (!mailersendClient) {
   }
 }
 
+/**
+ * The MailerSend SDK rejects with a plain object ({ statusCode, body, headers })
+ * instead of an Error, so `error.message` is undefined in callers' logs.
+ * Convert it into an Error carrying the HTTP status and MailerSend's message.
+ * The API key and the email content are never included.
+ */
+const toMailerSendError = (error) => {
+  if (error instanceof Error) return error;
+  const status = error?.statusCode ?? 'unknown';
+  const detail = error?.body?.message || 'no error message returned';
+  return Object.assign(new Error(`MailerSend ${status}: ${detail}`), { statusCode: error?.statusCode });
+};
+
 // ── Unified Send Interface ─────────────────────────────────────────────────────
 
 /**
@@ -78,7 +91,11 @@ export const sendMail = async ({ to, toName = '', subject, html, text }) => {
       .setHtml(html)
       .setText(text || html.replace(/<[^>]*>/g, '')); // Strip HTML for plain text
 
-    await mailersendClient.email.send(emailParams);
+    try {
+      await mailersendClient.email.send(emailParams);
+    } catch (error) {
+      throw toMailerSendError(error);
+    }
     console.log(`📧  Email sent via MailerSend to: ${to} | Subject: "${subject}"`);
     return;
   }
