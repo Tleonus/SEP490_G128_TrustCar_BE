@@ -85,8 +85,8 @@ describe('Role.seedDefaultRoles (idempotent, fills missing roles)', () => {
     return { inserted, restore: () => Object.assign(Role, original) };
   };
 
-  test('adds only CUSTOMER to a database already seeded with ADMIN and SALES_STAFF', async () => {
-    const stub = stubRoles(['ADMIN', 'SALES_STAFF']);
+  test('adds only CUSTOMER to a database already seeded with every other role', async () => {
+    const stub = stubRoles(['ADMIN', 'SALES_STAFF', 'INSPECTOR']);
     try {
       await Role.seedDefaultRoles();
       expect(stub.inserted.map((r) => r.name)).toEqual(['CUSTOMER']);
@@ -95,7 +95,7 @@ describe('Role.seedDefaultRoles (idempotent, fills missing roles)', () => {
   });
 
   test('inserts nothing when every default role exists', async () => {
-    const stub = stubRoles(['ADMIN', 'SALES_STAFF', 'CUSTOMER']);
+    const stub = stubRoles(['ADMIN', 'SALES_STAFF', 'INSPECTOR', 'CUSTOMER']);
     try {
       await Role.seedDefaultRoles();
       expect(stub.inserted).toHaveLength(0);
@@ -106,7 +106,7 @@ describe('Role.seedDefaultRoles (idempotent, fills missing roles)', () => {
     const stub = stubRoles([]);
     try {
       await Role.seedDefaultRoles();
-      expect(stub.inserted.map((r) => r.name).sort()).toEqual(['ADMIN', 'CUSTOMER', 'SALES_STAFF']);
+      expect(stub.inserted.map((r) => r.name).sort()).toEqual(['ADMIN', 'CUSTOMER', 'INSPECTOR', 'SALES_STAFF']);
     } finally { stub.restore(); }
   });
 });
