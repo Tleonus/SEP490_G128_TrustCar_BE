@@ -10,12 +10,16 @@
 // ── Vehicle Lifecycle States ──────────────────────────────────────────────────
 // Ref: GBR-05 (state machine), GBR-06 (sold lock), FE-09
 export const CarStatus = Object.freeze({
-  INCOMING:    'INCOMING',    // Intake initiated; not yet certified or publicly listed
-  MAINTENANCE: 'MAINTENANCE', // Undergoing pre-sale conditioning (scheduling ONLY – LI-05)
-  AVAILABLE:   'AVAILABLE',   // Passed inspection; listed on public catalog
-  RESERVED:    'RESERVED',    // Hold placed by a customer; blocks new viewings
-  SOLD:        'SOLD',        // Transaction completed; record becomes read-only (GBR-06)
-  DELISTED:    'DELISTED',    // Manually removed; not sold (terminal state)
+  DRAFT:            'DRAFT',
+  UNDER_INSPECTION: 'UNDER_INSPECTION',
+  APPROVED_CPO:     'APPROVED_CPO',
+  REJECTED:         'REJECTED',
+  INCOMING:         'INCOMING',    // Intake initiated; not yet certified or publicly listed
+  MAINTENANCE:      'MAINTENANCE', // Undergoing pre-sale conditioning (scheduling ONLY – LI-05)
+  AVAILABLE:        'AVAILABLE',   // Passed inspection; listed on public catalog
+  RESERVED:         'RESERVED',    // Hold placed by a customer; blocks new viewings
+  SOLD:             'SOLD',        // Transaction completed; record becomes read-only (GBR-06)
+  DELISTED:         'DELISTED',    // Manually removed; not sold (terminal state)
 });
 
 /**
@@ -24,12 +28,16 @@ export const CarStatus = Object.freeze({
  * Ref: GBR-05
  */
 export const CAR_STATUS_TRANSITIONS = Object.freeze({
-  [CarStatus.INCOMING]:    [CarStatus.AVAILABLE, CarStatus.MAINTENANCE, CarStatus.DELISTED],
-  [CarStatus.MAINTENANCE]: [CarStatus.AVAILABLE, CarStatus.DELISTED],
-  [CarStatus.AVAILABLE]:   [CarStatus.RESERVED, CarStatus.DELISTED],
-  [CarStatus.RESERVED]:    [CarStatus.AVAILABLE, CarStatus.SOLD],
-  [CarStatus.SOLD]:        [], // Terminal – GBR-06
-  [CarStatus.DELISTED]:    [], // Terminal – GBR-25
+  [CarStatus.DRAFT]:            [CarStatus.UNDER_INSPECTION, CarStatus.DELISTED],
+  [CarStatus.UNDER_INSPECTION]: [CarStatus.APPROVED_CPO, CarStatus.REJECTED],
+  [CarStatus.APPROVED_CPO]:     [CarStatus.AVAILABLE, CarStatus.DELISTED],
+  [CarStatus.REJECTED]:         [CarStatus.UNDER_INSPECTION, CarStatus.DELISTED],
+  [CarStatus.INCOMING]:         [CarStatus.AVAILABLE, CarStatus.MAINTENANCE, CarStatus.DELISTED, CarStatus.UNDER_INSPECTION],
+  [CarStatus.MAINTENANCE]:      [CarStatus.AVAILABLE, CarStatus.DELISTED],
+  [CarStatus.AVAILABLE]:        [CarStatus.RESERVED, CarStatus.DELISTED],
+  [CarStatus.RESERVED]:         [CarStatus.AVAILABLE, CarStatus.SOLD],
+  [CarStatus.SOLD]:             [], // Terminal – GBR-06
+  [CarStatus.DELISTED]:         [], // Terminal – GBR-25
 });
 
 // ── CRM Lead / Sales Pipeline Stages ─────────────────────────────────────────
@@ -74,6 +82,7 @@ export const AppointmentStatus = Object.freeze({
 export const Roles = Object.freeze({
   ADMIN:       'ADMIN',
   SALES_STAFF: 'SALES_STAFF',
+  INSPECTOR:   'INSPECTOR',
   CUSTOMER:    'CUSTOMER', // self-registered website customer – no internal permissions
 });
 
@@ -134,6 +143,12 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.APPOINTMENT_CREATE,
     Permissions.APPOINTMENT_UPDATE,
     Permissions.REPORT_VIEW,
+  ],
+
+  [Roles.INSPECTOR]: [
+    Permissions.CAR_READ,
+    Permissions.CAR_UPDATE,
+    Permissions.CAR_STATUS_CHANGE,
   ],
 
   [Roles.CUSTOMER]: [],

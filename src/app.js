@@ -27,6 +27,8 @@ import rateLimit from 'express-rate-limit';
 
 // Route aggregator
 import apiRouter from './routes/index.js';
+import inventoryRoutes from './routes/inventoryRoutes.js';
+import inspectionRoutes from './routes/inspectionRoutes.js';
 
 // Error handlers (MUST be last in the chain)
 import { notFoundHandler, errorHandler } from './middlewares/errorMiddleware.js';
@@ -114,6 +116,8 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
  * All API routes are mounted under /api/v1 via the master router.
  * See src/routes/index.js for the full route map.
  */
+app.use('/api/v1/inventory', inventoryRoutes);
+app.use('/api/v1/inspections', inspectionRoutes);
 app.use('/api/v1', apiRouter);
 
 // ── Root redirect / API info ──────────────────────────────────────────────

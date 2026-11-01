@@ -125,7 +125,7 @@ export const authorizeRoles = (...allowedRoles) => {
       // Should have passed verifyToken first
       return next(new AppError('Token missing or invalid', 401, 'UNAUTHORIZED'));
     }
-    const userRole = req.user.roleName || req.user.role;
+    const userRole = req.user.roleName || (typeof req.user.role === 'object' ? req.user.role?.name : req.user.role);
     if (!allowedRoles.includes(userRole)) {
       return next(new AppError('Access denied: insufficient permissions', 403, 'FORBIDDEN'));
     }
@@ -133,4 +133,6 @@ export const authorizeRoles = (...allowedRoles) => {
   };
 };
 
-export default { requirePermission, requireRole, requireAdmin, requireOwnerOrAdmin, authorizeRoles };
+export const restrictTo = (...roles) => authorizeRoles(...roles);
+
+export default { requirePermission, requireRole, requireAdmin, requireOwnerOrAdmin, authorizeRoles, restrictTo };

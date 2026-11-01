@@ -273,6 +273,14 @@ const CarSchema = new mongoose.Schema(
       index:   true,
     },
 
+    cpoCertificateId: {
+      type:    String,
+      trim:    true,
+      unique:  true,
+      sparse:  true,
+      default: null,
+    },
+
     // ── Media ─────────────────────────────────────────────────────────
     images: {
       type:     [VehicleImageSchema],
