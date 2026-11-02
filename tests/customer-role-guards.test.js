@@ -59,6 +59,15 @@ describe('AC-18 / REQ-027: user management cannot create or convert customers', 
     expect(res.body.code).toBe('VALIDATION_ERROR');
   });
 
+  test('Admin creating an INSPECTOR account → 201 (inspector is an internal staff role)', async () => {
+    const { token } = await tokenFor({ roleName: 'ADMIN' });
+    const res = await request(h.app).post('/api/v1/users').set(as(token)).send({
+      fullName: 'Kiem Dinh Vien', email: 'kdv@trustcar.vn', password: 'TrustCar2026', roleName: 'INSPECTOR',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.roleName).toBe('INSPECTOR');
+  });
+
   test('Admin changing a staff member to CUSTOMER → 422', async () => {
     const { token } = await tokenFor({ roleName: 'ADMIN' });
     const { id } = await h.createUser({ roleName: 'SALES_STAFF' });
@@ -107,6 +116,7 @@ describe('Role.seedDefaultRoles (idempotent, fills missing roles)', () => {
     try {
       await Role.seedDefaultRoles();
       expect(stub.inserted.map((r) => r.name).sort()).toEqual(['ADMIN', 'CUSTOMER', 'INSPECTOR', 'SALES_STAFF']);
+      expect(stub.inserted.every((r) => typeof r.description === 'string' && r.description.length > 0)).toBe(true);
     } finally { stub.restore(); }
   });
 });
