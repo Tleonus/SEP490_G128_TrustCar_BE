@@ -19,6 +19,7 @@ import ActivityLog from '../models/ActivityLog.js';
 import { generateCryptoToken } from '../utils/codeGenerator.js';
 import logger from '../utils/logger.js';
 import { sendMail } from '../config/mailer.js';
+import { emailButton, frontendUrl } from '../utils/emailLayout.js';
 import { AppError } from '../utils/apiResponse.js';
 import { ActivityEventType } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
@@ -221,7 +222,7 @@ export const forgotPassword = async (email) => {
   user.passwordResetToken = { token: resetToken, expiresAt };
   await user.save({ validateBeforeSave: false });
 
-  const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+  const resetUrl = `${frontendUrl()}/reset-password?token=${resetToken}`;
 
   // A delivery failure must not change the response (it would reveal that the
   // email is registered); log it server-side without the reset link.
@@ -229,14 +230,17 @@ export const forgotPassword = async (email) => {
     await sendMail({
       to:      user.email,
       toName:  user.fullName,
-      subject: 'TrustCar – Password Reset Request',
+      subject: 'TrustCar – Yêu cầu đặt lại mật khẩu',
+      preheader: 'Đặt lại mật khẩu TrustCar – liên kết có hiệu lực trong 1 giờ.',
       html: `
-        <h2>Password Reset</h2>
-        <p>Hello ${escapeHtml(user.fullName)},</p>
-        <p>You requested a password reset. Click the link below to set a new password:</p>
-        <p><a href="${resetUrl}">${resetUrl}</a></p>
-        <p>This link expires in <strong>1 hour</strong>.</p>
-        <p>If you did not request this, please ignore this email.</p>
+        <h2 style="margin:0 0 16px;font-size:22px;color:#ffffff;">Đặt lại mật khẩu</h2>
+        <p style="margin:0 0 12px;">Xin chào ${escapeHtml(user.fullName)},</p>
+        <p style="margin:0;">Chúng tôi đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. Nhấn nút bên dưới để tạo mật khẩu mới:</p>
+        ${emailButton('Đặt lại mật khẩu', resetUrl)}
+        <p style="margin:0 0 12px;font-size:13px;color:#94a3b8;">Nếu nút không hoạt động, hãy sao chép liên kết sau vào trình duyệt:<br>
+          <a href="${resetUrl}" style="color:#3b9fe0;word-break:break-all;">${resetUrl}</a></p>
+        <p style="margin:0 0 12px;">Liên kết có hiệu lực trong <strong>1 giờ</strong>.</p>
+        <p style="margin:0;color:#94a3b8;">Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này. Mật khẩu hiện tại của bạn vẫn được giữ nguyên.</p>
       `,
     });
   } catch (error) {

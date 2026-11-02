@@ -1,124 +1,171 @@
 // src/services/inspectionService.js
 /**
  * @file inspectionService.js
- * @description Business logic for Car Inspection Workflow & Approval Engine (5 CPO Criteria).
+ * @description Digital CPO inspection checklist: create a draft for a car, save
+ * it in parts, read it, issue upload signatures, and approve a CPO car for sale.
+ * Submitting and the admin quick-inspect live in inspectionSubmitService.js.
  */
 
-import crypto from 'crypto';
-import dayjs from 'dayjs';
 import Car from '../models/Car.js';
-import InspectionRecord from '../models/InspectionRecord.js';
-import { CarStatus } from '../constants/appConstants.js';
+import InspectionRecord, { withLifecycleDefaults } from '../models/InspectionRecord.js';
+import {
+  ActivityEventType, CarStatus, InspectionSource, InspectionStatus,
+} from '../constants/appConstants.js';
+import { CHECKLIST_VERSION, OVERVIEW_POSITIONS, getChecklist } from '../config/inspectionChecklist.js';
 import { AppError } from '../utils/apiResponse.js';
+import { withTransaction } from '../utils/withTransaction.js';
+import {
+  buildUploadSignature, inspectionFolder, isInspectionImageUrl, quickInspectionFolder,
+} from './inspectionMediaService.js';
+import { listRecordImages } from './inspectionSubmitRules.js';
+import {
+  INSPECTABLE_CAR_STATUSES, carStatusEvent, draftExistsError, isDuplicateKey, lockedError, logEvents, notFound,
+} from './inspectionShared.js';
+import { evaluateCPO, generateCpoCertificate } from './inspectionVerdict.js';
+
+// Verdict helpers live in inspectionVerdict.js; re-exported for existing importers.
+export { evaluateCPO, generateCpoCertificate };
+export { submitInspection, inspectCar } from './inspectionSubmitService.js';
+
+/** Empty checklist skeleton: every item unevaluated, nothing defaults to PASS. */
+const emptyGroups = (checklist) => checklist.map((group) => ({
+  groupKey: group.key,
+  items: group.items.map((item) => ({ itemKey: item.key, result: null, note: '', photos: [] })),
+  note: '',
+  photos: [],
+  odometerPhoto: null,
+  minorDefects: [],
+  passed: null,
+}));
 
 /**
- * Evaluates 5 Certified Pre-Owned (CPO) criteria.
- * Returns true if ALL 5 criteria are strictly true; false otherwise.
- *
- * @param {object} criteria
- * @param {boolean} criteria.noMajorAccident
- * @param {boolean} criteria.noWaterDamage
- * @param {boolean} criteria.engineGearboxIntact
- * @param {boolean} criteria.verifiedOdo
- * @param {boolean} criteria.electricalSystemPassed
- * @returns {boolean}
+ * Creates a DRAFT inspection for a car and moves the car to UNDER_INSPECTION.
+ * Vehicle details are copied from the car (original) and prefilled (confirmed).
  */
-export const evaluateCPO = (criteria = {}) => {
-  if (!criteria || typeof criteria !== 'object') return false;
+export const createDraft = async (carId, userId) => {
+  try {
+    return await withTransaction(async (session) => {
+      const car = await Car.findById(carId).session(session);
+      if (!car) throw notFound('Car');
+      if (!INSPECTABLE_CAR_STATUSES.includes(car.status)) {
+        throw new AppError(`Car cannot be inspected in status ${car.status}.`, 400, 'INVALID_CAR_STATUS');
+      }
+      const existing = await InspectionRecord.findOne({ carId: car._id, status: InspectionStatus.DRAFT })
+        .session(session).lean();
+      if (existing) throw draftExistsError(existing._id);
 
-  const {
-    noMajorAccident,
-    noWaterDamage,
-    engineGearboxIntact,
-    verifiedOdo,
-    electricalSystemPassed,
-  } = criteria;
+      const original = {
+        make: car.make ?? null,
+        model: car.model ?? null,
+        variant: car.variant ?? null,
+        color: car.specifications?.color ?? null,
+        year: car.year ?? null,
+        mileage: car.mileage ?? null,
+      };
+      const [record] = await InspectionRecord.create([{
+        carId: car._id,
+        status: InspectionStatus.DRAFT,
+        source: InspectionSource.STAFF,
+        checklistVersion: CHECKLIST_VERSION,
+        createdBy: userId,
+        updatedBy: userId,
+        vehicleInfo: { original, confirmed: { ...original } },
+        overviewPhotos: Object.fromEntries(OVERVIEW_POSITIONS.map((pos) => [pos, null])),
+        groups: emptyGroups(getChecklist(CHECKLIST_VERSION)),
+      }], { session });
 
-  return (
-    noMajorAccident === true &&
-    noWaterDamage === true &&
-    engineGearboxIntact === true &&
-    verifiedOdo === true &&
-    electricalSystemPassed === true
-  );
+      const events = [{
+        eventType: ActivityEventType.INSPECTION_DRAFT_CREATED,
+        performedBy: userId,
+        targetModel: 'InspectionRecord',
+        targetId: record._id,
+        summary: 'Inspection draft created',
+        metadata: { carId: String(car._id) },
+      }];
+      if (car.status !== CarStatus.UNDER_INSPECTION) {
+        const from = car.status;
+        car.status = CarStatus.UNDER_INSPECTION;
+        await car.save({ session });
+        events.push(carStatusEvent({ car, from, userId, inspectionId: record._id, summary: 'Inspection started' }));
+      }
+      await logEvents(session, events);
+      return withLifecycleDefaults(record);
+    });
+  } catch (error) {
+    // Two concurrent requests: the unique draft index rejects the second one.
+    if (isDuplicateKey(error, 'carId')) {
+      const existing = await InspectionRecord.findOne({ carId, status: InspectionStatus.DRAFT }).lean();
+      throw draftExistsError(existing?._id ?? '');
+    }
+    throw error;
+  }
+};
+
+/** Loads a record that must still be an open draft. */
+const loadDraft = async (id) => {
+  const record = await InspectionRecord.findById(id).lean();
+  if (!record) throw notFound();
+  if (record.status !== InspectionStatus.DRAFT) throw lockedError();
+  return record;
 };
 
 /**
- * Generates a CPO certificate identifier in format: CPO-YYYYMMDD-XXXX
- * where YYYYMMDD is the current date and XXXX is 4 random uppercase alphanumeric characters.
- *
- * @returns {string}
+ * Saves part of a draft. Each section sent replaces that section entirely:
+ * `vehicleInfo.confirmed`, `overviewPhotos`, and each group (matched by groupKey).
+ * Concurrent editors: last write wins.
  */
-export const generateCpoCertificate = () => {
-  const dateStr = dayjs().format('YYYYMMDD');
-  const randomSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
-  return `CPO-${dateStr}-${randomSuffix}`;
+export const updateDraft = async (id, userId, patch) => {
+  const record = await loadDraft(id);
+
+  const badImages = listRecordImages(patch).filter(({ url }) => !isInspectionImageUrl(url, id));
+  if (badImages.length) {
+    throw new AppError('Request validation failed.', 422, 'VALIDATION_ERROR', badImages.map(({ field }) => ({
+      field, message: 'Image must be uploaded to this inspection\'s folder.',
+    })));
+  }
+
+  const set = { updatedBy: userId };
+  if (patch.vehicleInfo?.confirmed) set['vehicleInfo.confirmed'] = patch.vehicleInfo.confirmed;
+  if (patch.overviewPhotos) {
+    set.overviewPhotos = Object.fromEntries(OVERVIEW_POSITIONS.map((pos) => [pos, patch.overviewPhotos[pos] ?? null]));
+  }
+  if (patch.groups?.length) {
+    const sent = new Map(patch.groups.map((group) => [group.groupKey, group]));
+    set.groups = (record.groups || []).map((group) => (sent.has(group.groupKey)
+      ? { ...sent.get(group.groupKey), passed: null }
+      : group));
+  }
+
+  const updated = await InspectionRecord.findOneAndUpdate(
+    { _id: id, status: InspectionStatus.DRAFT },
+    { $set: set },
+    { new: true, runValidators: true },
+  ).lean();
+  if (!updated) throw lockedError(); // submitted between our read and write
+  return withLifecycleDefaults(updated);
 };
 
-/**
- * Evaluates and records a car inspection.
- * - Car must exist and be in DRAFT or UNDER_INSPECTION status.
- * - If passed: car becomes APPROVED_CPO, receives a CPO certificate.
- * - If failed: car becomes REJECTED.
- *
- * @param {string} carId - Target vehicle ID
- * @param {string} inspectorId - ID of authenticated inspector
- * @param {object} payload - { criteria, odo, notes, evidenceImages }
- * @returns {Promise<{ car: object, inspectionRecord: object }>}
- */
-export const inspectCar = async (carId, inspectorId, payload = {}) => {
-  const car = await Car.findById(carId);
-  if (!car) {
-    throw new AppError('Car not found.', 404, 'CAR_NOT_FOUND');
+/** Returns any inspection record (draft or submitted, legacy included). */
+export const getInspection = async (id) => {
+  const record = await InspectionRecord.findById(id).lean();
+  if (!record) throw notFound();
+  return withLifecycleDefaults(record);
+};
+
+/** Issues a direct-upload signature bound to an open draft's folder. */
+export const createUploadSignature = async (id) => {
+  await loadDraft(id);
+  return buildUploadSignature(inspectionFolder(String(id)));
+};
+
+/** Issues a direct-upload signature for quick-inspection photos of an inspectable car. */
+export const createCarUploadSignature = async (carId) => {
+  const car = await Car.findById(carId).lean();
+  if (!car) throw notFound('Car');
+  if (!INSPECTABLE_CAR_STATUSES.includes(car.status)) {
+    throw new AppError(`Car cannot be inspected in status ${car.status}.`, 400, 'INVALID_CAR_STATUS');
   }
-
-  const allowedStatuses = [CarStatus.UNDER_INSPECTION, CarStatus.DRAFT];
-  if (!allowedStatuses.includes(car.status)) {
-    throw new AppError(
-      `Car is not in an inspectable status. Must be DRAFT or UNDER_INSPECTION. Current status: ${car.status}`,
-      400,
-      'INVALID_CAR_STATUS'
-    );
-  }
-
-  const isPassed = evaluateCPO(payload.criteria);
-
-  if (isPassed) {
-    const cpoCertificateId = generateCpoCertificate();
-    car.status = CarStatus.APPROVED_CPO;
-    car.cpoCertificateId = cpoCertificateId;
-  } else {
-    car.status = CarStatus.REJECTED;
-    car.cpoCertificateId = null;
-  }
-
-  if (payload.odo !== undefined && payload.odo !== null) {
-    car.mileage = Number(payload.odo);
-  }
-
-  await car.save();
-
-  const inspectionRecord = await InspectionRecord.create({
-    carId: car._id,
-    inspectorId,
-    criteria: {
-      noMajorAccident: Boolean(payload.criteria?.noMajorAccident),
-      noWaterDamage: Boolean(payload.criteria?.noWaterDamage),
-      engineGearboxIntact: Boolean(payload.criteria?.engineGearboxIntact),
-      verifiedOdo: Boolean(payload.criteria?.verifiedOdo),
-      electricalSystemPassed: Boolean(payload.criteria?.electricalSystemPassed),
-    },
-    odo: Number(payload.odo) || car.mileage || 0,
-    notes: payload.notes || '',
-    evidenceImages: Array.isArray(payload.evidenceImages) ? payload.evidenceImages : [],
-    result: isPassed ? 'PASSED' : 'FAILED',
-    cpoCertificateId: isPassed ? car.cpoCertificateId : null,
-  });
-
-  return {
-    car,
-    inspectionRecord,
-  };
+  return buildUploadSignature(quickInspectionFolder(String(car._id)));
 };
 
 /**
@@ -151,11 +198,3 @@ export const approveSale = async (carId) => {
 
   return car;
 };
-
-export default {
-  evaluateCPO,
-  generateCpoCertificate,
-  inspectCar,
-  approveSale,
-};
-

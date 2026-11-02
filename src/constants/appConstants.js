@@ -40,6 +40,24 @@ export const CAR_STATUS_TRANSITIONS = Object.freeze({
   [CarStatus.DELISTED]:         [], // Terminal – GBR-25
 });
 
+// ── Inspection Record Lifecycle ───────────────────────────────────────────────
+// A DRAFT record is editable; SUBMITTED is locked and carries the CPO verdict.
+export const InspectionStatus = Object.freeze({
+  DRAFT:     'DRAFT',
+  SUBMITTED: 'SUBMITTED',
+});
+
+/**
+ * How an inspection record was produced.
+ * STAFF: full digital checklist; ADMIN_QUICK: admin 5-boolean shortcut;
+ * LEGACY: records created before the checklist existed (no `source` stored).
+ */
+export const InspectionSource = Object.freeze({
+  STAFF:       'STAFF',
+  ADMIN_QUICK: 'ADMIN_QUICK',
+  LEGACY:      'LEGACY',
+});
+
 // ── CRM Lead / Sales Pipeline Stages ─────────────────────────────────────────
 // Ref: GBR-17, GBR-18, FE-10
 export const LeadStage = Object.freeze({
@@ -87,7 +105,7 @@ export const Roles = Object.freeze({
 });
 
 // Internal (staff) roles – the only roles Admin can assign via user management.
-export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
+export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF, Roles.INSPECTOR]);
 
 // ── Granular Permissions ───────────────────────────────────────────────────────
 // Ref: FE-13
@@ -230,6 +248,10 @@ export const ActivityEventType = Object.freeze({
   APPOINTMENT_CONFIRMED: 'APPOINTMENT_CONFIRMED',
   APPOINTMENT_CANCELLED: 'APPOINTMENT_CANCELLED',
   APPOINTMENT_COMPLETED: 'APPOINTMENT_COMPLETED',
+
+  // Inspection (CPO checklist)
+  INSPECTION_DRAFT_CREATED: 'INSPECTION_DRAFT_CREATED',
+  INSPECTION_SUBMITTED:     'INSPECTION_SUBMITTED',
 });
 
 // ── File Upload Constraints ───────────────────────────────────────────────────

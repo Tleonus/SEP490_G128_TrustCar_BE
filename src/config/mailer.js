@@ -14,6 +14,7 @@
 
 import { MailerSend, EmailParams, Sender, Recipient } from 'mailersend';
 import nodemailer from 'nodemailer';
+import { renderEmailLayout } from '../utils/emailLayout.js';
 
 // ── MailerSend Primary Transport ──────────────────────────────────────────────
 
@@ -44,6 +45,19 @@ if (!mailersendClient) {
   }
 }
 
+/**
+ * The MailerSend SDK rejects with a plain object ({ statusCode, body, headers })
+ * instead of an Error, so `error.message` is undefined in callers' logs.
+ * Convert it into an Error carrying the HTTP status and MailerSend's message.
+ * The API key and the email content are never included.
+ */
+const toMailerSendError = (error) => {
+  if (error instanceof Error) return error;
+  const status = error?.statusCode ?? 'unknown';
+  const detail = error?.body?.message || 'no error message returned';
+  return Object.assign(new Error(`MailerSend ${status}: ${detail}`), { statusCode: error?.statusCode });
+};
+
 // ── Unified Send Interface ─────────────────────────────────────────────────────
 
 /**
@@ -51,7 +65,8 @@ if (!mailersendClient) {
  * @property {string}   to        - Recipient email address.
  * @property {string}   [toName]  - Recipient display name.
  * @property {string}   subject   - Email subject line.
- * @property {string}   html      - HTML email body.
+ * @property {string}   html      - HTML body content; wrapped in the TrustCar branded layout.
+ * @property {string}   [preheader] - Inbox preview text shown next to the subject.
  * @property {string}   [text]    - Plain text fallback body.
  */
 
@@ -62,7 +77,10 @@ if (!mailersendClient) {
  * @param {MailOptions} options
  * @returns {Promise<void>}
  */
-export const sendMail = async ({ to, toName = '', subject, html, text }) => {
+export const sendMail = async ({ to, toName = '', subject, html: contentHtml, text, preheader }) => {
+  // Every email gets the same branded shell; plain text comes from the content only.
+  const html = renderEmailLayout({ subject, contentHtml, preheader });
+  const plainText = text || contentHtml.replace(/<[^>]*>/g, '').replace(/\s+\n/g, '\n').trim();
   const fromEmail = process.env.MAILERSEND_FROM_EMAIL || process.env.SMTP_USER || 'noreply@trustcar.vn';
   const fromName = process.env.MAILERSEND_FROM_NAME || 'TrustCar Platform';
 
@@ -76,9 +94,13 @@ export const sendMail = async ({ to, toName = '', subject, html, text }) => {
       .setTo(recipients)
       .setSubject(subject)
       .setHtml(html)
-      .setText(text || html.replace(/<[^>]*>/g, '')); // Strip HTML for plain text
+      .setText(plainText);
 
-    await mailersendClient.email.send(emailParams);
+    try {
+      await mailersendClient.email.send(emailParams);
+    } catch (error) {
+      throw toMailerSendError(error);
+    }
     console.log(`📧  Email sent via MailerSend to: ${to} | Subject: "${subject}"`);
     return;
   }
@@ -90,7 +112,7 @@ export const sendMail = async ({ to, toName = '', subject, html, text }) => {
       to,
       subject,
       html,
-      text: text || html.replace(/<[^>]*>/g, ''),
+      text: plainText,
     });
     console.log(`📧  Email sent via SMTP to: ${to} | Subject: "${subject}"`);
     return;
