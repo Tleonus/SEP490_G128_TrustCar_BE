@@ -23,6 +23,7 @@ import carRoutes         from './carRoutes.js';
 import publicCarRoutes   from './publicCarRoutes.js';
 import inventoryRoutes   from './inventoryRoutes.js';
 import inspectionRoutes  from './inspectionRoutes.js';
+import customerCarRoutes from './customerCarRoutes.js';
 
 const router = Router();
 
@@ -47,5 +48,8 @@ router.use('/inventory', inventoryRoutes);
 
 // ── Car Inspection Workflow & Approval Engine (Inspector & Admin) ─────────
 router.use('/inspections', inspectionRoutes);
+
+// ── Customer-only Vehicle Comparison (CUSTOMER role) ───────────────────────
+router.use('/customer/cars', customerCarRoutes);
 
 export default router;

@@ -1,6 +1,6 @@
 /**
  * @file systemMessages.js
- * @description Standardized error codes and messages (MSG01 – MSG74) for the
+ * @description Standardized error codes and messages (MSG01 – MSG75) for the
  * TrustCar platform. All API error responses reference these codes to enable
  * consistent front-end handling and support ticket correlation.
  *
@@ -131,6 +131,11 @@ export const SystemMessages = Object.freeze({
   MSG72: { code: 'GOOGLE_ACCOUNT_CONFLICT',  message: 'This email is already linked to a different Google account.', httpStatus: 409 },
   MSG73: { code: 'GOOGLE_AUTH_UNAVAILABLE',  message: 'Google sign-in is temporarily unavailable. Please try again later.', httpStatus: 503 },
   MSG74: { code: 'PROFILE_INCOMPLETE',       message: 'Please complete your profile (phone, password, full name) to continue.', httpStatus: 403 },
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // VEHICLE COMPARISON – MSG75
+  // ════════════════════════════════════════════════════════════════════════════
+  MSG75: { code: 'COMPARE_NOT_ENOUGH_CARS',  message: 'At least 2 of the selected vehicles must still be available to compare.', httpStatus: 422 },
 });
 
 export default SystemMessages;
