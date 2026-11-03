@@ -21,6 +21,10 @@ export const ItemResult = Object.freeze({
   NOT_CHECKABLE: 'NOT_CHECKABLE',
 });
 
+/** Scope line shown on the public inspection report (what was NOT verified). */
+export const PUBLIC_REPORT_SCOPE_NOTE = 'Báo cáo dựa trên kiểm tra ngoại quan và vận hành tại xưởng TrustCar theo 5 nhóm tiêu chí; '
+  + 'chưa đối chiếu số khung/số máy (VIN) với cơ quan đăng kiểm.';
+
 /** Size limits for user-supplied checklist content. */
 export const INSPECTION_LIMITS = Object.freeze({
   NOTE_MAX_LENGTH:          1000,
@@ -140,6 +144,7 @@ export default {
   OVERVIEW_POSITIONS,
   ItemResult,
   INSPECTION_LIMITS,
+  PUBLIC_REPORT_SCOPE_NOTE,
   getChecklist,
   findGroup,
 };

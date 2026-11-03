@@ -69,8 +69,28 @@ export const isImageInFolder = (url, folder) => {
 export const isInspectionImageUrl = (url, inspectionId) =>
   Boolean(inspectionId) && isImageInFolder(url, inspectionFolder(inspectionId));
 
+/**
+ * True for an original upload anywhere in the project's Cloudinary cloud, as
+ * shown on public pages: https://res.cloudinary.com/<cloud>/image/upload/[v<digits>/]<folders>/<file>.
+ * Folder names may only contain letters, digits and '-', so transformation
+ * segments (which always contain '_', ',' or ':') can never pass; files from
+ * another cloud or any other host are rejected as well.
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+export const isPublicImageUrl = (url) => {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  if (!cloudName || typeof url !== 'string' || url.includes('..')) return false;
+
+  const pattern = `^https://res\\.cloudinary\\.com/${escapeRegExp(cloudName)}/image/upload/`
+    + '(?:v\\d+/)?(?:[A-Za-z0-9-]+/)*[^/?#\\s,:]+$';
+  return new RegExp(pattern).test(url);
+};
+
 export default {
   buildUploadSignature,
+  isPublicImageUrl,
   isImageInFolder,
   isInspectionImageUrl,
   inspectionFolder,
