@@ -100,4 +100,13 @@ router.get('/', publicCarController.listAvailableCars);
  */
 router.get('/:id', publicCarController.getCarDetail);
 
+/**
+ * @route   GET /api/v1/public/cars/:id/inspection-report
+ * @access  Public
+ * @param   id - MongoDB ObjectId OR vehicleCode (TC-YYYY-NNNN)
+ * @desc    Public CPO inspection report (APPROVED_CPO or AVAILABLE cars with a certificate).
+ *          Any other case → 404 INSPECTION_REPORT_NOT_FOUND.
+ */
+router.get('/:id/inspection-report', publicCarController.getInspectionReport);
+
 export default router;

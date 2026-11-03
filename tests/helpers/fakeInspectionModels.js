@@ -11,7 +11,7 @@
  *   snapshot taken at `startTransaction`, so a failed unit of work leaves no trace.
  * - Unique indexes: one DRAFT InspectionRecord per car (`uniq_draft_per_car`) and
  *   unique non-null `Car.cpoCertificateId`, both raising an E11000-like error.
- * - Queries: findById / findOne / findOneAndUpdate (conditional, $set) with
+ * - Queries: findById / findOne (Car, InspectionRecord; filters: equality, $in, $ne) / findOneAndUpdate (conditional, $set) with
  *   chainable .session() .select() .populate() .lean(); Model.create([docs], opts);
  *   doc.save(opts); ActivityLog.create([docs], opts).
  * - Fault injection: `failNextCarSaves(n, error)` makes the next n Car saves throw;
@@ -138,6 +138,8 @@ export const setupInspectionHarness = async () => {
     if (clash) throw duplicateKeyError('cpoCertificateId_1', { cpoCertificateId: raw.cpoCertificateId });
   };
   jest.spyOn(Car, 'findById').mockImplementation((id) => fakeQuery(Car, () => cars.get(String(id)) || null));
+  jest.spyOn(Car, 'findOne').mockImplementation((filter) =>
+    fakeQuery(Car, () => [...cars.values()].find((c) => matches(c, filter)) || null));
   jest.spyOn(Car, 'exists').mockImplementation((filter) => {
     const forced = filter.cpoCertificateId && faults.cpoCollisions > 0;
     if (forced) faults.cpoCollisions -= 1;

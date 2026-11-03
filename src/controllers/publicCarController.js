@@ -11,6 +11,7 @@
  */
 
 import * as publicCarService from '../services/publicCarService.js';
+import * as inspectionReportService from '../services/inspectionReportService.js';
 import Car from '../models/Car.js';
 import { CarStatus } from '../constants/appConstants.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
@@ -91,4 +92,18 @@ export const getCarDetail = async (req, res, next) => {
   }
 };
 
-export default { listAvailableCars, getFilterOptions, getFeaturedCars, getCarDetail };
+/**
+ * @route   GET /api/v1/public/cars/:id/inspection-report
+ * @access  Public
+ * @desc    Public CPO inspection report of a certified car (APPROVED_CPO or AVAILABLE).
+ */
+export const getInspectionReport = async (req, res, next) => {
+  try {
+    const report = await inspectionReportService.getPublicInspectionReport(req.params.id);
+    return sendSuccess(res, 200, 'Inspection report retrieved successfully.', report);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export default { listAvailableCars, getFilterOptions, getFeaturedCars, getCarDetail, getInspectionReport };
