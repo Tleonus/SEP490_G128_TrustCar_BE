@@ -41,6 +41,7 @@ const PUBLIC_LIST_PROJECTION = {
   status: 1,
   images: 1,
   conditionGrade: 1,
+  cpoCertificateId: 1, // lets the catalog show the CPO badge without an extra call
   description: 1,
   createdAt: 1,
   'specifications.numberOfSeats': 1,
