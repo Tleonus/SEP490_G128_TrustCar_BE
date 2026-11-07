@@ -44,6 +44,34 @@ describe('confirm', () => {
     expect(events()).toEqual(['APPOINTMENT_CONFIRMED']);
   });
 
+  test('emails the customer once, with the details', async () => {
+    const id = book({ appointmentCode: 'APT-7788', location: 'Showroom TrustCar, Hà Nội' });
+
+    await staffService.confirm(id, actor);
+    await expect(staffService.confirm(id, actor)).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(h.mail.sent).toHaveLength(1);
+    const [mail] = h.mail.sent;
+    expect(mail.to).toBe('khach@trustcar.vn');
+    expect(mail.subject).toBe('TrustCar – Lịch lái thử đã được xác nhận');
+    expect(mail.html).toContain('APT-7788');
+    expect(mail.html).toContain('Showroom TrustCar, Hà Nội');
+  });
+
+  test('a failed email still confirms', async () => {
+    h.mail.fail = true;
+    const id = book();
+    await expect(staffService.confirm(id, actor)).resolves.toEqual({ id, status: 'CONFIRMED' });
+    expect(h.appointment(id).status).toBe('CONFIRMED');
+  });
+
+  test('a customer without an email is still confirmed', async () => {
+    const noEmail = await h.createCustomer({ phone: '0907654321' });
+    const id = book({ customer: noEmail });
+    await expect(staffService.confirm(id, actor)).resolves.toEqual({ id, status: 'CONFIRMED' });
+    expect(h.mail.sent).toHaveLength(0);
+  });
+
   test('allowed until the end of the slot, refused after', async () => {
     await expect(staffService.confirm(book({ scheduledAt: STARTED, durationMinutes: 60 }), actor)).resolves.toMatchObject({ status: 'CONFIRMED' });
     await expect(staffService.confirm(book({ scheduledAt: LONG_AGO, durationMinutes: 60 }), actor)).rejects.toMatchObject({ statusCode: 409, code: 'INVALID_TRANSITION' });

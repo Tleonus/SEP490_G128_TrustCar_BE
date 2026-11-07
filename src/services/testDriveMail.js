@@ -7,6 +7,7 @@
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-045
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-049
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-052
+ * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-053
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-054
  */
 
@@ -50,6 +51,10 @@ const detailLines = async (appointment) => `
   <p style="margin:0 0 4px;">Xe: <strong>${escapeHtml(await describeCar(appointment.car))}</strong></p>
   <p style="margin:0 0 4px;">Giờ hẹn: <strong>${escapeHtml(describeTime(appointment.scheduledAt))}</strong></p>`;
 
+const locationLine = ({ location }) => (location
+  ? `<p style="margin:0 0 4px;">Địa điểm: <strong>${escapeHtml(location)}</strong></p>`
+  : '');
+
 /**
  * Sends the 1-hour reminder.
  * @returns {Promise<boolean>} false when the customer has no email address
@@ -59,9 +64,6 @@ export const sendReminderEmail = async (appointment) => {
   const recipient = await findCustomerRecipient(appointment.customer);
   if (!recipient) return false;
 
-  const location = appointment.location
-    ? `<p style="margin:0 0 4px;">Địa điểm: <strong>${escapeHtml(appointment.location)}</strong></p>`
-    : '';
   await sendMail({
     to: recipient.email,
     toName: recipient.name,
@@ -71,7 +73,7 @@ export const sendReminderEmail = async (appointment) => {
       <h2 style="margin:0 0 16px;font-size:22px;color:#ffffff;">Nhắc lịch lái thử</h2>
       <p style="margin:0 0 12px;">Xin chào ${escapeHtml(recipient.name)}, bạn có lịch lái thử sau khoảng 1 giờ nữa.</p>
       ${await detailLines(appointment)}
-      ${location}`,
+      ${locationLine(appointment)}`,
   });
   return true;
 };
@@ -119,4 +121,17 @@ export const sendBookingReceivedEmail = (appointment) => notifyCustomer(appointm
     ${await detailLines(appointment)}`,
 }));
 
-export default { sendReminderEmail, sendCancellationEmail, sendBookingReceivedEmail, findCustomerRecipient, maskEmail };
+/** Tells the customer that staff confirmed the appointment. */
+export const sendBookingConfirmedEmail = (appointment) => notifyCustomer(appointment, 'Booking confirmed', async (greeting) => ({
+  subject: 'TrustCar – Lịch lái thử đã được xác nhận',
+  preheader: 'Lịch lái thử của bạn đã được xác nhận.',
+  html: `
+    <h2 style="margin:0 0 16px;font-size:22px;color:#ffffff;">Lịch lái thử đã được xác nhận</h2>
+    <p style="margin:0 0 12px;">${greeting}, nhân viên TrustCar đã xác nhận lịch lái thử của bạn.</p>
+    ${await detailLines(appointment)}
+    ${locationLine(appointment)}`,
+}));
+
+export default {
+  sendReminderEmail, sendCancellationEmail, sendBookingReceivedEmail, sendBookingConfirmedEmail, findCustomerRecipient, maskEmail,
+};
