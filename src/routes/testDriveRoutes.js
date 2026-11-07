@@ -46,6 +46,7 @@ router.post('/:id/cancel', customerOnly, byId, controller.cancelMine);
 
 // ── Staff ──────────────────────────────────────────────────────────────────
 router.get('/', staffOnly, validateQuery(listQuerySchema), controller.list);
+router.get('/staff', staffOnly, controller.listStaff);
 router.patch('/:id/assign', staffOnly, byId, validate(assignSchema), controller.assign);
 router.post('/:id/confirm', staffOnly, byId, controller.confirm);
 router.post('/:id/staff-cancel', staffOnly, byId, validate(staffCancelSchema), controller.staffCancel);
