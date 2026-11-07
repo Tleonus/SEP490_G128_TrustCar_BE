@@ -44,12 +44,29 @@ export const DEFAULT_BASE_SETTINGS = Object.freeze({
     holidays: [],
   },
   testDrive: {
-    slotDurationMinutes: 90,
-    maxGuestsPerSlot: 2,
+    slotDurationMinutes: 60,
+    maxGuestsPerSlot: 3,
+    openTime: '09:00',
+    closeTime: '17:00',
+    lunchBreakStart: '12:00',
+    lunchBreakEnd: '13:00',
   },
 });
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
+
+/**
+ * Checks test-drive hours once partial input is merged with the current values,
+ * since a single submitted field can only be judged against the others.
+ * HH:mm strings compare correctly as text.
+ * @returns {string|null} what is wrong, or null when the hours are valid
+ */
+export const findTestDriveHoursError = ({ openTime, closeTime, lunchBreakStart, lunchBreakEnd }) => {
+  if (openTime >= closeTime) return 'testDrive.closeTime must be later than testDrive.openTime.';
+  if (lunchBreakStart >= lunchBreakEnd) return 'testDrive.lunchBreakEnd must be later than testDrive.lunchBreakStart.';
+  if (lunchBreakStart < openTime || lunchBreakEnd > closeTime) return 'The lunch break must be within the test-drive hours.';
+  return null;
+};
 
 const formatTimeRange = (day) => {
   if (!day.isOpen) return 'Đóng cửa';

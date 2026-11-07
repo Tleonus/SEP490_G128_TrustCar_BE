@@ -1,5 +1,6 @@
-import { BASE_SETTINGS_GROUP, BASE_SETTINGS_KEY, getDefaultBaseSettings, toPublicBaseSettings } from '../config/baseSettings.js';
+import { BASE_SETTINGS_GROUP, BASE_SETTINGS_KEY, findTestDriveHoursError, getDefaultBaseSettings, toPublicBaseSettings } from '../config/baseSettings.js';
 import SystemSetting from '../models/system-setting.model.js';
+import { AppError } from '../utils/apiResponse.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -52,7 +53,16 @@ export const getBaseSettings = async () => {
  * admin saves converge on one setting document because settingKey is unique.
  */
 export const updateBaseSettings = async (value, updatedByUserId) => {
-  const normalized = toPublicBaseSettings(value);
+  // Test-drive fields the form did not send keep their current value.
+  const current = await getBaseSettings();
+  const testDrive = { ...current.testDrive, ...value.testDrive };
+
+  const hoursError = findTestDriveHoursError(testDrive);
+  if (hoursError) {
+    throw new AppError('Request validation failed.', 422, 'VALIDATION_ERROR', [{ field: 'testDrive', message: hoursError }]);
+  }
+
+  const normalized = toPublicBaseSettings({ ...value, testDrive });
   const editableValue = clone(toStoredValue(normalized));
 
   const record = await SystemSetting.findOneAndUpdate(

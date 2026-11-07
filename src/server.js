@@ -19,6 +19,7 @@ import { configureCloudinary } from './config/cloudinary.js';
 import Role from './models/Role.js';
 import { seedAdminAccount } from './seeders/adminSeeder.js';
 import './models/index.js'; // Register the complete ERD model set before startup.
+import { startTestDriveJob, stopTestDriveJob } from './jobs/testDriveJob.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -55,9 +56,13 @@ const startServer = async () => {
       console.log('════════════════════════════════════════════════════');
     });
 
+    // 6. Start periodic test-drive reminders and cancellations
+    startTestDriveJob();
+
     // ── Graceful Shutdown ─────────────────────────────────────────────────
     const shutdown = async (signal) => {
       console.log(`\n⏳  ${signal} received. Graceful shutdown initiated...`);
+      stopTestDriveJob();
 
       // Stop accepting new connections
       server.close(async () => {

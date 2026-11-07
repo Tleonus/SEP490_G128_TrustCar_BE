@@ -28,6 +28,7 @@ import baseSettingsRoutes from './baseSettingsRoutes.js';
 import publicSettingsRoutes from './publicSettingsRoutes.js';
 import wishlistRoutes from './wishlistRoutes.js';
 import publicWishlistRoutes from './publicWishlistRoutes.js';
+import testDriveRoutes   from './testDriveRoutes.js';
 
 const router = Router();
 
@@ -59,5 +60,8 @@ router.use('/inspections', inspectionRoutes);
 router.use('/customer/cars', customerCarRoutes);
 router.use('/customer/wishlist', wishlistRoutes);
 router.use('/admin', baseSettingsRoutes);
+
+// ── Test-Drive Booking (Customer, Staff & Admin) ───────────────────────────
+router.use('/test-drives', testDriveRoutes);
 
 export default router;
