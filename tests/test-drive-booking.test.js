@@ -36,6 +36,46 @@ beforeEach(async () => {
 
 afterEach(() => jest.useRealTimers());
 
+describe('booking received email', () => {
+  test('a successful booking sends one email with the details', async () => {
+    const user = await newCustomer();
+    const booked = await bookOnline({ user, carId: h.createCar(), scheduledAt: SLOT });
+
+    expect(h.mail.sent).toHaveLength(1);
+    const [mail] = h.mail.sent;
+    expect(mail.to).toBe(user.email);
+    expect(mail.subject).toBe('TrustCar – Đã nhận yêu cầu đặt lịch lái thử');
+    expect(mail.html).toContain(booked.appointmentCode);
+    expect(mail.html).toContain('09:00 ngày 10/11/2026');
+    expect(mail.html).toContain('chờ nhân viên xác nhận');
+  });
+
+  test('a refused booking sends nothing', async () => {
+    const carId = h.createCar();
+    await bookOnline({ user: await newCustomer(0), carId, scheduledAt: SLOT });
+    h.mail.sent.length = 0;
+
+    await expect(bookOnline({ user: await newCustomer(1), carId, scheduledAt: SLOT }))
+      .rejects.toMatchObject({ code: 'CAR_SLOT_TAKEN' });
+    expect(h.mail.sent).toHaveLength(0);
+  });
+
+  test('a failed email keeps the booking and logs no full address', async () => {
+    const { default: logger } = await import('../src/utils/logger.js');
+    const logged = jest.spyOn(logger, 'error').mockImplementation(() => {});
+    h.mail.fail = true;
+    const user = await newCustomer();
+
+    const booked = await bookOnline({ user, carId: h.createCar(), scheduledAt: SLOT });
+
+    expect(h.appointment(booked.id).status).toBe('PENDING');
+    const lines = logged.mock.calls.map(([line]) => line).join('\n');
+    expect(lines).toContain('Booking received email failed');
+    expect(lines).not.toContain(user.email);
+    logged.mockRestore();
+  });
+});
+
 describe('bookOnline', () => {
   test('books a free slot: PENDING, coded, least-busy staff, seat taken, audited', async () => {
     const user = await newCustomer();

@@ -12,6 +12,7 @@
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-013
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-014
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-017
+ * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-052
  */
 
 import Appointment from '../models/Appointment.js';
@@ -26,6 +27,7 @@ import { appointmentOverlaps, listActiveStaffIds, overlapQueryStart, pickFreeSta
 import { logAppointmentEvent } from './testDriveAudit.js';
 import { findNearestSlots, findSlotBlocker, isCarBookable, loadHoldingAppointments, SlotBlocker } from './testDriveAvailabilityService.js';
 import { assertCanBook } from './testDriveLimits.js';
+import { sendBookingReceivedEmail } from './testDriveMail.js';
 import { backoff, isWriteConflict } from './testDriveRetry.js';
 import { findSlotByStart, generateSlots, isWithinBookingWindow, localDayRange, toLocalDate, toLocalIso } from './testDriveSlots.js';
 
@@ -129,6 +131,8 @@ export const bookOnline = async ({ user, carId, scheduledAt, notes }) => {
     try {
       const { appointment, blocker } = await attemptBooking(context);
       if (blocker) throw await slotError(blocker, carId);
+      // After the commit, so a rolled-back booking never emails. Does not throw.
+      await sendBookingReceivedEmail(appointment);
       return {
         id: String(appointment._id),
         appointmentCode: appointment.appointmentCode,
