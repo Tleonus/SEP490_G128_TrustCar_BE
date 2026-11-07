@@ -9,6 +9,8 @@
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-041
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-045
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-047
+ * @ears .sdd/features/test-drive-realtime/SPEC.md#REQ-007
+ * @ears .sdd/features/test-drive-realtime/SPEC.md#REQ-011
  */
 
 import Appointment from '../models/Appointment.js';
@@ -16,6 +18,7 @@ import { ActivityEventType, AppointmentStatus, AppointmentType, TEST_DRIVE_ACTIV
 import { withTransaction } from '../utils/withTransaction.js';
 import { logAppointmentEvent } from './testDriveAudit.js';
 import { sendCancellationEmail } from './testDriveMail.js';
+import { notifyAppointmentChanged } from './testDriveNotifier.js';
 import { retryOnWriteConflict } from './testDriveRetry.js';
 
 /**
@@ -49,6 +52,7 @@ export const cancelAppointment = async ({ filter, reason, actor, notify = true }
     return cancelled;
   }));
 
+  if (appointment) notifyAppointmentChanged(appointment);
   if (appointment && notify) await sendCancellationEmail(appointment);
   return appointment;
 };

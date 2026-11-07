@@ -13,8 +13,16 @@ const h = await setupTestDriveHarness();
 const { jest } = await import('@jest/globals');
 const { default: logger } = await import('../src/utils/logger.js');
 const { default: User } = await import('../src/models/User.js');
+const { default: ActivityLog } = await import('../src/models/ActivityLog.js');
 const { signAccessToken, signRefreshToken } = await import('../src/utils/authTokens.js');
 const { getRealtime, startRealtime, stopRealtime } = await import('../src/config/realtime.js');
+const { default: mongoose } = await import('mongoose');
+const { bookOnline } = await import('../src/services/testDriveBookingService.js');
+const staffService = await import('../src/services/testDriveStaffService.js');
+const { cancelMine } = await import('../src/services/testDriveCustomerService.js');
+const { cancelForUnavailableCars } = await import('../src/jobs/testDriveJob.js');
+const { generateSlots, toLocalDate } = await import('../src/services/testDriveSlots.js');
+const { getDefaultBaseSettings } = await import('../src/config/baseSettings.js');
 
 let server;
 let url;
@@ -219,6 +227,207 @@ describe('following a day', () => {
 
     await client.emitWithAck('slots:unsubscribe', { date: '2026-11-01' });
     await expect(client.emitWithAck('slots:subscribe', { date: '2026-11-06' })).resolves.toEqual({ ok: true });
+  });
+});
+
+describe('notifications', () => {
+  const HOUR = 60 * 60 * 1000;
+  const AT = new Date(Date.now() + 72 * HOUR);
+  const DAY = toLocalDate(AT);
+  const actor = { _id: new mongoose.Types.ObjectId(), email: 'sales@trustcar.vn' };
+
+  let phone = 0;
+  /** Connects a client that records everything it receives. */
+  const watch = async (roleName, overrides = {}) => {
+    const { id, token } = await tokenFor(roleName, overrides);
+    const { client } = await connect({ token });
+    const events = [];
+    client.onAny((name, data) => events.push({ name, data }));
+    return { id, client, events };
+  };
+  const watchCustomer = async () => {
+    phone += 1;
+    const number = `0902${String(phone).padStart(6, '0')}`;
+    const customer = await h.createCustomer({ phone: number });
+    return { customer, ...(await watch('CUSTOMER', { customer, phone: number })) };
+  };
+  /** A round trip: whatever the server sent before this has now arrived. */
+  const settled = (...watchers) => Promise.all(watchers.map(({ client }) => client.emitWithAck('slots:unsubscribe', { date: '2000-01-01' })));
+  const insert = (customer, overrides = {}) => h.insertAppointment({
+    appointmentCode: `APT-${h.appointments.size + 1}`, customer, car: h.createCar(), assignedTo: staff.id, scheduledAt: AT, slotSeat: h.appointments.size + 1, ...overrides,
+  });
+
+  let staff;
+  let admin;
+  let inspector;
+  let owner;
+  let other;
+  let everyone;
+
+  beforeEach(async () => {
+    staff = await watch('SALES_STAFF');
+    admin = await watch('ADMIN');
+    inspector = await watch('INSPECTOR');
+    owner = await watchCustomer();
+    other = await watchCustomer();
+    everyone = [staff, admin, inspector, owner, other];
+    await other.client.emitWithAck('slots:subscribe', { date: DAY });
+  });
+
+  const expectNotified = async (id, status) => {
+    await settled(...everyone);
+    const change = { id, status };
+    expect(staff.events).toEqual([{ name: 'appointment-changed', data: change }]);
+    expect(admin.events).toEqual([{ name: 'appointment-changed', data: change }]);
+    expect(owner.events).toEqual([{ name: 'my-appointment-changed', data: change }]);
+    expect(other.events).toEqual([{ name: 'slots-changed', data: { date: DAY } }]);
+    expect(inspector.events).toEqual([]);
+  };
+
+  test('confirming reaches staff, the owner and followers of that day, and nobody else', async () => {
+    const id = insert(owner.customer);
+    await staffService.confirm(id, actor);
+    await expectNotified(id, 'CONFIRMED');
+  });
+
+  test('reassigning notifies', async () => {
+    const id = insert(owner.customer);
+    const free = await h.createUser({ roleName: 'SALES_STAFF' });
+    await staffService.reassign(id, free.id, actor);
+    await expectNotified(id, 'PENDING');
+  });
+
+  test('a staff cancellation notifies', async () => {
+    const id = insert(owner.customer);
+    await staffService.staffCancel(id, { reasonCode: 'OTHER', note: 'x' }, actor);
+    await expectNotified(id, 'CANCELLED');
+  });
+
+  test('a customer cancellation notifies', async () => {
+    const id = insert(owner.customer);
+    await cancelMine({ _id: new mongoose.Types.ObjectId(owner.id), customer: owner.customer }, id);
+    await expectNotified(id, 'CANCELLED');
+  });
+
+  test('the job cancelling for a sold car notifies', async () => {
+    const id = insert(owner.customer, { car: h.createCar({ status: 'SOLD' }) });
+    await cancelForUnavailableCars();
+    await expectNotified(id, 'CANCELLED');
+  });
+
+  test.each([
+    ['completing', 'complete', 'COMPLETED', (id) => [id, 'Khách hài lòng', actor]],
+    ['no-show', 'markNoShow', 'NO_SHOW', (id) => [id, actor]],
+  ])('%s notifies', async (_label, method, status, args) => {
+    const id = insert(owner.customer, { status: 'CONFIRMED', scheduledAt: new Date(Date.now() - HOUR), slotSeat: 1 });
+    const day = toLocalDate(new Date(Date.now() - HOUR));
+    await other.client.emitWithAck('slots:subscribe', { date: day });
+
+    await staffService[method](...args(id));
+
+    await settled(...everyone);
+    expect(staff.events).toEqual([{ name: 'appointment-changed', data: { id, status } }]);
+    expect(owner.events).toEqual([{ name: 'my-appointment-changed', data: { id, status } }]);
+    expect(other.events).toEqual([{ name: 'slots-changed', data: { date: day } }]);
+  });
+
+  test('correcting a no-show notifies', async () => {
+    const id = insert(owner.customer, { status: 'NO_SHOW', slotSeat: undefined });
+    await staffService.correctNoShow(id, 'Khách có đến', actor);
+    await expectNotified(id, 'COMPLETED');
+  });
+
+  describe('booking', () => {
+    const openSlot = () => {
+      const settings = getDefaultBaseSettings();
+      for (let i = 3; i < 14; i += 1) {
+        const [slot] = generateSlots(toLocalDate(new Date(Date.now() + i * 24 * HOUR)), settings);
+        if (slot) return slot;
+      }
+      throw new Error('No open slot found');
+    };
+    const asUser = ({ id, customer }) => ({ _id: new mongoose.Types.ObjectId(id), email: 'khach@trustcar.vn', customer });
+
+    test('a booking notifies, within 2 seconds of returning', async () => {
+      const slot = openSlot();
+      const day = toLocalDate(slot.startAt);
+      await other.client.emitWithAck('slots:subscribe', { date: day });
+      const received = new Promise((resolve) => { other.client.once('slots-changed', resolve); });
+
+      const booked = await bookOnline({ user: asUser(owner), carId: h.createCar(), scheduledAt: slot.startAt });
+      const returnedAt = Date.now();
+
+      await expect(received).resolves.toEqual({ date: day });
+      expect(Date.now() - returnedAt).toBeLessThan(2000);
+      await settled(...everyone);
+      expect(staff.events).toEqual([{ name: 'appointment-changed', data: { id: booked.id, status: 'PENDING' } }]);
+      expect(owner.events).toEqual([{ name: 'my-appointment-changed', data: { id: booked.id, status: 'PENDING' } }]);
+    });
+
+    test('a refused booking sends nothing', async () => {
+      const slot = openSlot();
+      const carId = h.createCar();
+      await bookOnline({ user: asUser(owner), carId, scheduledAt: slot.startAt });
+      await settled(...everyone);
+      everyone.forEach(({ events }) => { events.length = 0; });
+
+      await expect(bookOnline({ user: asUser(other), carId, scheduledAt: slot.startAt })).rejects.toMatchObject({ code: 'CAR_SLOT_TAKEN' });
+
+      await settled(...everyone);
+      everyone.forEach(({ events }) => expect(events).toEqual([]));
+    });
+  });
+
+  test('a refused change sends nothing', async () => {
+    const id = insert(owner.customer);
+    await staffService.confirm(id, actor);
+    await settled(...everyone);
+    everyone.forEach(({ events }) => { events.length = 0; });
+
+    await expect(staffService.confirm(id, actor)).rejects.toMatchObject({ statusCode: 409 });
+
+    await settled(...everyone);
+    everyone.forEach(({ events }) => expect(events).toEqual([]));
+  });
+
+  test('a change rolled back by a failure sends nothing', async () => {
+    const id = insert(owner.customer);
+    ActivityLog.create.mockRejectedValueOnce(new Error('audit write failed'));
+
+    await expect(staffService.confirm(id, actor)).rejects.toThrow('audit write failed');
+
+    await settled(...everyone);
+    everyone.forEach(({ events }) => expect(events).toEqual([]));
+    expect(h.appointment(id).status).toBe('PENDING');
+  });
+
+  test('a day nobody follows reaches no follower', async () => {
+    await other.client.emitWithAck('slots:unsubscribe', { date: DAY });
+    await staffService.confirm(insert(owner.customer), actor);
+    await settled(...everyone);
+    expect(other.events).toEqual([]);
+  });
+
+  test('a failure while notifying does not affect the change', async () => {
+    const id = insert(owner.customer);
+    const realtime = getRealtime();
+    const originalTo = realtime.to;
+    const logged = jest.spyOn(logger, 'error').mockImplementation(() => {});
+    realtime.to = () => { throw new Error('boom'); };
+    await expect(staffService.confirm(id, actor)).resolves.toEqual({ id, status: 'CONFIRMED' });
+    realtime.to = originalTo;
+    expect(h.appointment(id).status).toBe('CONFIRMED');
+    expect(logged.mock.calls.map(([line]) => line).join('\n')).toContain('Realtime notification failed');
+    logged.mockRestore();
+  });
+
+  test('changes still work when realtime has not started', async () => {
+    const id = insert(owner.customer);
+    const warned = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+    stopRealtime();
+    await expect(staffService.confirm(id, actor)).resolves.toEqual({ id, status: 'CONFIRMED' });
+    expect(warned.mock.calls.map(([line]) => line).join('\n')).toContain('Realtime is not running');
+    warned.mockRestore();
   });
 });
 
