@@ -28,6 +28,7 @@ import {
   UPLOAD,
 } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
+import { dispatchPriceDropAlertsSafely } from './wishlistService.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // ASSERTION HELPERS
@@ -281,6 +282,15 @@ export const updateCar = async ({ carId, updates, userId, ipAddress }) => {
     summary: `Vehicle ${car.vehicleCode} fields updated`,
     ipAddress,
   });
+
+  if (car.price < before.price) {
+    await dispatchPriceDropAlertsSafely({
+      carId: car._id,
+      oldPrice: before.price,
+      newPrice: car.price,
+      performedBy: userId,
+    });
+  }
 
   return car;
 };

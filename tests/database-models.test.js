@@ -19,6 +19,7 @@ describe('TrustCar database model integration', () => {
       'User',
       'Role',
       'Car',
+      'SavedCar',
       'Brand',
       'ChatMessage',
       'Feedback',
