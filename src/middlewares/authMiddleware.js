@@ -26,7 +26,7 @@ import { SystemMessages as MSG } from '../constants/systemMessages.js';
  * @param {import('express').Request} req
  * @returns {string|null}
  */
-const extractToken = (req) => {
+export const extractToken = (req) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     return authHeader.slice(7).trim();
