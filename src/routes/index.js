@@ -24,6 +24,8 @@ import publicCarRoutes   from './publicCarRoutes.js';
 import inventoryRoutes   from './inventoryRoutes.js';
 import inspectionRoutes  from './inspectionRoutes.js';
 import customerCarRoutes from './customerCarRoutes.js';
+import baseSettingsRoutes from './baseSettingsRoutes.js';
+import publicSettingsRoutes from './publicSettingsRoutes.js';
 
 const router = Router();
 
@@ -42,6 +44,7 @@ router.use('/manage/cars', carRoutes);
 
 // ── Public Catalog (No Auth) ───────────────────────────────────────────────
 router.use('/public/cars', publicCarRoutes);
+router.use('/public', publicSettingsRoutes);
 
 // ── Inventory Aging & Markdown (Staff & Admin) ───────────────────────────
 router.use('/inventory', inventoryRoutes);
@@ -51,5 +54,6 @@ router.use('/inspections', inspectionRoutes);
 
 // ── Customer-only Vehicle Comparison (CUSTOMER role) ───────────────────────
 router.use('/customer/cars', customerCarRoutes);
+router.use('/admin', baseSettingsRoutes);
 
 export default router;
