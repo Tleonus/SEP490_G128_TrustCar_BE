@@ -272,10 +272,10 @@ export const BusinessRules = Object.freeze({
     id: 'GBR-20',
     title: 'No Overlapping Vehicle Appointments',
     description:
-      'A vehicle cannot have two CONFIRMED or PENDING appointments within ' +
-      'APPOINTMENT_CONSTRAINTS.CONFLICT_BUFFER_MIN (±30 min) of each other. ' +
-      'Conflict detection is vehicle-scoped, not staff-scoped.',
-    layer: 'Service – appointmentService.js (assertNoConflict)',
+      'A vehicle cannot have two CONFIRMED or PENDING appointments whose time ' +
+      'ranges overlap. Bookings use fixed time slots, so overlap replaces the ' +
+      'former ±30 minute buffer.',
+    layer: 'Service – testDriveBookingService.js',
     messages: ['MSG37'],
   },
 

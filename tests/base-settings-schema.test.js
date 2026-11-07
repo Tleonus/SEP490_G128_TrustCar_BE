@@ -18,4 +18,20 @@ describe('base settings validation', () => {
     expect(error).toBeDefined();
     expect(error.details.map((detail) => detail.message).join(' ')).toMatch(/closeTime|maxGuestsPerSlot/);
   });
+
+  test('accepts a form that does not send the new test-drive hours', () => {
+    const payload = getDefaultBaseSettings();
+    payload.testDrive = { slotDurationMinutes: 90, maxGuestsPerSlot: 2 };
+    expect(updateBaseSettingsSchema.validate(payload).error).toBeUndefined();
+  });
+
+  test('rejects only one lunch-break time and a badly formatted time', () => {
+    const payload = getDefaultBaseSettings();
+    delete payload.testDrive.lunchBreakEnd;
+    expect(updateBaseSettingsSchema.validate(payload).error).toBeDefined();
+
+    const badFormat = getDefaultBaseSettings();
+    badFormat.testDrive.openTime = '9h';
+    expect(updateBaseSettingsSchema.validate(badFormat).error).toBeDefined();
+  });
 });

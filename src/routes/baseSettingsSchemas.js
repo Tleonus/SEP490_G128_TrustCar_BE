@@ -47,7 +47,12 @@ const baseSettingsShape = {
   testDrive: Joi.object({
     slotDurationMinutes: Joi.number().integer().min(15).max(480).required(),
     maxGuestsPerSlot: Joi.number().integer().min(1).max(100).required(),
-  }).required(),
+    // Optional so existing admin forms keep working; the service merges and range-checks them.
+    openTime: timeSchema,
+    closeTime: timeSchema,
+    lunchBreakStart: timeSchema,
+    lunchBreakEnd: timeSchema,
+  }).and('lunchBreakStart', 'lunchBreakEnd').required(),
 };
 
 export const baseSettingsSchema = Joi.object(baseSettingsShape);

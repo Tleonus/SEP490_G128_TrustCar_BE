@@ -8,7 +8,14 @@ describe('base settings configuration', () => {
     expect(settings.contact.showroomDisplay).toContain('Showroom TrustCar');
     expect(settings.businessHours.weeklySchedule).toHaveLength(7);
     expect(settings.businessHours.weeklySchedule[0].isOpen).toBe(false);
-    expect(settings.testDrive).toEqual({ slotDurationMinutes: 90, maxGuestsPerSlot: 2 });
+    expect(settings.testDrive).toEqual({
+      slotDurationMinutes: 60,
+      maxGuestsPerSlot: 3,
+      openTime: '09:00',
+      closeTime: '17:00',
+      lunchBreakStart: '12:00',
+      lunchBreakEnd: '13:00',
+    });
   });
 
   test('derives legacy homepage display values from editable fields', () => {
