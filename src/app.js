@@ -23,7 +23,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import rateLimit from 'express-rate-limit';
 
 // Route aggregator
 import apiRouter from './routes/index.js';
@@ -31,6 +30,7 @@ import inventoryRoutes from './routes/inventoryRoutes.js';
 
 // Error handlers (MUST be last in the chain)
 import { notFoundHandler, errorHandler } from './middlewares/errorMiddleware.js';
+import { createAuthLimiter, createGlobalLimiter, identifyCaller } from './middlewares/rateLimiters.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EXPRESS INSTANCE
@@ -73,32 +73,15 @@ app.use(morgan(logFormat, {
 // RATE LIMITING (Global)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,               // 15-minute window
-  max:      parseInt(process.env.RATE_LIMIT_MAX, 10) || 200,  // max requests per window
-  standardHeaders: true,                   // RateLimit-* headers
-  legacyHeaders:   false,                  // Disable X-RateLimit-*
-  message: {
-    success: false,
-    message: 'Too many requests from this IP, please try again later.',
-    code:    'RATE_LIMIT_EXCEEDED',
-  },
-});
-app.use('/api/', globalLimiter);
+// Per-account and per-IP quotas are documented in middlewares/rateLimiters.js.
+app.use('/api/', identifyCaller, createGlobalLimiter());
 
-// Auth endpoints get a stricter limiter to mitigate brute-force attacks (GBR-12)
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max:      30,
-  standardHeaders: true,
-  legacyHeaders:   false,
-  message: {
-    success: false,
-    message: 'Too many authentication attempts. Please try again in 15 minutes.',
-    code:    'AUTH_RATE_LIMIT',
-  },
-});
-app.use('/api/v1/auth/', authLimiter);
+// Auth endpoints get a stricter limit to mitigate brute-force attacks (GBR-12).
+// A regex because Express also routes /api/v1//auth/login to the auth handlers,
+// while a '/api/v1/auth/' mount does not match it and would leave that path unlimited.
+// The lookahead keeps the next '/' unmatched: Express skips a mount whose match is
+// followed by anything but '/' or '.', and that would disable the limit altogether.
+app.use(/^\/api\/v1\/+auth(?=\/|$)/i, createAuthLimiter());
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BODY PARSERS
