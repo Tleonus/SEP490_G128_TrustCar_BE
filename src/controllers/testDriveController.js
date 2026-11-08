@@ -3,6 +3,7 @@
  * @description Maps test-drive requests to services and responses; no business logic.
  */
 
+import { listAssignableStaff } from '../services/testDriveAssignment.js';
 import * as availability from '../services/testDriveAvailabilityService.js';
 import * as booking from '../services/testDriveBookingService.js';
 import * as customerService from '../services/testDriveCustomerService.js';
@@ -37,6 +38,11 @@ export const list = handle(async (req, res) => {
   return sendPaginated(res, 'Test drives retrieved successfully.', items, pagination);
 });
 
+export const listStaff = handle(async (_req, res) => {
+  const staff = await listAssignableStaff();
+  return sendSuccess(res, 200, 'Sales staff retrieved successfully.', staff);
+});
+
 export const assign = handle(async (req, res) => {
   const result = await staffService.reassign(req.params.id, req.body.staffId, req.user);
   return sendSuccess(res, 200, 'Test drive reassigned successfully.', result);
@@ -67,4 +73,4 @@ export const correctNoShow = handle(async (req, res) => {
   return sendSuccess(res, 200, 'No-show corrected successfully.', result);
 });
 
-export default { getCarSlots, book, listMine, cancelMine, list, assign, confirm, staffCancel, complete, noShow, correctNoShow };
+export default { getCarSlots, book, listMine, cancelMine, list, listStaff, assign, confirm, staffCancel, complete, noShow, correctNoShow };

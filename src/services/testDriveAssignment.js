@@ -4,6 +4,7 @@
  *
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-019
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-021
+ * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-051
  */
 
 import User from '../models/User.js';
@@ -33,6 +34,17 @@ export const overlapQueryStart = (startAt) => new Date(startAt.getTime() - MAX_D
 export const listActiveStaffIds = async () => {
   const staff = await User.find({ roleName: Roles.SALES_STAFF, isActive: true }).select('_id').lean();
   return staff.map((member) => String(member._id));
+};
+
+/**
+ * Active sales staff to choose from when handing over a test drive, with no contact details.
+ * Sorted here because MongoDB's default order puts accented names (Ánh, Đỗ) after Z.
+ */
+export const listAssignableStaff = async () => {
+  const staff = await User.find({ roleName: Roles.SALES_STAFF, isActive: true }).select('fullName').lean();
+  return staff
+    .map((member) => ({ id: String(member._id), fullName: member.fullName }))
+    .sort((a, b) => a.fullName.localeCompare(b.fullName, 'vi'));
 };
 
 /**
@@ -85,4 +97,4 @@ export const assertStaffAssignable = async (staffId, appointment) => {
   }
 };
 
-export default { pickFreeStaff, assertStaffAssignable, listActiveStaffIds, appointmentEnd, appointmentOverlaps, overlapQueryStart };
+export default { pickFreeStaff, assertStaffAssignable, listActiveStaffIds, listAssignableStaff, appointmentEnd, appointmentOverlaps, overlapQueryStart };

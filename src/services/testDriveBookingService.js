@@ -12,6 +12,9 @@
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-013
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-014
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-017
+ * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-052
+ * @ears .sdd/features/test-drive-realtime/SPEC.md#REQ-007
+ * @ears .sdd/features/test-drive-realtime/SPEC.md#REQ-011
  */
 
 import Appointment from '../models/Appointment.js';
@@ -26,6 +29,8 @@ import { appointmentOverlaps, listActiveStaffIds, overlapQueryStart, pickFreeSta
 import { logAppointmentEvent } from './testDriveAudit.js';
 import { findNearestSlots, findSlotBlocker, isCarBookable, loadHoldingAppointments, SlotBlocker } from './testDriveAvailabilityService.js';
 import { assertCanBook } from './testDriveLimits.js';
+import { sendBookingReceivedEmail } from './testDriveMail.js';
+import { notifyAppointmentChanged } from './testDriveNotifier.js';
 import { backoff, isWriteConflict } from './testDriveRetry.js';
 import { findSlotByStart, generateSlots, isWithinBookingWindow, localDayRange, toLocalDate, toLocalIso } from './testDriveSlots.js';
 
@@ -129,6 +134,9 @@ export const bookOnline = async ({ user, carId, scheduledAt, notes }) => {
     try {
       const { appointment, blocker } = await attemptBooking(context);
       if (blocker) throw await slotError(blocker, carId);
+      // After the commit, so a rolled-back booking never notifies. These do not throw.
+      notifyAppointmentChanged(appointment);
+      await sendBookingReceivedEmail(appointment);
       return {
         id: String(appointment._id),
         appointmentCode: appointment.appointmentCode,

@@ -13,6 +13,9 @@
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-042
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-043
  * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-044
+ * @ears .sdd/features/kan-28-test-drive-timeslot-management/SPEC.md#REQ-053
+ * @ears .sdd/features/test-drive-realtime/SPEC.md#REQ-007
+ * @ears .sdd/features/test-drive-realtime/SPEC.md#REQ-011
  */
 
 import Appointment from '../models/Appointment.js';
@@ -25,6 +28,8 @@ import { withTransaction } from '../utils/withTransaction.js';
 import { appointmentEnd, assertStaffAssignable } from './testDriveAssignment.js';
 import { logAppointmentEvent } from './testDriveAudit.js';
 import { cancelAppointment } from './testDriveCancellation.js';
+import { sendBookingConfirmedEmail } from './testDriveMail.js';
+import { notifyAppointmentChanged } from './testDriveNotifier.js';
 import { retryOnWriteConflict } from './testDriveRetry.js';
 import { localDayRange, toLocalIso } from './testDriveSlots.js';
 
@@ -104,7 +109,7 @@ export const listAppointments = async ({ status, date, staffId, needsAttention }
 };
 
 /** Applies one conditional change and its audit entry together. */
-const applyChange = async ({ id, condition, update, eventType, summary, actor }) => {
+const applyChange = async ({ id, condition, update, eventType, summary, actor, afterCommit }) => {
   const changed = await retryOnWriteConflict(() => withTransaction(async (session) => {
     const appointment = await Appointment.findOneAndUpdate(
       { _id: id, type: AppointmentType.TEST_DRIVE, ...condition },
@@ -115,6 +120,8 @@ const applyChange = async ({ id, condition, update, eventType, summary, actor })
     return appointment;
   }));
   if (!changed) throw invalidTransition();
+  notifyAppointmentChanged(changed);
+  if (afterCommit) await afterCommit(changed);
   return { id: String(changed._id), status: changed.status };
 };
 
@@ -145,6 +152,7 @@ export const confirm = async (id, actor) => {
     id, actor, condition: { status: Status.PENDING },
     update: { $set: { status: Status.CONFIRMED, confirmedBy: actor._id, confirmedAt: now } },
     eventType: Event.APPOINTMENT_CONFIRMED, summary: 'Test drive confirmed',
+    afterCommit: sendBookingConfirmedEmail,
   });
 };
 

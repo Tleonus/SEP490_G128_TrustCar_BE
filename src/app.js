@@ -48,7 +48,7 @@ app.set('trust proxy', 1);
 app.use(helmet());
 
 // CORS: Configurable allowed origins; defaults to permissive in dev
-const corsOptions = {
+export const corsOptions = {
   origin: process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
     : '*',

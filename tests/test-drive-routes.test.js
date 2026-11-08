@@ -176,6 +176,46 @@ describe('customer flow', () => {
   });
 });
 
+describe('GET /test-drives/staff', () => {
+  const STAFF_URL = `${BASE}/staff`;
+
+  test('sales staff and admin see active sales staff, in Vietnamese name order, without contact details', async () => {
+    h.users.delete(sales.id);
+    const ids = {};
+    for (const [index, fullName] of ['Zoe', 'Đỗ An', 'Ánh', 'An'].entries()) {
+      ids[fullName] = (await h.createUser({ roleName: 'SALES_STAFF', fullName, email: `picker${index}@trustcar.vn` })).id;
+    }
+    const expected = ['An', 'Ánh', 'Đỗ An', 'Zoe'].map((fullName) => ({ id: ids[fullName], fullName }));
+
+    const asAdmin = await asUser(api().get(STAFF_URL), admin).expect(200);
+    expect(asAdmin.body.data).toEqual(expected);
+
+    const caller = await h.loginAs('SALES_STAFF', { fullName: 'Ân', email: 'picker-caller@trustcar.vn' });
+    const asSales = await asUser(api().get(STAFF_URL), caller).expect(200);
+    expect(asSales.body.data.map((member) => member.fullName)).toEqual(['An', 'Ánh', 'Ân', 'Đỗ An', 'Zoe']);
+  });
+
+  test('leaves out locked staff and other roles', async () => {
+    const locked = await h.createUser({ roleName: 'SALES_STAFF', isActive: false });
+    const res = await asUser(api().get(STAFF_URL), sales).expect(200);
+    const ids = res.body.data.map((member) => member.id);
+    expect(ids).toEqual([sales.id]);
+    expect(ids).not.toContain(locked.id);
+    expect(ids).not.toContain(admin.id);
+  });
+
+  test('gives an empty list when there is no active sales staff', async () => {
+    h.users.delete(sales.id);
+    const res = await asUser(api().get(STAFF_URL), admin).expect(200);
+    expect(res.body.data).toEqual([]);
+  });
+
+  test('refuses customers and anonymous callers', async () => {
+    await asUser(api().get(STAFF_URL), customer).expect(403);
+    await api().get(STAFF_URL).expect(401);
+  });
+});
+
 describe('staff flow', () => {
   test('lists, confirms, reassigns, cancels with a reason the customer can read', async () => {
     const booked = await bookIt().expect(201);
