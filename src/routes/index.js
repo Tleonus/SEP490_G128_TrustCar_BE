@@ -31,6 +31,7 @@ import publicWishlistRoutes from './publicWishlistRoutes.js';
 import testDriveRoutes      from './testDriveRoutes.js';
 import leadPublicRoutes     from './leadPublicRoutes.js';
 import leadRoutes           from './leadRoutes.js';
+import loanSettingsRoutes   from './loanSettingsRoutes.js';
 
 const router = Router();
 
@@ -51,6 +52,7 @@ router.use('/manage/cars', carRoutes);
 router.use('/public/cars', publicCarRoutes);
 router.use('/public/wishlist', publicWishlistRoutes);
 router.use('/public', publicSettingsRoutes);
+router.use('/settings', loanSettingsRoutes);
 
 // ── Inventory Aging & Markdown (Staff & Admin) ───────────────────────────
 router.use('/inventory', inventoryRoutes);
