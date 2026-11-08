@@ -1,6 +1,6 @@
 /**
  * @file carCompareService.js
- * @description Side-by-side vehicle comparison for logged-in customers.
+ * @description Side-by-side vehicle comparison for any logged-in user (KAN-57).
  *
  * Read-only: nothing is written and no activity log is created.
  *
