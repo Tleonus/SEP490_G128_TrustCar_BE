@@ -62,9 +62,8 @@ RoleSchema.statics.seedDefaultRoles = async function () {
   const { ROLE_PERMISSIONS } = await import('../constants/appConstants.js');
   const descriptions = {
     [Roles.ADMIN]:       'Full system access – can manage all resources and users.',
-    [Roles.SALES_STAFF]: 'Operational access – inventory, customers, leads, and appointments.',
+    [Roles.SALES_STAFF]: 'Operational access – inventory, customers, leads, appointments, and vehicle inspections.',
     [Roles.CUSTOMER]:    'Self-registered website customer – no internal permissions.',
-    [Roles.INSPECTOR]:   'Vehicle inspector – fills in and submits CPO inspection checklists.',
   };
 
   // Idempotent: only inserts default roles that are missing, so databases seeded
