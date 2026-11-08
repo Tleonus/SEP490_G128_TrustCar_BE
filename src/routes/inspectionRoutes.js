@@ -18,9 +18,10 @@ const router = Router();
 // All inspection routes require valid authentication
 router.use(verifyToken);
 
-// Inspectors (and admins) fill in, submit and quick-inspect; sales staff may only read reports.
-const INSPECTION_WRITERS = [Roles.INSPECTOR, Roles.ADMIN];
-const INSPECTION_READERS = [Roles.INSPECTOR, Roles.ADMIN, Roles.SALES_STAFF];
+// Sales staff (and admins) fill in, submit and quick-inspect.
+// KAN-54: INSPECTOR role merged into SALES_STAFF.
+const INSPECTION_WRITERS = [Roles.SALES_STAFF, Roles.ADMIN];
+const INSPECTION_READERS = [Roles.SALES_STAFF, Roles.ADMIN];
 const byId = validateParams(objectIdParamSchema);
 
 // POST /api/v1/inspections/cars/:id/draft — start a draft for a car
