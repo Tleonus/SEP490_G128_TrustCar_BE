@@ -136,6 +136,13 @@ export const SystemMessages = Object.freeze({
   // VEHICLE COMPARISON – MSG75
   // ════════════════════════════════════════════════════════════════════════════
   MSG75: { code: 'COMPARE_NOT_ENOUGH_CARS',  message: 'At least 2 of the selected vehicles must still be available to compare.', httpStatus: 422 },
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // SAVED CARS WISHLIST & PRICE DROP ALERTS – MSG76 to MSG78
+  // ════════════════════════════════════════════════════════════════════════════
+  MSG76: { code: 'WISHLIST_ITEM_NOT_FOUND',  message: 'This vehicle is not in your saved wishlist.',                             httpStatus: 404 },
+  MSG77: { code: 'PRICE_ALERT_NOT_FOUND',    message: 'Price drop alert not found.',                                             httpStatus: 404 },
+  MSG78: { code: 'WISHLIST_LIMIT_EXCEEDED',  message: 'Your wishlist has reached the maximum limit of 100 saved vehicles.',      httpStatus: 422 },
 });
 
 export default SystemMessages;

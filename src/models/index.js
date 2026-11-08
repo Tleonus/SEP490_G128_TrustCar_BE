@@ -15,6 +15,7 @@ import InspectionRecord from './InspectionRecord.js';
 import Lead from './Lead.js';
 import PriceHistory from './PriceHistory.js';
 import Role from './Role.js';
+import SavedCar from './SavedCar.js';
 import User from './User.js';
 
 import Brand from './brand.model.js';
@@ -56,6 +57,7 @@ export {
   RecommendationBatch,
   Role,
   SaleRecord,
+  SavedCar,
   ShowroomService,
   SystemSetting,
   User,

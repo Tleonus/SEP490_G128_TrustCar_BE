@@ -255,6 +255,12 @@ export const ActivityEventType = Object.freeze({
   // Inspection (CPO checklist)
   INSPECTION_DRAFT_CREATED: 'INSPECTION_DRAFT_CREATED',
   INSPECTION_SUBMITTED:     'INSPECTION_SUBMITTED',
+
+  // Wishlist & Price Drop Alerts
+  CAR_SAVED_WISHLIST:       'CAR_SAVED_WISHLIST',
+  CAR_REMOVED_WISHLIST:     'CAR_REMOVED_WISHLIST',
+  WISHLIST_SYNCED:          'WISHLIST_SYNCED',
+  PRICE_ALERT_SENT:         'PRICE_ALERT_SENT',
 });
 
 // ── File Upload Constraints ───────────────────────────────────────────────────

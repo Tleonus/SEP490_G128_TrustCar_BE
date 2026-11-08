@@ -12,6 +12,7 @@ import mongoose from 'mongoose';
 import dayjs from 'dayjs';
 import Car from '../models/Car.js';
 import PriceHistory from '../models/PriceHistory.js';
+import { dispatchPriceDropAlertsSafely } from './wishlistService.js';
 
 // Aging thresholds (in days)
 export const AGING_THRESHOLDS = {
@@ -146,6 +147,7 @@ export const applyMarkdown = async (car, session, userId = null) => {
 
   return {
     carId: car._id,
+    priceHistoryId: priceHistory._id,
     oldPrice: currentPrice,
     newPrice,
     dropAmount,
@@ -185,6 +187,17 @@ export const executeMarkdown = async (carIds = null, userId = null) => {
 
     await session.commitTransaction();
     session.endSession();
+
+    for (const md of results) {
+      await dispatchPriceDropAlertsSafely({
+        carId: md.carId,
+        oldPrice: md.oldPrice,
+        newPrice: md.newPrice,
+        priceHistoryId: md.priceHistoryId,
+        performedBy: userId,
+      });
+    }
+
     return results;
   } catch (err) {
     await session.abortTransaction();
