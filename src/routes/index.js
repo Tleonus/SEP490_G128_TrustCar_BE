@@ -24,11 +24,13 @@ import publicCarRoutes   from './publicCarRoutes.js';
 import inventoryRoutes   from './inventoryRoutes.js';
 import inspectionRoutes  from './inspectionRoutes.js';
 import customerCarRoutes from './customerCarRoutes.js';
-import baseSettingsRoutes from './baseSettingsRoutes.js';
+import baseSettingsRoutes   from './baseSettingsRoutes.js';
 import publicSettingsRoutes from './publicSettingsRoutes.js';
-import wishlistRoutes from './wishlistRoutes.js';
+import wishlistRoutes       from './wishlistRoutes.js';
 import publicWishlistRoutes from './publicWishlistRoutes.js';
-import testDriveRoutes   from './testDriveRoutes.js';
+import testDriveRoutes      from './testDriveRoutes.js';
+import leadPublicRoutes     from './leadPublicRoutes.js';
+import leadRoutes           from './leadRoutes.js';
 
 const router = Router();
 
@@ -63,5 +65,11 @@ router.use('/admin', baseSettingsRoutes);
 
 // ── Test-Drive Booking (Customer, Staff & Admin) ───────────────────────────
 router.use('/test-drives', testDriveRoutes);
+
+// ── Lead Pipeline ─────────────────────────────────────────────────────────
+// Public intake first: it only owns POST /, so it must not shadow the
+// authenticated router's GET /:id. See leadPublicRoutes.js.
+router.use('/leads', leadPublicRoutes);
+router.use('/leads', leadRoutes);
 
 export default router;

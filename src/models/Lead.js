@@ -65,10 +65,11 @@ const LeadSchema = new mongoose.Schema(
       index:    true,
     },
 
+    // Nullable: a general "contact us" enquiry names no specific vehicle.
     car: {
       type:     mongoose.Schema.Types.ObjectId,
       ref:      'Car',
-      required: [true, 'Car reference is required.'],
+      default:  null,
       index:    true,
     },
 
@@ -95,6 +96,41 @@ const LeadSchema = new mongoose.Schema(
       trim:    true,
       default: null,
       // e.g., 'Walk-in', 'Facebook Ad', 'Referral', 'Phone Inquiry'
+    },
+
+    // ── Enquiry snapshot ───────────────────────────────────────────────
+    // Captured verbatim from the public contact form so the sales team reads
+    // exactly what the visitor typed, even if the Customer record is edited later.
+    enquiry: {
+      message: {
+        type:      String,
+        trim:      true,
+        maxlength: [2000, 'Enquiry message cannot exceed 2000 characters.'],
+        default:   null,
+      },
+      submittedName: {
+        type:      String,
+        trim:      true,
+        maxlength: [150, 'Name cannot exceed 150 characters.'],
+        default:   null,
+      },
+      submittedPhone: {
+        type:    String,
+        trim:    true,
+        default: null,
+      },
+      submittedEmail: {
+        type:    String,
+        trim:    true,
+        default: null,
+      },
+      pagePath: {
+        type:    String,
+        trim:    true,
+        maxlength: 300,
+        default: null,
+        // Where the enquiry was raised: '/lien-he' or '/xe/TC-2026-0001'
+      },
     },
 
     priority: {
@@ -136,10 +172,11 @@ const LeadSchema = new mongoose.Schema(
     },
 
     // ── Audit ─────────────────────────────────────────────────────────
+    // Null for enquiries submitted from the public website (no account).
     createdBy: {
       type:     mongoose.Schema.Types.ObjectId,
       ref:      'User',
-      required: true,
+      default:  null,
     },
 
     updatedBy: {
