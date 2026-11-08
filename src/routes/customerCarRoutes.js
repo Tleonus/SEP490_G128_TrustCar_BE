@@ -1,8 +1,9 @@
 /**
  * @file customerCarRoutes.js
- * @description Customer-only vehicle routes (/api/v1/customer/cars).
- * Requires a logged-in CUSTOMER with a complete profile (verifyToken rejects
- * incomplete profiles with PROFILE_INCOMPLETE). Staff accounts get ROLE_INSUFFICIENT.
+ * @description Logged-in vehicle routes (/api/v1/customer/cars).
+ * Requires a valid token (verifyToken rejects incomplete customer profiles with
+ * PROFILE_INCOMPLETE). Comparison is open to every role — KAN-57 removed the
+ * CUSTOMER-only gate so staff can compare too; anonymous callers stay 401.
  *
  * Ref: .sdd/features/vehicle-comparison/SPEC.md
  */
@@ -11,9 +12,7 @@ import { Router } from 'express';
 import Joi from 'joi';
 import * as carCompareController from '../controllers/carCompareController.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
-import { requireRole } from '../middlewares/roleMiddleware.js';
 import { validateQuery } from '../middlewares/validateMiddleware.js';
-import { Roles } from '../constants/appConstants.js';
 
 const router = Router();
 
@@ -65,13 +64,12 @@ const compareQuerySchema = Joi.object({
 
 /**
  * @route   GET /api/v1/customer/cars/compare?ids=a,b,c
- * @access  Customer only
+ * @access  Any logged-in role (KAN-57). Anonymous callers get 401.
  * @desc    Side-by-side comparison of 2–3 AVAILABLE vehicles (allow-listed fields only).
  */
 router.get(
   '/compare',
   verifyToken,
-  requireRole(Roles.CUSTOMER),
   validateQuery(compareQuerySchema),
   carCompareController.compareCars
 );
