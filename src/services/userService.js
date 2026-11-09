@@ -156,7 +156,7 @@ export const getUserById = async (userId) => {
  * @returns {Promise<object>} Updated user (safe).
  */
 export const updateUser = async ({ userId, updates, newRoleName, updatedByUserId, ipAddress }) => {
-  const user = await User.findById(userId);
+  const user = await User.findById(userId).select('+tokenVersion');
   if (!user) throw new AppError(MSG.MSG17.message, 404, MSG.MSG17.code);
 
   const before = { fullName: user.fullName, phone: user.phone, roleName: user.roleName };
@@ -180,6 +180,9 @@ export const updateUser = async ({ userId, updates, newRoleName, updatedByUserId
     const newRole = await resolveRole(newRoleName);
     user.role = newRole._id;
     user.roleName = newRole.name;
+    // The current token still carries the old permissions until it expires.
+    // Bumping tokenVersion revokes every session so the new role applies now.
+    user.tokenVersion = (user.tokenVersion ?? 0) + 1;
   }
 
   user.updatedBy = updatedByUserId;

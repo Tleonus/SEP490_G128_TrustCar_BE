@@ -19,7 +19,7 @@ const handle = (fn) => async (req, res, next) => {
 
 /**
  * @route   POST /api/v1/inspections/cars/:id/draft
- * @access  INSPECTOR, ADMIN
+ * @access  SALES_STAFF, ADMIN
  */
 export const createDraft = handle(async (req, res) => {
   const record = await inspectionService.createDraft(req.params.id, req.userId);
@@ -28,7 +28,7 @@ export const createDraft = handle(async (req, res) => {
 
 /**
  * @route   PATCH /api/v1/inspections/:id
- * @access  INSPECTOR, ADMIN
+ * @access  SALES_STAFF, ADMIN
  */
 export const updateDraft = handle(async (req, res) => {
   const record = await inspectionService.updateDraft(req.params.id, req.userId, req.body);
@@ -37,7 +37,7 @@ export const updateDraft = handle(async (req, res) => {
 
 /**
  * @route   GET /api/v1/inspections/:id
- * @access  INSPECTOR, ADMIN, SALES_STAFF (read only)
+ * @access  SALES_STAFF, ADMIN, SALES_STAFF (read only)
  */
 export const getInspection = handle(async (req, res) => {
   const record = await inspectionService.getInspection(req.params.id);
@@ -46,7 +46,7 @@ export const getInspection = handle(async (req, res) => {
 
 /**
  * @route   POST /api/v1/inspections/:id/upload-signature
- * @access  INSPECTOR, ADMIN
+ * @access  SALES_STAFF, ADMIN
  */
 export const createUploadSignature = handle(async (req, res) => {
   const signature = await inspectionService.createUploadSignature(req.params.id);
@@ -55,7 +55,7 @@ export const createUploadSignature = handle(async (req, res) => {
 
 /**
  * @route   POST /api/v1/inspections/cars/:id/upload-signature
- * @access  INSPECTOR, ADMIN
+ * @access  SALES_STAFF, ADMIN
  * @desc    Signature for uploading quick-inspection photos of a car.
  */
 export const createCarUploadSignature = handle(async (req, res) => {
@@ -65,7 +65,7 @@ export const createCarUploadSignature = handle(async (req, res) => {
 
 /**
  * @route   POST /api/v1/inspections/:id/submit
- * @access  INSPECTOR, ADMIN
+ * @access  SALES_STAFF, ADMIN
  * @desc    Validates the checklist, decides the CPO verdict and locks the record.
  */
 export const submitInspection = handle(async (req, res) => {
@@ -75,7 +75,7 @@ export const submitInspection = handle(async (req, res) => {
 
 /**
  * @route   POST /api/v1/inspections/cars/:id/inspect
- * @access  INSPECTOR, ADMIN
+ * @access  SALES_STAFF, ADMIN
  * @desc    Quick inspection: 5 CPO booleans → APPROVED_CPO (with certificate) or REJECTED.
  */
 export const inspectCar = handle(async (req, res) => {

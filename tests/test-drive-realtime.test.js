@@ -176,10 +176,14 @@ describe('groups', () => {
     expect(await roomSize('staff')).toBe(0);
   });
 
-  test('other roles join no group', async () => {
-    const { token } = await tokenFor('INSPECTOR');
+  test('a role outside the staff and customer groups joins no group', async () => {
+    // KAN-54: INSPECTOR no longer exists. A CUSTOMER with no linked customer
+    // record belongs to neither the staff room nor any customer room.
+    const { token } = await tokenFor('CUSTOMER');
     await connect({ token });
     expect(await roomSize('staff')).toBe(0);
+    expect((await getRealtime().fetchSockets()).filter((s) =>
+      [...s.rooms].some((room) => room.startsWith('customer:'))).length).toBe(0);
   });
 });
 
@@ -259,7 +263,6 @@ describe('notifications', () => {
 
   let staff;
   let admin;
-  let inspector;
   let owner;
   let other;
   let everyone;
@@ -267,10 +270,9 @@ describe('notifications', () => {
   beforeEach(async () => {
     staff = await watch('SALES_STAFF');
     admin = await watch('ADMIN');
-    inspector = await watch('INSPECTOR');
     owner = await watchCustomer();
     other = await watchCustomer();
-    everyone = [staff, admin, inspector, owner, other];
+    everyone = [staff, admin, owner, other];
     await other.client.emitWithAck('slots:subscribe', { date: DAY });
   });
 
@@ -281,7 +283,6 @@ describe('notifications', () => {
     expect(admin.events).toEqual([{ name: 'appointment-changed', data: change }]);
     expect(owner.events).toEqual([{ name: 'my-appointment-changed', data: change }]);
     expect(other.events).toEqual([{ name: 'slots-changed', data: { date: DAY } }]);
-    expect(inspector.events).toEqual([]);
   };
 
   test('confirming reaches staff, the owner and followers of that day, and nobody else', async () => {

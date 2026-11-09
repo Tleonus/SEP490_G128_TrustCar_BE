@@ -10,7 +10,7 @@
  * For every active APPROVED_CPO / AVAILABLE car without a certificate it writes, in one
  * transaction: a SUBMITTED + PASSED inspection record (5 criteria true, odo = car mileage,
  * no checklist, so the public report is MINIMAL) and the same code on Car.cpoCertificateId.
- * The inspector must be an active INSPECTOR account; it is shown as initials on the report.
+ * The inspector must be an active SALES_STAFF account; it is shown as initials on the report.
  * Idempotent: cars that already carry a certificate are not selected again.
  */
 
@@ -75,7 +75,7 @@ const certifyCar = async (car, inspectorId, code, now) => {
 
 /**
  * @param {object} options
- * @param {string} options.inspectorEmail - active INSPECTOR account recorded as the inspector
+ * @param {string} options.inspectorEmail - active SALES_STAFF account recorded as the inspector
  * @param {boolean} [options.apply=false] - false = only report what would be written
  * @param {(line: string) => void} [options.log=console.log]
  * @returns {Promise<{ candidates: number, certified: number, skipped: number }>}
@@ -83,9 +83,10 @@ const certifyCar = async (car, inspectorId, code, now) => {
 export const backfillCpoCertificates = async ({ inspectorEmail, apply = false, log = console.log }) => {
   const email = String(inspectorEmail || '').trim().toLowerCase();
   if (!email) throw new Error('Missing --inspector=<email>.');
-  const inspector = await User.findOne({ email, roleName: Roles.INSPECTOR, isActive: true })
+  // KAN-54: INSPECTOR merged into SALES_STAFF
+  const inspector = await User.findOne({ email, roleName: Roles.SALES_STAFF, isActive: true })
     .select('_id fullName').lean();
-  if (!inspector) throw new Error(`No active INSPECTOR account with email ${email}.`);
+  if (!inspector) throw new Error(`No active SALES_STAFF account with email ${email}.`);
 
   const cars = await Car.find(
     { isActive: true, status: { $in: ELIGIBLE_STATUSES }, cpoCertificateId: null },

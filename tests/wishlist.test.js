@@ -504,7 +504,7 @@ describe('Authentication & RBAC on /api/v1/customer/wishlist', () => {
     expect(getRes.status).toBe(401);
   });
 
-  test.each(['ADMIN', 'SALES_STAFF', 'INSPECTOR'])(
+  test.each(['ADMIN', 'SALES_STAFF'])(
     'staff role %s is rejected with 403 ROLE_INSUFFICIENT',
     async (roleName) => {
       const { id } = await h.createUser({ roleName });

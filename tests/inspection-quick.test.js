@@ -87,7 +87,7 @@ describe('POST /inspections/cars/:id/inspect (admin quick inspection)', () => {
 
   test('car with an open checklist draft → 409; car not inspectable → 400', async () => {
     const carId = h.createCar();
-    const staff = await h.loginAs('INSPECTOR');
+    const staff = await h.loginAs('SALES_STAFF');
     await api().post(`${BASE}/cars/${carId}/draft`).set('Authorization', staff.auth);
 
     expect((await inspect(carId, { criteria: allTrue, odo: 50000 })).body.code).toBe('INSPECTION_DRAFT_EXISTS');
@@ -95,8 +95,8 @@ describe('POST /inspections/cars/:id/inspect (admin quick inspection)', () => {
       .toBe('INVALID_CAR_STATUS');
   });
 
-  test('INSPECTOR must attach at least one photo; with a photo of this car → 200', async () => {
-    const inspector = await h.loginAs('INSPECTOR');
+  test('SALES_STAFF must attach at least one photo; with a photo of this car → 200', async () => {
+    const inspector = await h.loginAs('SALES_STAFF');
     const carId = h.createCar();
 
     const without = await inspect(carId, { criteria: allTrue, odo: 50000 }, inspector);
@@ -112,7 +112,7 @@ describe('POST /inspections/cars/:id/inspect (admin quick inspection)', () => {
     expect((await inspect(h.createCar(), { criteria: allTrue, odo: 50000 })).status).toBe(200);
   });
 
-  test.each(['SALES_STAFF', 'CUSTOMER'])('%s → 403', async (role) => {
+  test.each(['CUSTOMER'])('%s → 403', async (role) => {
     const res = await inspect(h.createCar(), { criteria: allTrue, odo: 50000 }, await h.loginAs(role));
 
     expect(res.status).toBe(403);
@@ -122,10 +122,10 @@ describe('POST /inspections/cars/:id/inspect (admin quick inspection)', () => {
 describe('POST /inspections/cars/:id/upload-signature', () => {
   const sign = (carId, who) => api().post(`${BASE}/cars/${carId}/upload-signature`).set('Authorization', who.auth);
 
-  test('INSPECTOR and ADMIN get a signature bound to the car quick folder; secret not exposed', async () => {
+  test('SALES_STAFF and ADMIN get a signature bound to the car quick folder; secret not exposed', async () => {
     const carId = h.createCar();
 
-    for (const who of [await h.loginAs('INSPECTOR'), admin]) {
+    for (const who of [await h.loginAs('SALES_STAFF'), admin]) {
       // eslint-disable-next-line no-await-in-loop
       const res = await sign(carId, who);
       expect(res.status).toBe(200);
@@ -134,10 +134,10 @@ describe('POST /inspections/cars/:id/upload-signature', () => {
     }
   });
 
-  test('SALES_STAFF/CUSTOMER → 403; car not inspectable → 400; unknown car → 404', async () => {
+  test('CUSTOMER → 403; car not inspectable → 400; unknown car → 404', async () => {
     const carId = h.createCar();
 
-    expect((await sign(carId, await h.loginAs('SALES_STAFF'))).status).toBe(403);
+    // KAN-54: SALES_STAFF is now a writer — only CUSTOMER is forbidden
     expect((await sign(carId, await h.loginAs('CUSTOMER'))).status).toBe(403);
     expect((await sign(h.createCar({ status: 'AVAILABLE' }), admin)).body.code).toBe('INVALID_CAR_STATUS');
     expect((await sign('65f000000000000000000099', admin)).status).toBe(404);
