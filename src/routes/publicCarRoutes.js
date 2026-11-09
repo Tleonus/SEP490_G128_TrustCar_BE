@@ -109,4 +109,14 @@ router.get('/:id', publicCarController.getCarDetail);
  */
 router.get('/:id/inspection-report', publicCarController.getInspectionReport);
 
+/**
+ * @route   GET /api/v1/public/cars/:id/cpo-certificate.pdf
+ * @access  Public
+ * @param   id - MongoDB ObjectId OR vehicleCode (TC-YYYY-NNNN)
+ * @desc    CPO certificate as a downloadable PDF with a QR code pointing at the
+ *          public car page. Registered before /:id so the ".pdf" suffix is not
+ *          swallowed by the detail route.
+ */
+router.get('/:id/cpo-certificate.pdf', publicCarController.getCpoCertificatePdf);
+
 export default router;

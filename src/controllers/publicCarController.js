@@ -12,6 +12,7 @@
 
 import * as publicCarService from '../services/publicCarService.js';
 import * as inspectionReportService from '../services/inspectionReportService.js';
+import { renderCertificatePdf } from '../services/cpoCertificatePdf.js';
 import Car from '../models/Car.js';
 import { CarStatus } from '../constants/appConstants.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
@@ -106,4 +107,25 @@ export const getInspectionReport = async (req, res, next) => {
   }
 };
 
-export default { listAvailableCars, getFilterOptions, getFeaturedCars, getCarDetail, getInspectionReport };
+/**
+ * @route   GET /api/v1/public/cars/:id/cpo-certificate.pdf
+ * @access  Public
+ * @desc    Downloadable CPO certificate (PDF) for a certified car. Same visibility
+ *          rules as the inspection report: 404 INSPECTION_REPORT_NOT_FOUND otherwise.
+ */
+export const getCpoCertificatePdf = async (req, res, next) => {
+  try {
+    const report = await inspectionReportService.getPublicInspectionReport(req.params.id);
+    const pdf = renderCertificatePdf(report, { idOrCode: req.params.id });
+    const fileName = `chung-nhan-${report.certificateId || 'cpo'}.pdf`;
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="${fileName}"`);
+    return res.status(200).send(pdf);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export default {
+  listAvailableCars, getFilterOptions, getFeaturedCars, getCarDetail, getInspectionReport, getCpoCertificatePdf,
+};

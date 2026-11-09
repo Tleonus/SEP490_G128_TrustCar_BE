@@ -100,12 +100,11 @@ export const AppointmentStatus = Object.freeze({
 export const Roles = Object.freeze({
   ADMIN:       'ADMIN',
   SALES_STAFF: 'SALES_STAFF',
-  INSPECTOR:   'INSPECTOR',
   CUSTOMER:    'CUSTOMER', // self-registered website customer – no internal permissions
 });
 
 // Internal (staff) roles – the only roles Admin can assign via user management.
-export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF, Roles.INSPECTOR]);
+export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
 
 // ── Granular Permissions ───────────────────────────────────────────────────────
 // Ref: FE-13
@@ -161,12 +160,6 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.APPOINTMENT_CREATE,
     Permissions.APPOINTMENT_UPDATE,
     Permissions.REPORT_VIEW,
-  ],
-
-  [Roles.INSPECTOR]: [
-    Permissions.CAR_READ,
-    Permissions.CAR_UPDATE,
-    Permissions.CAR_STATUS_CHANGE,
   ],
 
   [Roles.CUSTOMER]: [],
