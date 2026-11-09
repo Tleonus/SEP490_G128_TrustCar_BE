@@ -56,6 +56,9 @@ describe('confirm', () => {
     expect(mail.subject).toBe('TrustCar – Lịch lái thử đã được xác nhận');
     expect(mail.html).toContain('APT-7788');
     expect(mail.html).toContain('Showroom TrustCar, Hà Nội');
+    // The car and the appointment time come from the booking, not a placeholder.
+    expect(mail.html).toContain('TOYOTA Vios 2020');
+    expect(mail.html).toMatch(/\d{2}:\d{2} ngày \d{2}\/\d{2}\/\d{4}/);
   });
 
   test('a failed email still confirms', async () => {

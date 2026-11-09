@@ -19,6 +19,11 @@ jest.unstable_mockModule('mailersend', () => ({
   Recipient: jest.fn(),
 }));
 
+// Recording goes through mongoose; the mailer tests only care about transport errors.
+jest.unstable_mockModule('../src/services/emailLogService.js', () => ({
+  recordEmailAttempt: jest.fn().mockResolvedValue(undefined),
+}));
+
 process.env.MAILERSEND_API_KEY = 'mlsn.test-secret-key';
 const { sendMail } = await import('../src/config/mailer.js');
 
