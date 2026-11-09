@@ -104,4 +104,31 @@ export const createAuthLimiter = (max = AUTH_MAX) => rateLimit({
   },
 });
 
-export default { identifyCaller, createGlobalLimiter, createAuthLimiter, limitsFromEnv, resolveLimit };
+/**
+ * Cap on caption generations per caller per calendar day (KAN-68 §6).
+ *
+ * Separate from the global 15-minute quota because the cost model is different:
+ * each call may hit a paid model. Keyed by the authenticated user, so one account
+ * cannot reset its allowance by changing IP or token. `verifyToken` must run
+ * before this so `req.userId` is populated — `req.user` is a lean document and
+ * has no `.id` virtual, so we key on `req.userId` (set from `user._id.toString()`).
+ *
+ * @param {number} [max=20]
+ */
+export const createDailyCaptionLimiter = (max = resolveLimit(process.env.CAPTION_DAILY_LIMIT, 20)) => rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max,
+  keyGenerator: (req) => `caption:${req.userId ?? req.ip}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: `Daily caption limit reached (${max} per day). Please try again tomorrow.`,
+    code: 'CAPTION_DAILY_LIMIT',
+  },
+});
+
+export default {
+  identifyCaller, createGlobalLimiter, createAuthLimiter, createDailyCaptionLimiter, limitsFromEnv, resolveLimit,
+};
+

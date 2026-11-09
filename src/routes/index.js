@@ -31,6 +31,7 @@ import publicWishlistRoutes from './publicWishlistRoutes.js';
 import testDriveRoutes      from './testDriveRoutes.js';
 import leadPublicRoutes     from './leadPublicRoutes.js';
 import leadRoutes           from './leadRoutes.js';
+import marketingRoutes      from './marketingRoutes.js';
 import loanSettingsRoutes   from './loanSettingsRoutes.js';
 
 const router = Router();
@@ -73,5 +74,8 @@ router.use('/test-drives', testDriveRoutes);
 // authenticated router's GET /:id. See leadPublicRoutes.js.
 router.use('/leads', leadPublicRoutes);
 router.use('/leads', leadRoutes);
+
+// ── Marketing Tooling (Admin & Sales staff) ────────────────────────────────
+router.use('/marketing', marketingRoutes);
 
 export default router;
