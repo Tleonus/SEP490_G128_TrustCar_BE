@@ -7,6 +7,7 @@
  */
 
 import ActivityLog from './ActivityLog.js';
+import EmailLog from './EmailLog.js';
 import Appointment from './Appointment.js';
 import Car from './Car.js';
 import CarModel from './CarModel.js';
@@ -45,6 +46,7 @@ export {
   ChatMessage,
   ContentItem,
   Customer,
+  EmailLog,
   Feedback,
   InspectionRecord,
   InteractionEvent,

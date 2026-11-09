@@ -31,6 +31,7 @@ import publicWishlistRoutes from './publicWishlistRoutes.js';
 import testDriveRoutes      from './testDriveRoutes.js';
 import leadPublicRoutes     from './leadPublicRoutes.js';
 import leadRoutes           from './leadRoutes.js';
+import emailLogRoutes       from './emailLogRoutes.js';
 import marketingRoutes      from './marketingRoutes.js';
 import loanSettingsRoutes   from './loanSettingsRoutes.js';
 
@@ -65,6 +66,7 @@ router.use('/inspections', inspectionRoutes);
 router.use('/customer/cars', customerCarRoutes);
 router.use('/customer/wishlist', wishlistRoutes);
 router.use('/admin', baseSettingsRoutes);
+router.use('/admin', emailLogRoutes);
 
 // ── Test-Drive Booking (Customer, Staff & Admin) ───────────────────────────
 router.use('/test-drives', testDriveRoutes);

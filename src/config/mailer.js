@@ -15,6 +15,7 @@
 import { MailerSend, EmailParams, Sender, Recipient } from 'mailersend';
 import nodemailer from 'nodemailer';
 import { renderEmailLayout } from '../utils/emailLayout.js';
+import { recordEmailAttempt } from '../services/emailLogService.js';
 
 // ── MailerSend Primary Transport ──────────────────────────────────────────────
 
@@ -99,26 +100,36 @@ export const sendMail = async ({ to, toName = '', subject, html: contentHtml, te
     try {
       await mailersendClient.email.send(emailParams);
     } catch (error) {
-      throw toMailerSendError(error);
+      const failure = toMailerSendError(error);
+      await recordEmailAttempt({ to, subject, transport: 'mailersend', status: 'FAILED', error: failure.message });
+      throw failure;
     }
+    await recordEmailAttempt({ to, subject, transport: 'mailersend', status: 'SENT' });
     console.log(`📧  Email sent via MailerSend to: ${to} | Subject: "${subject}"`);
     return;
   }
 
   // ── SMTP Fallback Path ───────────────────────────────────────────────────
   if (smtpTransport) {
-    await smtpTransport.sendMail({
-      from: `"${fromName}" <${fromEmail}>`,
-      to,
-      subject,
-      html,
-      text: plainText,
-    });
+    try {
+      await smtpTransport.sendMail({
+        from: `"${fromName}" <${fromEmail}>`,
+        to,
+        subject,
+        html,
+        text: plainText,
+      });
+    } catch (error) {
+      await recordEmailAttempt({ to, subject, transport: 'smtp', status: 'FAILED', error: error.message });
+      throw error;
+    }
+    await recordEmailAttempt({ to, subject, transport: 'smtp', status: 'SENT' });
     console.log(`📧  Email sent via SMTP to: ${to} | Subject: "${subject}"`);
     return;
   }
 
   // ── Development No-Op ─────────────────────────────────────────────────────
+  await recordEmailAttempt({ to, subject, transport: 'none', status: 'SKIPPED' });
   console.log(`📧  [DEV] Email not sent (no transport). Would send to: ${to}`);
   console.log(`    Subject: "${subject}"`);
 };
