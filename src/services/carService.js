@@ -28,6 +28,7 @@ import {
   UPLOAD,
 } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
+import { releaseAppointmentsForCar } from './appointmentAutoCancelService.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // ASSERTION HELPERS
@@ -327,6 +328,11 @@ export const updateCarStatus = async ({ carId, targetStatus, userId, reason, ipA
     ipAddress,
   });
 
+  // Test-drive bookings: a car that stops being sellable cancels its open appointments (never throws).
+  if (previousStatus === CarStatus.AVAILABLE) {
+    await releaseAppointmentsForCar({ carId: car._id, carStatus: targetStatus, userId, ipAddress });
+  }
+
   return car;
 };
 
@@ -465,6 +471,9 @@ export const softDeleteCar = async ({ carId, userId, ipAddress }) => {
     summary: `Vehicle ${car.vehicleCode} soft-deleted`,
     ipAddress,
   });
+
+  // Test-drive bookings: a removed car cancels its open appointments (never throws).
+  await releaseAppointmentsForCar({ carId: car._id, carStatus: 'REMOVED', userId, ipAddress });
 };
 
 export default {

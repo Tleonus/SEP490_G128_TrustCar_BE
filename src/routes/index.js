@@ -8,6 +8,8 @@
  *   /api/v1/users           → Staff account management (Admin only)
  *   /api/v1/manage/cars     → Vehicle inventory CRUD (Staff & Admin)
  *   /api/v1/public/cars     → Public vehicle catalog (unauthenticated)
+ *   /api/v1/customer/appointments → Customer test-drive booking (CUSTOMER)
+ *   /api/v1/appointments    → Test-drive appointment handling (Staff & Admin)
  *
  * Adding new feature routes:
  * 1. Create src/routes/featureRoutes.js
@@ -24,6 +26,8 @@ import publicCarRoutes   from './publicCarRoutes.js';
 import inventoryRoutes   from './inventoryRoutes.js';
 import inspectionRoutes  from './inspectionRoutes.js';
 import customerCarRoutes from './customerCarRoutes.js';
+import customerAppointmentRoutes from './customerAppointmentRoutes.js';
+import appointmentRoutes from './appointmentRoutes.js';
 
 const router = Router();
 
@@ -51,5 +55,9 @@ router.use('/inspections', inspectionRoutes);
 
 // ── Customer-only Vehicle Comparison (CUSTOMER role) ───────────────────────
 router.use('/customer/cars', customerCarRoutes);
+
+// ── Test-drive Booking: customer side (CUSTOMER) and staff side (Staff & Admin) ──
+router.use('/customer/appointments', customerAppointmentRoutes);
+router.use('/appointments', appointmentRoutes);
 
 export default router;

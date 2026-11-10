@@ -42,3 +42,6 @@ uploads/temp/
 # ── Local reference files (not for git) ───────────────────────────────
 listxe.pdf
 trustcar_erd.drawio.png
+
+# SDD/ADD local docs (not for git)
+.sdd/

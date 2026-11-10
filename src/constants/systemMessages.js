@@ -1,6 +1,6 @@
 /**
  * @file systemMessages.js
- * @description Standardized error codes and messages (MSG01 – MSG75) for the
+ * @description Standardized error codes and messages (MSG01 – MSG83) for the
  * TrustCar platform. All API error responses reference these codes to enable
  * consistent front-end handling and support ticket correlation.
  *
@@ -136,6 +136,18 @@ export const SystemMessages = Object.freeze({
   // VEHICLE COMPARISON – MSG75
   // ════════════════════════════════════════════════════════════════════════════
   MSG75: { code: 'COMPARE_NOT_ENOUGH_CARS',  message: 'At least 2 of the selected vehicles must still be available to compare.', httpStatus: 422 },
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // TEST-DRIVE BOOKING – MSG76 to MSG83
+  // ════════════════════════════════════════════════════════════════════════════
+  MSG76: { code: 'APPOINTMENT_SLOT_INVALID',      message: 'The selected time is not one of the available visit time slots.', httpStatus: 422 },
+  MSG77: { code: 'APPOINTMENT_LIMIT_REACHED',     message: 'You already have the maximum number of upcoming test-drive visits.', httpStatus: 422 },
+  MSG78: { code: 'APPOINTMENT_STATUS_INVALID',    message: 'This action is not allowed for the appointment in its current state.', httpStatus: 409 },
+  MSG79: { code: 'APPOINTMENT_DUPLICATE',         message: 'You already have an upcoming appointment for this time slot or vehicle.', httpStatus: 409 },
+  MSG80: { code: 'APPOINTMENT_CAPACITY_FULL',     message: 'The showroom is fully booked for the selected time slot.',        httpStatus: 409 },
+  MSG81: { code: 'APPOINTMENT_CAR_UNAVAILABLE',   message: 'A vehicle in this visit is no longer available for sale.',         httpStatus: 409 },
+  MSG82: { code: 'APPOINTMENT_RESCHEDULE_NOT_ALLOWED',   message: 'This visit can no longer be rescheduled online.',          httpStatus: 409 },
+  MSG83: { code: 'APPOINTMENT_RESCHEDULE_LIMIT_REACHED', message: 'This visit has reached the maximum number of reschedules.', httpStatus: 422 },
 });
 
 export default SystemMessages;
