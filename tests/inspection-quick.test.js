@@ -95,15 +95,14 @@ describe('POST /inspections/cars/:id/inspect (admin quick inspection)', () => {
       .toBe('INVALID_CAR_STATUS');
   });
 
-  test('SALES_STAFF must attach at least one photo; with a photo of this car → 200', async () => {
+  test('SALES_STAFF can quick-inspect with or without photos (intake & quick-inspect)', async () => {
     const inspector = await h.loginAs('SALES_STAFF');
     const carId = h.createCar();
 
     const without = await inspect(carId, { criteria: allTrue, odo: 50000 }, inspector);
     const withPhoto = await inspect(carId, { criteria: allTrue, odo: 50000, evidenceImages: [quickPhoto(carId)] }, inspector);
 
-    expect(without.status).toBe(400);
-    expect(without.body.code).toBe('EVIDENCE_REQUIRED');
+    expect(without.status).toBe(200);
     expect(withPhoto.status).toBe(200);
     expect(withPhoto.body.data.inspectionRecord.source).toBe('ADMIN_QUICK');
   });

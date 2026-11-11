@@ -48,6 +48,11 @@ const createCarSchema = Joi.object({
 
   mileage:  Joi.number().integer().min(0).default(0),
   price:    joiPrice().required(),
+  listedPrice:   joiPrice().optional(),
+  floorPrice:    Joi.number().min(0).precision(0).optional(),
+  originalPrice: joiPrice().optional(),
+  inventoryType: Joi.string().valid('OWNED', 'CONSIGNMENT').optional(),
+  ownerType:     Joi.string().valid('COMPANY', 'INDIVIDUAL').optional(),
   marketPrice: joiMarketPrice().optional(),
 
   description:    Joi.string().trim().max(5000).optional(),
@@ -91,6 +96,11 @@ const updateCarSchema = Joi.object({
 
   mileage: Joi.number().integer().min(0).optional(),
   price:   joiPrice().optional(),
+  listedPrice:   joiPrice().optional(),
+  floorPrice:    Joi.number().min(0).precision(0).optional(),
+  originalPrice: joiPrice().optional(),
+  inventoryType: Joi.string().valid('OWNED', 'CONSIGNMENT').optional(),
+  ownerType:     Joi.string().valid('COMPANY', 'INDIVIDUAL').optional(),
   priceChangeReason: Joi.string().trim().max(500).optional(),
   // null clears the market price
   marketPrice: joiMarketPrice().allow(null).optional(),

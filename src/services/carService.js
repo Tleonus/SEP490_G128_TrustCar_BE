@@ -111,9 +111,15 @@ export const createCar = async (data, userId, ipAddress) => {
 
   // Generate unique vehicle code (GBR-13)
   const vehicleCode = await generateVehicleCode(Car);
+  const listedPrice = data.listedPrice ?? data.price;
+  const originalPrice = data.originalPrice ?? listedPrice;
+  const floorPrice = data.floorPrice ?? 0;
 
   const car = await Car.create({
     ...data,
+    listedPrice,
+    originalPrice,
+    floorPrice,
     vehicleCode,
     vin: data.vin.toUpperCase(),
     licensePlate: data.licensePlate.toUpperCase(),
@@ -263,6 +269,8 @@ export const updateCar = async ({ carId, updates, userId, ipAddress }) => {
     'make', 'model', 'variant', 'year', 'bodyType', 'fuelType',
     'transmission', 'driveType', 'mileage', 'description',
     'conditionGrade', 'registrationExpiry', 'specifications',
+    'internalNotes', 'carModelRef',
+    'listedPrice', 'floorPrice', 'originalPrice', 'inventoryType', 'ownerType',
     'internalNotes', 'carModelRef', 'marketPrice',
   ];
   allowedFields.forEach((field) => {
