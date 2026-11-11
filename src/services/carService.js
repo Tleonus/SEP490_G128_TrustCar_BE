@@ -271,6 +271,7 @@ export const updateCar = async ({ carId, updates, userId, ipAddress }) => {
     'conditionGrade', 'registrationExpiry', 'specifications',
     'internalNotes', 'carModelRef',
     'listedPrice', 'floorPrice', 'originalPrice', 'inventoryType', 'ownerType',
+    'internalNotes', 'carModelRef', 'marketPrice',
   ];
   allowedFields.forEach((field) => {
     if (updates[field] !== undefined) car[field] = updates[field];

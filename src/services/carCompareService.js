@@ -26,7 +26,7 @@ export const MIN_COMPARE_CARS = 2;
 /** Top-level fields exposed for comparison. */
 const BASIC_FIELDS = [
   'vehicleCode', 'make', 'model', 'variant', 'year', 'bodyType', 'fuelType',
-  'transmission', 'driveType', 'mileage', 'price', 'ownerType', 'conditionGrade',
+  'transmission', 'driveType', 'mileage', 'price', 'marketPrice', 'ownerType', 'conditionGrade',
 ];
 
 /** `specifications.*` scalar fields exposed for comparison (`features` is handled separately). */

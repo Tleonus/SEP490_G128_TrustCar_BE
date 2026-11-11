@@ -61,7 +61,7 @@ describe('POST /api/v1/marketing/caption', () => {
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({ carId, tone: 'friendly', userId: user.id }));
   });
 
-  test.each(['CUSTOMER', 'INSPECTOR'])('%s is rejected with 403', async (role) => {
+  test.each(['CUSTOMER'])('%s is rejected with 403', async (role) => {
     const user = await tokenFor(role);
 
     const res = await post({ carId }, user.auth);

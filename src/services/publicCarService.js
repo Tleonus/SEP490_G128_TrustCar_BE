@@ -37,6 +37,7 @@ const PUBLIC_LIST_PROJECTION = {
   driveType: 1,
   mileage: 1,
   price: 1,
+  marketPrice: 1,
   status: 1,
   images: 1,
   conditionGrade: 1,
@@ -50,17 +51,60 @@ const PUBLIC_LIST_PROJECTION = {
   'specifications.features': 1,
 };
 
-// Fields a public caller must never see, whatever projection is in use.
-const PUBLIC_HIDDEN_FIELDS = ['floorPrice', 'originalPrice', 'vin', 'licensePlate', 'internalNotes', 'priceHistory'];
+// Fields a public caller must never see, whatever projection is in use: cost and
+// floor prices, inventory metrics, vehicle identity and audit data stay staff-only.
+const PUBLIC_HIDDEN_FIELDS = [
+  'originalPrice', 'floorPrice', 'listedPrice', 'priceDropCount', 'priceHistory',
+  'daysInStock', 'agingCategory', 'inventoryType', 'listedDate',
+  'internalNotes', 'vin', 'licensePlate', 'carModelRef', 'soldAt', 'statusChangedAt',
+  'createdBy', 'updatedBy', 'statusChangedBy', 'isActive',
+];
 
-// ── Fields exposed on public detail view (full specs, no internal notes) ──
+// ── Fields exposed on public detail view: an allow-list, so a field added to the
+// model later stays hidden until someone deliberately exposes it here ──
 const PUBLIC_DETAIL_PROJECTION = {
-  internalNotes: 0, // Exclude internal notes
-  priceHistory: 0, // Price history is staff-only
-  createdBy: 0,
-  updatedBy: 0,
-  statusChangedBy: 0,
-  isActive: 0,
+  vehicleCode: 1,
+  make: 1,
+  model: 1,
+  variant: 1,
+  year: 1,
+  bodyType: 1,
+  fuelType: 1,
+  transmission: 1,
+  driveType: 1,
+  mileage: 1,
+  specifications: 1,
+  price: 1,
+  marketPrice: 1,
+  ownerType: 1,
+  status: 1,
+  cpoCertificateId: 1,
+  images: 1,
+  description: 1,
+  conditionGrade: 1,
+  registrationExpiry: 1,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+const FEATURED_DEFAULT_LIMIT = 8;
+const FEATURED_MAX_LIMIT = 20;
+
+/**
+ * Second guard applied after every public query: drops staff-only fields even if a
+ * projection is edited by mistake, and trims each image to what the storefront
+ * renders (`publicId` is the Cloudinary asset id, `_id` is the FE list key).
+ *
+ * @param {object} car - Lean Car document.
+ * @returns {object} The same object, safe to return to a public caller.
+ */
+export const toPublicCar = (car) => {
+  for (const field of PUBLIC_HIDDEN_FIELDS) delete car[field];
+  if (Array.isArray(car.images)) {
+    car.images = car.images.map(({ _id, url, isPrimary }) => ({ _id, url, isPrimary }));
+  }
+  if (car.marketPrice === undefined) car.marketPrice = null;
+  return car;
 };
 
 /**
@@ -226,11 +270,7 @@ export const getAvailableCars = async (query) => {
     Car.countDocuments(filter),
   ]);
 
-  // Defence in depth: the projection already excludes these, but a future
-  // edit to it must not start leaking cost or identity fields.
-  for (const item of items) {
-    for (const field of PUBLIC_HIDDEN_FIELDS) delete item[field];
-  }
+  items.forEach(toPublicCar);
 
   // Filter summary for front-end breadcrumb / active filter display
   const filterSummary = {};
@@ -284,7 +324,36 @@ export const getPublicCarDetail = async (carId) => {
     );
   }
 
-  return car;
+  return toPublicCar(car);
+};
+
+/**
+ * Normalises the featured `limit` query value: missing, non-numeric or below 1 → 8;
+ * above 20 → 20.
+ *
+ * @param {unknown} value
+ * @returns {number}
+ */
+export const normalizeFeaturedLimit = (value) => {
+  const limit = parseInt(value, 10);
+  if (!Number.isInteger(limit) || limit < 1) return FEATURED_DEFAULT_LIMIT;
+  return Math.min(limit, FEATURED_MAX_LIMIT);
+};
+
+/**
+ * Newest AVAILABLE vehicles for the storefront's featured section, with the same
+ * fields as one catalog item. Cars not yet on sale are excluded so every featured
+ * card opens a detail page that exists.
+ *
+ * @param {number} limit - Already normalised with normalizeFeaturedLimit.
+ * @returns {Promise<Array<object>>}
+ */
+export const getFeaturedCars = async (limit) => {
+  const cars = await Car.find({ status: CarStatus.AVAILABLE, isActive: true }, PUBLIC_LIST_PROJECTION)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  return cars.map(toPublicCar);
 };
 
 /**
@@ -324,5 +393,8 @@ export const getPublicFilterOptions = async () => {
 export default {
   getAvailableCars,
   getPublicCarDetail,
+  getFeaturedCars,
+  normalizeFeaturedLimit,
+  toPublicCar,
   getPublicFilterOptions,
 };
