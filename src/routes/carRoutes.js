@@ -22,6 +22,16 @@ router.use(verifyToken, requireRole(Roles.ADMIN, Roles.SALES_STAFF));
 
 // ── DTO Schemas ────────────────────────────────────────────────────────────
 
+// Whole positive VND. Unlike joiPrice(), a fractional value is rejected instead of rounded.
+const joiMarketPrice = () =>
+  Joi.number()
+    .integer()
+    .positive()
+    .messages({
+      'number.integer':  'Market price must be a whole number in VND.',
+      'number.positive': 'Market price must be a positive number in VND.',
+    });
+
 const createCarSchema = Joi.object({
   vin:          joiVIN().required(),
   licensePlate: joiPlate().required(),
@@ -38,6 +48,7 @@ const createCarSchema = Joi.object({
 
   mileage:  Joi.number().integer().min(0).default(0),
   price:    joiPrice().required(),
+  marketPrice: joiMarketPrice().optional(),
 
   description:    Joi.string().trim().max(5000).optional(),
   conditionGrade: Joi.string().valid('A', 'B', 'C', 'D').optional(),
@@ -81,6 +92,8 @@ const updateCarSchema = Joi.object({
   mileage: Joi.number().integer().min(0).optional(),
   price:   joiPrice().optional(),
   priceChangeReason: Joi.string().trim().max(500).optional(),
+  // null clears the market price
+  marketPrice: joiMarketPrice().allow(null).optional(),
 
   description:    Joi.string().trim().max(5000).allow('', null).optional(),
   conditionGrade: Joi.string().valid('A', 'B', 'C', 'D').allow(null).optional(),

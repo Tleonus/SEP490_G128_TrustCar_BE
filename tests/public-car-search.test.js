@@ -137,7 +137,8 @@ test('strips cost and identity fields even if the projection leaks them', async 
 
   const { items } = await getAvailableCars({});
 
-  expect(items[0]).toEqual({ make: 'TOYOTA' });
+  // marketPrice is always present on public cars (null when staff have not entered it).
+  expect(items[0]).toEqual({ make: 'TOYOTA', marketPrice: null });
   expect(find.mock.calls[0][1]).toMatchObject({ cpoCertificateId: 1 });
   expect(find.mock.calls[0][1]).not.toHaveProperty('floorPrice');
 });

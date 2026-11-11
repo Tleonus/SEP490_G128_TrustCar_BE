@@ -236,6 +236,13 @@ const CarSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Reference price of comparable cars on the market, entered by staff and shown to
+    // customers next to `price`. Independent of `priceHistory` and automatic markdowns.
+    marketPrice: {
+      type:    Number,
+      default: null,
+      min:     [1, 'Market price must be a positive number in VND.'],
+    },
     listedDate: {
       type: Date,
       default: () => new Date(),
