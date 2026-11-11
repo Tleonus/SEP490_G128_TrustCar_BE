@@ -34,6 +34,8 @@ import leadRoutes           from './leadRoutes.js';
 import emailLogRoutes       from './emailLogRoutes.js';
 import marketingRoutes      from './marketingRoutes.js';
 import loanSettingsRoutes   from './loanSettingsRoutes.js';
+import emailLogRoutes       from './emailLogRoutes.js';
+import marketingRoutes      from './marketingRoutes.js';
 
 const router = Router();
 
@@ -71,8 +73,7 @@ router.use('/admin', emailLogRoutes);
 // ── Test-Drive Booking (Customer, Staff & Admin) ───────────────────────────
 router.use('/test-drives', testDriveRoutes);
 
-// ── Lead Pipeline ─────────────────────────────────────────────────────────
-// Public intake first: it only owns POST /, so it must not shadow the
+// ── Lead Pipeline ─────────────────────────────────────────────────────────// Public intake first: it only owns POST /, so it must not shadow the
 // authenticated router's GET /:id. See leadPublicRoutes.js.
 router.use('/leads', leadPublicRoutes);
 router.use('/leads', leadRoutes);
