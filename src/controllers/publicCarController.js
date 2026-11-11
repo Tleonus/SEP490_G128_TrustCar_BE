@@ -13,8 +13,6 @@
 import * as publicCarService from '../services/publicCarService.js';
 import * as inspectionReportService from '../services/inspectionReportService.js';
 import { renderCertificatePdf } from '../services/cpoCertificatePdf.js';
-import Car from '../models/Car.js';
-import { CarStatus } from '../constants/appConstants.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 
 /**
@@ -58,19 +56,13 @@ export const getFilterOptions = async (_req, res, next) => {
 /**
  * @route   GET /api/v1/public/cars/featured?limit=8
  * @access  Public (no auth required)
- * @desc    Returns the latest available/CPO-approved cars for homepage showcase.
+ * @desc    Returns the latest AVAILABLE cars for homepage showcase (catalog fields only).
  *          Ref: FE-01 (featured section)
  */
 export const getFeaturedCars = async (req, res, next) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 8, 20);
-    const cars = await Car.find({
-      status: { $in: [CarStatus.AVAILABLE, CarStatus.APPROVED_CPO] },
-      isActive: true,
-    })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
+    const limit = publicCarService.normalizeFeaturedLimit(req.query.limit);
+    const cars = await publicCarService.getFeaturedCars(limit);
     return sendSuccess(res, 200, 'Featured vehicles retrieved successfully.', cars);
   } catch (error) {
     next(error);
