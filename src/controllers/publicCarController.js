@@ -13,6 +13,8 @@
 import * as publicCarService from '../services/publicCarService.js';
 import * as inspectionReportService from '../services/inspectionReportService.js';
 import { renderCertificatePdf } from '../services/cpoCertificatePdf.js';
+import Car from '../models/Car.js';
+import { CarStatus } from '../constants/appConstants.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 
 /**
