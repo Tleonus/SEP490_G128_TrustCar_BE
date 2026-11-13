@@ -109,9 +109,9 @@ const moveVisit = async ({ visit, scheduledAt, actor, userId, ipAddress, now }) 
 export const rescheduleMyVisit = async ({ customerId, userId, id, scheduledAt, ipAddress, now = new Date() }) => {
   if (!customerId) throw fail(MSG.MSG31);
   const visit = await loadVisit(id, customerId);
-  if (rescheduleBlock(visit, 0, now) === 'NOT_ALLOWED') throw fail(MSG.MSG82);
+  if (rescheduleBlock(visit, 0, now) === 'NOT_ALLOWED') throw fail(MSG.MSG85);
   const count = (await countReschedules([visit])).get(visit.visitId);
-  if (rescheduleBlock(visit, count, now) === 'LIMIT') throw fail(MSG.MSG83);
+  if (rescheduleBlock(visit, count, now) === 'LIMIT') throw fail(MSG.MSG86);
   assertBookableTime(scheduledAt, now);
 
   const { newVisit, previousVisitCode, carsById } = await moveVisit({
@@ -133,7 +133,7 @@ export const rescheduleMyVisit = async ({ customerId, userId, id, scheduledAt, i
  */
 export const rescheduleVisitAsStaff = async ({ id, userId, scheduledAt, ipAddress, now = new Date() }) => {
   const visit = await loadVisit(id);
-  if (!visit.rows.some(isOpenRow)) throw fail(MSG.MSG82);
+  if (!visit.rows.some(isOpenRow)) throw fail(MSG.MSG85);
   assertStaffBookableTime(scheduledAt, now);
 
   const { newVisit, previousVisitCode } = await moveVisit({

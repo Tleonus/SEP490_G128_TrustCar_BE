@@ -155,7 +155,7 @@ describe('staff window: no 2-hour lead time, but still in the future and within 
     expect(codeOf(() => assertStaffBookableTime(slot, new Date(slot.getTime() - 61 * DAY)))).toBe('APPOINTMENT_TOO_FAR');
   });
 
-  it('the slot grid still applies (MSG76), and the window is checked before it', () => {
+  it('the slot grid still applies (MSG79), and the window is checked before it', () => {
     const now = at('2026-11-08T00:00:00Z');
     expect(codeOf(() => assertStaffBookableTime(at('2026-11-10T03:30:00Z'), now))).toBe('APPOINTMENT_SLOT_INVALID');
     expect(codeOf(() => assertStaffBookableTime(at('2026-11-07T03:30:00Z'), now))).toBe('APPOINTMENT_TOO_SOON');

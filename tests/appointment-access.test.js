@@ -70,7 +70,7 @@ describe('authentication and authorisation (REQ-001, 002; AC-22)', () => {
     expect(fakes.calls).toHaveLength(0);
   });
 
-  test.each(['ADMIN', 'SALES_STAFF', 'INSPECTOR'])('%s on the customer API → 403 ROLE_INSUFFICIENT', async (roleName) => {
+  test.each(['ADMIN', 'SALES_STAFF'])('%s on the customer API → 403 ROLE_INSUFFICIENT', async (roleName) => {
     const token = await tokenFor({ roleName });
     for (const [method, url] of CUSTOMER_ENDPOINTS) {
       const res = await send(method, url, token);
@@ -86,8 +86,9 @@ describe('authentication and authorisation (REQ-001, 002; AC-22)', () => {
     expect(fakes.calls).toHaveLength(0);
   });
 
-  test.each(['CUSTOMER', 'INSPECTOR'])('%s on the staff API → 403 and no appointment query', async (roleName) => {
-    const token = roleName === 'CUSTOMER' ? await customerToken() : await tokenFor({ roleName });
+  // The INSPECTOR role no longer exists on develop (Roles = ADMIN, SALES_STAFF, CUSTOMER).
+  test.each(['CUSTOMER'])('%s on the staff API → 403 and no appointment query', async () => {
+    const token = await customerToken();
     for (const [method, url] of STAFF_ENDPOINTS) {
       expect((await send(method, url, token, {})).status).toBe(403);
     }
@@ -205,10 +206,9 @@ describe('1.1.0 end-to-end: reschedule, staff grid, book on behalf', () => {
     expect(await fakes.flushMail()).toHaveLength(4); // booked, moved, booked for, moved by staff
   });
 
-  test('INSPECTOR and CUSTOMER cannot use the new staff endpoints', async () => {
-    const inspector = await tokenFor({ roleName: 'INSPECTOR' });
+  test('a CUSTOMER cannot use the new staff endpoints', async () => {
     const customer = await customerToken();
-    for (const token of [inspector, customer]) {
+    for (const token of [customer]) {
       expect((await send('get', '/appointments/customers?q=abc', token)).status).toBe(403);
       expect((await send('post', '/appointments', token, {})).status).toBe(403);
       expect((await send('get', '/appointments/slots?from=2026-11-10&to=2026-11-11', token)).status).toBe(403);

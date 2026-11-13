@@ -31,7 +31,7 @@ import dayjs from 'dayjs';
  *
  * Ref: GBR-08
  */
-export const PLATE_REGEX = /^[0-9]{2}[A-Z]{1,2}[-\s]?[0-9]{4,5}(\.[0-9]{2})?$/;
+export const PLATE_REGEX = /^[0-9]{2}[A-Z]{1,2}[-\s]?[0-9]{3,5}(\.[0-9]{2})?$/;
 
 /**
  * Validates a Vietnamese license plate number (case-insensitive after normalization).

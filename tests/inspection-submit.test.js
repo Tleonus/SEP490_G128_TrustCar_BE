@@ -40,7 +40,7 @@ const submit = (who = staff) => api().post(`${BASE}/${id}/submit`).set('Authoriz
 
 beforeEach(async () => {
   h.reset();
-  staff = await h.loginAs('INSPECTOR');
+  staff = await h.loginAs('SALES_STAFF');
   carId = h.createCar({ status: 'INCOMING', mileage: 48000 });
   id = (await api().post(`${BASE}/cars/${carId}/draft`).set('Authorization', staff.auth)).body.data._id;
   h.activity.length = 0;
@@ -156,7 +156,7 @@ describe('POST /inspections/:id/submit — locking, concurrency and rollback', (
     expect((await submit()).status).toBe(200);
 
     h.reset();
-    staff = await h.loginAs('INSPECTOR');
+    staff = await h.loginAs('SALES_STAFF');
     carId = h.createCar({ status: 'INCOMING', mileage: 48000 });
     id = (await api().post(`${BASE}/cars/${carId}/draft`).set('Authorization', staff.auth)).body.data._id;
     fillDraft();

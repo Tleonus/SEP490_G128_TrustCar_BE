@@ -113,7 +113,7 @@ export const staffWindowReason = (start, now = new Date()) => {
 
 /**
  * Like `assertBookableTime` but with the staff window: a slot that already started reports
- * `MSG35` (too soon), a slot beyond 60 days `MSG36`, and a time off the slot grid `MSG76`.
+ * `MSG35` (too soon), a slot beyond 60 days `MSG36`, and a time off the slot grid `MSG79`.
  *
  * @ears .sdd/features/test-drive-booking/SPEC.md#REQ-034
  * @ears .sdd/features/test-drive-booking/SPEC.md#REQ-039
@@ -122,7 +122,7 @@ export const assertStaffBookableTime = (scheduledAt, now = new Date()) => {
   const reason = staffWindowReason(scheduledAt, now);
   if (reason === SlotReason.PAST) throw fail(MSG.MSG35);
   if (reason === SlotReason.TOO_FAR) throw fail(MSG.MSG36);
-  if (!isOnSlot(scheduledAt)) throw fail(MSG.MSG76);
+  if (!isOnSlot(scheduledAt)) throw fail(MSG.MSG79);
 };
 
 /**
@@ -138,5 +138,5 @@ export const assertBookableTime = (scheduledAt, now = new Date()) => {
   const reason = windowReason(scheduledAt, now);
   if (reason === SlotReason.TOO_SOON) throw fail(MSG.MSG35);
   if (reason === SlotReason.TOO_FAR) throw fail(MSG.MSG36);
-  if (!isOnSlot(scheduledAt)) throw fail(MSG.MSG76);
+  if (!isOnSlot(scheduledAt)) throw fail(MSG.MSG79);
 };

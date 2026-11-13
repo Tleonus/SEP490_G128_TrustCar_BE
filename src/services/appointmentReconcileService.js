@@ -79,7 +79,7 @@ export const assertCarsSellable = async (carIds, { userId = null, ipAddress } = 
   const sellable = await findBookableCars(ids);
   if (sellable.length === ids.length) return sellable;
   await reconcileCars({ carIds: ids, userId, ipAddress });
-  throw fail(MSG.MSG81);
+  throw fail(MSG.MSG84);
 };
 
 export default { reconcileOpenAppointments, reconcileCars, assertCarsSellable };

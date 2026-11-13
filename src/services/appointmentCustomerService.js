@@ -62,7 +62,7 @@ const assertCancellable = (visit, now) => {
   const status = deriveVisitStatus(visit.rows);
   if (status === AppointmentStatus.CANCELLED) throw fail(MSG.MSG39);
   const stillOpen = visit.rows.some(isOpenRow);
-  if (!stillOpen || visit.scheduledAt.getTime() <= now.getTime()) throw fail(MSG.MSG78);
+  if (!stillOpen || visit.scheduledAt.getTime() <= now.getTime()) throw fail(MSG.MSG81);
 };
 
 /**
@@ -87,7 +87,7 @@ export const cancelMyVisit = async ({ customerId, userId, id, reason, ipAddress,
   const fresh = await loadOwnVisit(customerId, id);
   if (result.modifiedCount === 0) {
     assertCancellable(fresh, now); // somebody else changed it first: report why
-    throw fail(MSG.MSG78);
+    throw fail(MSG.MSG81);
   }
   const changes = open
     .filter((row) => fresh.rows.some((r) => String(r._id) === String(row._id) && r.status === AppointmentStatus.CANCELLED))

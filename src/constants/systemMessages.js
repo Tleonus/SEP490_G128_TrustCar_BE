@@ -138,16 +138,23 @@ export const SystemMessages = Object.freeze({
   MSG75: { code: 'COMPARE_NOT_ENOUGH_CARS',  message: 'At least 2 of the selected vehicles must still be available to compare.', httpStatus: 422 },
 
   // ════════════════════════════════════════════════════════════════════════════
-  // TEST-DRIVE BOOKING – MSG76 to MSG83
+  // SAVED CARS WISHLIST & PRICE DROP ALERTS – MSG76 to MSG78
   // ════════════════════════════════════════════════════════════════════════════
-  MSG76: { code: 'APPOINTMENT_SLOT_INVALID',      message: 'The selected time is not one of the available visit time slots.', httpStatus: 422 },
-  MSG77: { code: 'APPOINTMENT_LIMIT_REACHED',     message: 'You already have the maximum number of upcoming test-drive visits.', httpStatus: 422 },
-  MSG78: { code: 'APPOINTMENT_STATUS_INVALID',    message: 'This action is not allowed for the appointment in its current state.', httpStatus: 409 },
-  MSG79: { code: 'APPOINTMENT_DUPLICATE',         message: 'You already have an upcoming appointment for this time slot or vehicle.', httpStatus: 409 },
-  MSG80: { code: 'APPOINTMENT_CAPACITY_FULL',     message: 'The showroom is fully booked for the selected time slot.',        httpStatus: 409 },
-  MSG81: { code: 'APPOINTMENT_CAR_UNAVAILABLE',   message: 'A vehicle in this visit is no longer available for sale.',         httpStatus: 409 },
-  MSG82: { code: 'APPOINTMENT_RESCHEDULE_NOT_ALLOWED',   message: 'This visit can no longer be rescheduled online.',          httpStatus: 409 },
-  MSG83: { code: 'APPOINTMENT_RESCHEDULE_LIMIT_REACHED', message: 'This visit has reached the maximum number of reschedules.', httpStatus: 422 },
+  MSG76: { code: 'WISHLIST_ITEM_NOT_FOUND',  message: 'This vehicle is not in your saved wishlist.',                             httpStatus: 404 },
+  MSG77: { code: 'PRICE_ALERT_NOT_FOUND',    message: 'Price drop alert not found.',                                             httpStatus: 404 },
+  MSG78: { code: 'WISHLIST_LIMIT_EXCEEDED',  message: 'Your wishlist has reached the maximum limit of 100 saved vehicles.',      httpStatus: 422 },
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // TEST-DRIVE BOOKING – MSG79 to MSG86
+  // ════════════════════════════════════════════════════════════════════════════
+  MSG79: { code: 'APPOINTMENT_SLOT_INVALID',      message: 'The selected time is not one of the available visit time slots.', httpStatus: 422 },
+  MSG80: { code: 'APPOINTMENT_LIMIT_REACHED',     message: 'You already have the maximum number of upcoming test-drive visits.', httpStatus: 422 },
+  MSG81: { code: 'APPOINTMENT_STATUS_INVALID',    message: 'This action is not allowed for the appointment in its current state.', httpStatus: 409 },
+  MSG82: { code: 'APPOINTMENT_DUPLICATE',         message: 'You already have an upcoming appointment for this time slot or vehicle.', httpStatus: 409 },
+  MSG83: { code: 'APPOINTMENT_CAPACITY_FULL',     message: 'The showroom is fully booked for the selected time slot.',        httpStatus: 409 },
+  MSG84: { code: 'APPOINTMENT_CAR_UNAVAILABLE',   message: 'A vehicle in this visit is no longer available for sale.',         httpStatus: 409 },
+  MSG85: { code: 'APPOINTMENT_RESCHEDULE_NOT_ALLOWED',   message: 'This visit can no longer be rescheduled online.',          httpStatus: 409 },
+  MSG86: { code: 'APPOINTMENT_RESCHEDULE_LIMIT_REACHED', message: 'This visit has reached the maximum number of reschedules.', httpStatus: 422 },
 });
 
 export default SystemMessages;

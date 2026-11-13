@@ -7,6 +7,7 @@
  */
 
 import ActivityLog from './ActivityLog.js';
+import EmailLog from './EmailLog.js';
 import Appointment from './Appointment.js';
 import Car from './Car.js';
 import CarModel from './CarModel.js';
@@ -15,6 +16,7 @@ import InspectionRecord from './InspectionRecord.js';
 import Lead from './Lead.js';
 import PriceHistory from './PriceHistory.js';
 import Role from './Role.js';
+import SavedCar from './SavedCar.js';
 import User from './User.js';
 
 import Brand from './brand.model.js';
@@ -44,6 +46,7 @@ export {
   ChatMessage,
   ContentItem,
   Customer,
+  EmailLog,
   Feedback,
   InspectionRecord,
   InteractionEvent,
@@ -56,6 +59,7 @@ export {
   RecommendationBatch,
   Role,
   SaleRecord,
+  SavedCar,
   ShowroomService,
   SystemSetting,
   User,

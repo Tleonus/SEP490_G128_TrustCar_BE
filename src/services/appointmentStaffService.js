@@ -146,7 +146,7 @@ export const changeVisitStatus = async ({
   const result = normalizeOutcome(outcome);
 
   const visit = await loadVisit(id);
-  if (!canTransition(deriveVisitStatus(visit.rows), status, visit.scheduledAt, now)) throw fail(MSG.MSG78);
+  if (!canTransition(deriveVisitStatus(visit.rows), status, visit.scheduledAt, now)) throw fail(MSG.MSG81);
 
   const open = visit.rows.filter(isOpenRow);
   if (status === AppointmentStatus.CONFIRMED) await assertCarsSellable(open.map((row) => row.car), { userId, ipAddress });
@@ -155,7 +155,7 @@ export const changeVisitStatus = async ({
     { _id: { $in: open.map((row) => row._id) }, status: { $in: OPEN_STATUSES }, isActive: true },
     { $set: fieldsFor(status, { userId, now, note, outcome: result }) },
   );
-  if (update.modifiedCount === 0) throw fail(MSG.MSG78); // changed by somebody else meanwhile
+  if (update.modifiedCount === 0) throw fail(MSG.MSG81); // changed by somebody else meanwhile
 
   if (status === AppointmentStatus.CONFIRMED) {
     await Appointment.updateMany({ _id: { $in: open.map((row) => row._id) }, assignedTo: null }, { $set: { assignedTo: userId } });

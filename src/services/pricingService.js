@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import Car from '../models/Car.js';
 import PriceHistory from '../models/PriceHistory.js';
 import { AppError } from '../utils/apiResponse.js';
+import { dispatchPriceDropAlertsSafely } from './wishlistService.js';
 
 export const calculateAging = (listedDate) => {
   if (!listedDate) return { daysInStock: 0, agingCategory: 'FRESH' };
@@ -55,6 +56,15 @@ export const executePriceMarkdown = async ({ carId, newPrice, reason, modifiedBy
 
     await session.commitTransaction();
     session.endSession();
+
+    await dispatchPriceDropAlertsSafely({
+      carId: car._id,
+      oldPrice,
+      newPrice,
+      priceHistoryId: ph._id,
+      performedBy: modifiedBy,
+    });
+
     return { car, priceHistory: ph };
   } catch (err) {
     await session.abortTransaction();

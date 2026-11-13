@@ -83,7 +83,7 @@ export const retireOldRows = async ({ open, written, newCode, userId }) => {
   }
   if (result.modifiedCount === open.length) return;
   await undoMove({ written, open, reason, userId }); // somebody changed the visit meanwhile
-  throw fail(MSG.MSG78);
+  throw fail(MSG.MSG81);
 };
 
 export default { Actor, replacementOf, undoMove, retireOldRows };

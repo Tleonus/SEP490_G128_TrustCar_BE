@@ -35,7 +35,7 @@ export const BusinessRules = Object.freeze({
   GBR_02: {
     id: 'GBR-02',
     title: 'Role-Based Access Control (RBAC)',
-    description: 'Every protected route declares one or more required permissions. The roleMiddleware resolves the requester's role -> permission set and denies access if the required permission is absent (403 Forbidden).',
+    description: 'Every protected route declares one or more required permissions. The roleMiddleware resolves the requester\'s role -> permission set and denies access if the required permission is absent (403 Forbidden).',
     layer: 'Middleware - roleMiddleware.js (requirePermission)',
     messages: ['MSG04', 'MSG05'],
   },
@@ -90,7 +90,7 @@ export const BusinessRules = Object.freeze({
     title: 'Self-Profile Read / Own Password Change Only',
     description:
       'A staff member may only read their own profile and change their own ' +
-      'password. Reading or modifying another user's account requires ADMIN role.',
+      'password. Reading or modifying another user\'s account requires ADMIN role.',
     layer: 'Controller – authController.js | Service – authService.js',
     messages: ['MSG05'],
   },
@@ -137,7 +137,7 @@ export const BusinessRules = Object.freeze({
     title: 'Price History Immutability (Append-Only)',
     description:
       'Every price change appends a new PriceHistory entry ' +
-      '{ price, changedBy, changedAt, reason } to the vehicle's priceHistory array. ' +
+      '{ price, changedBy, changedAt, reason } to the vehicle\'s priceHistory array. ' +
       'Existing entries cannot be modified or removed via any API.',
     layer: 'Service – carService.js (updatePrice)',
     messages: ['MSG24'],
@@ -158,7 +158,7 @@ export const BusinessRules = Object.freeze({
     id: 'GBR-09',
     title: 'Odometer Reading Cannot Decrease',
     description:
-      'When updating a vehicle's mileage (ODO), the new value must be ≥ the currently ' +
+      'When updating a vehicle\'s mileage (ODO), the new value must be ≥ the currently ' +
       'stored value. Decreasing mileage readings return 422 Unprocessable Entity.',
     layer: 'Service – carService.js (assertMileageNotDecreased)',
     messages: ['MSG26'],
@@ -272,10 +272,10 @@ export const BusinessRules = Object.freeze({
     id: 'GBR-20',
     title: 'No Overlapping Vehicle Appointments',
     description:
-      'A vehicle cannot have two CONFIRMED or PENDING appointments within ' +
-      'APPOINTMENT_CONSTRAINTS.CONFLICT_BUFFER_MIN (±30 min) of each other. ' +
-      'Conflict detection is vehicle-scoped, not staff-scoped.',
-    layer: 'Service – appointmentService.js (assertNoConflict)',
+      'A vehicle cannot have two CONFIRMED or PENDING appointments whose time ' +
+      'ranges overlap. Bookings use fixed time slots, so overlap replaces the ' +
+      'former ±30 minute buffer.',
+    layer: 'Service – testDriveBookingService.js',
     messages: ['MSG37'],
   },
 

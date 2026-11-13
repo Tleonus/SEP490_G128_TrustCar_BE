@@ -100,12 +100,11 @@ export const AppointmentStatus = Object.freeze({
 export const Roles = Object.freeze({
   ADMIN:       'ADMIN',
   SALES_STAFF: 'SALES_STAFF',
-  INSPECTOR:   'INSPECTOR',
   CUSTOMER:    'CUSTOMER', // self-registered website customer – no internal permissions
 });
 
 // Internal (staff) roles – the only roles Admin can assign via user management.
-export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF, Roles.INSPECTOR]);
+export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
 
 // ── Granular Permissions ───────────────────────────────────────────────────────
 // Ref: FE-13
@@ -161,12 +160,6 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.APPOINTMENT_CREATE,
     Permissions.APPOINTMENT_UPDATE,
     Permissions.REPORT_VIEW,
-  ],
-
-  [Roles.INSPECTOR]: [
-    Permissions.CAR_READ,
-    Permissions.CAR_UPDATE,
-    Permissions.CAR_STATUS_CHANGE,
   ],
 
   [Roles.CUSTOMER]: [],
@@ -250,10 +243,18 @@ export const ActivityEventType = Object.freeze({
   APPOINTMENT_COMPLETED: 'APPOINTMENT_COMPLETED',
   APPOINTMENT_NO_SHOW:   'APPOINTMENT_NO_SHOW',
   APPOINTMENT_RESCHEDULED: 'APPOINTMENT_RESCHEDULED',
+  APPOINTMENT_REASSIGNED: 'APPOINTMENT_REASSIGNED',
+  APPOINTMENT_NO_SHOW_CORRECTED: 'APPOINTMENT_NO_SHOW_CORRECTED',
 
   // Inspection (CPO checklist)
   INSPECTION_DRAFT_CREATED: 'INSPECTION_DRAFT_CREATED',
   INSPECTION_SUBMITTED:     'INSPECTION_SUBMITTED',
+
+  // Wishlist & Price Drop Alerts
+  CAR_SAVED_WISHLIST:       'CAR_SAVED_WISHLIST',
+  CAR_REMOVED_WISHLIST:     'CAR_REMOVED_WISHLIST',
+  WISHLIST_SYNCED:          'WISHLIST_SYNCED',
+  PRICE_ALERT_SENT:         'PRICE_ALERT_SENT',
 });
 
 // ── File Upload Constraints ───────────────────────────────────────────────────
@@ -278,4 +279,42 @@ export const APPOINTMENT_CONSTRAINTS = Object.freeze({
   MIN_HOURS_AHEAD:     2,   // Must be at least 2 hours in the future
   MAX_DAYS_AHEAD:      60,  // Cannot schedule more than 60 days out
   CONFLICT_BUFFER_MIN: 30,  // ±30 minute buffer for conflict detection (GBR-20)
+});
+
+// ── Test-Drive Booking ───────────────────────────────────────────────────────
+export const TEST_DRIVE_LIMITS = Object.freeze({
+  MAX_ACTIVE_BOOKINGS:       2,  // Upcoming bookings per customer
+  MAX_ACTIVE_PER_CAR:        1,  // Upcoming bookings per customer and car
+  MAX_BOOKINGS_PER_DAY:      3,  // Includes cancelled bookings
+  MAX_COMPLETED_IN_WINDOW:   3,  // Completed test drives within WINDOW_DAYS
+  NO_SHOWS_TO_LOCK:          2,  // Within WINDOW_DAYS of each other
+  WINDOW_DAYS:               30,
+  LOCK_DAYS:                 30, // Counted from the latest no-show's scheduled time
+  NEAREST_SLOTS:             3,  // Alternatives returned on SLOT_FULL/CAR_SLOT_TAKEN
+  NEAREST_SLOTS_DAYS:        7,
+  BOOKING_MAX_ATTEMPTS:      5,  // Transaction retries on write conflict/duplicate key
+  BOOKING_RATE_MAX:          10, // Booking requests per account per window
+  BOOKING_RATE_WINDOW_MS:    15 * 60 * 1000,
+  REMINDER_LEAD_MINUTES:     60,
+  JOB_INTERVAL_MS:           5 * 60 * 1000,
+  JOB_BATCH_SIZE:            200,
+});
+
+// Statuses in which an appointment holds its place in a slot.
+export const TEST_DRIVE_ACTIVE_STATUSES = Object.freeze([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]);
+
+// Staff-selectable cancellation reasons; the text is what the customer sees.
+export const TestDriveCancelReason = Object.freeze({
+  SLOT_FULL:       'SLOT_FULL',
+  OVER_CAPACITY:   'OVER_CAPACITY',
+  CAR_UNAVAILABLE: 'CAR_UNAVAILABLE',
+  OTHER:           'OTHER',
+});
+
+export const TEST_DRIVE_CANCEL_TEXT = Object.freeze({
+  SLOT_FULL:          'Khung giờ đã hết chỗ',
+  OVER_CAPACITY:      'Showroom quá số lượng khách trong khung giờ này',
+  CAR_UNAVAILABLE:    'Xe không còn sẵn sàng để lái thử',
+  OTHER:              'Lý do khác',
+  CUSTOMER_CANCELLED: 'Khách hủy lịch',
 });

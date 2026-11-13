@@ -7,9 +7,12 @@
  *   repair work orders, or technician dispatching are tracked here.
  *
  * Key constraints:
- * - appointmentCode auto-generated (APT-NNNN) by appointmentService.js.
+ * - appointmentCode auto-generated (APT-NNNN) by testDriveBookingService.js.
  * - scheduledAt must be ≥ 2 hours ahead and ≤ 60 days ahead (GBR-19).
- * - No overlapping CONFIRMED/PENDING appointments for the same car ±30 min (GBR-20).
+ * - No overlapping CONFIRMED/PENDING appointments for the same car (GBR-20).
+ * - slotSeat marks an appointment that holds a place in its time slot. Removing it
+ *   gives the place back, and the partial unique indexes below only cover documents
+ *   that have it, so older appointments are never affected.
  * - Soft-delete only (GBR-25).
  */
 
@@ -112,6 +115,18 @@ const AppointmentSchema = new mongoose.Schema(
       default: null,
     },
 
+    // ── Test-Drive Slot & Reminder ─────────────────────────────────────
+    slotSeat: {
+      type: Number,
+      min:  1,
+      // Present only while PENDING/CONFIRMED; 1…maxGuestsPerSlot within the slot
+    },
+
+    reminderSentAt: {
+      type: Date,
+      // Set before sending so that overlapping scans cannot send twice; cleared on failure
+    },
+
     outcome: {
       type:      String,
       trim:      true,
@@ -163,6 +178,13 @@ AppointmentSchema.index({ customer: 1 });
 AppointmentSchema.index({ assignedTo: 1 });
 AppointmentSchema.index({ status: 1, scheduledAt: 1 });
 AppointmentSchema.index({ appointmentCode: 1 });
+
+// Concurrent bookings: the database refuses a second holder of the same car, staff
+// member or seat at the same time, whichever request got there first.
+const HOLDS_A_SEAT = { partialFilterExpression: { slotSeat: { $type: 'number' } }, unique: true };
+AppointmentSchema.index({ car: 1, scheduledAt: 1 }, { ...HOLDS_A_SEAT, name: 'uniq_seat_car_time' });
+AppointmentSchema.index({ assignedTo: 1, scheduledAt: 1 }, { ...HOLDS_A_SEAT, name: 'uniq_seat_staff_time' });
+AppointmentSchema.index({ scheduledAt: 1, slotSeat: 1 }, { ...HOLDS_A_SEAT, name: 'uniq_seat_number_time' });
 
 const Appointment = mongoose.model('Appointment', AppointmentSchema);
 export default Appointment;

@@ -82,11 +82,11 @@ export const evaluateBooking = ({
 /** Maps a violation to the API error (Spec section 6). */
 export const violationToError = (violation, scheduledAt) => {
   switch (violation.kind) {
-    case Violation.DUPLICATE_SLOT: return fail(MSG.MSG79, { slot: formatVnIso(scheduledAt) });
-    case Violation.DUPLICATE_CARS: return fail(MSG.MSG79, { carIds: violation.carIds });
-    case Violation.LIMIT: return fail(MSG.MSG77);
+    case Violation.DUPLICATE_SLOT: return fail(MSG.MSG82, { slot: formatVnIso(scheduledAt) });
+    case Violation.DUPLICATE_CARS: return fail(MSG.MSG82, { carIds: violation.carIds });
+    case Violation.LIMIT: return fail(MSG.MSG80);
     case Violation.CONFLICT: return fail(MSG.MSG37, { carIds: violation.carIds });
-    case Violation.CAPACITY: return fail(MSG.MSG80);
+    case Violation.CAPACITY: return fail(MSG.MSG83);
     default: return fail(MSG.MSG62);
   }
 };
