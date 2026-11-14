@@ -34,8 +34,7 @@ import leadRoutes           from './leadRoutes.js';
 import emailLogRoutes       from './emailLogRoutes.js';
 import marketingRoutes      from './marketingRoutes.js';
 import loanSettingsRoutes   from './loanSettingsRoutes.js';
-import emailLogRoutes       from './emailLogRoutes.js';
-import marketingRoutes      from './marketingRoutes.js';
+import publicChatRoutes     from './publicChatRoutes.js';
 
 const router = Router();
 
@@ -55,6 +54,7 @@ router.use('/manage/cars', carRoutes);
 // ── Public Catalog (No Auth) ───────────────────────────────────────────────
 router.use('/public/cars', publicCarRoutes);
 router.use('/public/wishlist', publicWishlistRoutes);
+router.use('/public/chat', publicChatRoutes);
 router.use('/public', publicSettingsRoutes);
 router.use('/settings', loanSettingsRoutes);
 
