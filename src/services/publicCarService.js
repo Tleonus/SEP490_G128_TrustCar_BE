@@ -64,13 +64,89 @@ const PUBLIC_HIDDEN_FIELDS = [
 // ── Fields exposed on public detail view: an allow-list, so a field added to the
 // model later stays hidden until someone deliberately exposes it here ──
 const PUBLIC_DETAIL_PROJECTION = {
-  internalNotes: 0, // Exclude internal notes
-  priceHistory: 0, // Price history is staff-only
-  createdBy: 0,
-  updatedBy: 0,
-  statusChangedBy: 0,
-  isActive: 0,
+  vehicleCode: 1,
+  make: 1,
+  model: 1,
+  variant: 1,
+  year: 1,
+  bodyType: 1,
+  fuelType: 1,
+  transmission: 1,
+  driveType: 1,
+  mileage: 1,
+  specifications: 1,
+  price: 1,
+  marketPrice: 1,
+  ownerType: 1,
+  status: 1,
+  cpoCertificateId: 1,
+  images: 1,
+  description: 1,
+  conditionGrade: 1,
+  registrationExpiry: 1,
+  createdAt: 1,
+  updatedAt: 1,
 };
+
+const FEATURED_DEFAULT_LIMIT = 8;
+const FEATURED_MAX_LIMIT = 20;
+
+/**
+ * Second guard applied after every public query: drops staff-only fields even if a
+ * projection is edited by mistake, and trims each image to what the storefront
+ * renders (`publicId` is the Cloudinary asset id, `_id` is the FE list key).
+ *
+ * @param {object} car - Lean Car document.
+ * @returns {object} The same object, safe to return to a public caller.
+ */
+export const toPublicCar = (car) => {
+  for (const field of PUBLIC_HIDDEN_FIELDS) delete car[field];
+  if (Array.isArray(car.images)) {
+    car.images = car.images.map(({ _id, url, isPrimary }) => ({ _id, url, isPrimary }));
+  }
+  if (car.marketPrice === undefined) car.marketPrice = null;
+  return car;
+};
+
+/**
+ * Splits a comma-separated query value into a clean list.
+ * "Toyota, Honda," → ["Toyota", "Honda"].
+ *
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+const splitList = (value) => String(value)
+  .split(',')
+  .map((part) => part.trim())
+  .filter(Boolean);
+
+/**
+ * Matches one value exactly, or several with $in. Comparison fields such as
+ * make and the enums are stored uppercase, so values are normalised.
+ *
+ * @param {string} value
+ * @param {{ uppercase?: boolean }} [options]
+ * @returns {string | { $in: string[] }}
+ */
+const matchOneOrMany = (value, { uppercase = false } = {}) => {
+  const values = splitList(value).map((part) => (uppercase ? part.toUpperCase() : part));
+  return values.length > 1 ? { $in: values } : values[0];
+};
+
+/**
+ * Escapes a keyword so it is matched literally inside a regex.
+ * @param {string} value
+ * @returns {string}
+ */
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * First query param that the caller actually sent.
+ * @param {object} query
+ * @param {...string} names
+ * @returns {string|undefined}
+ */
+const firstParam = (query, ...names) => names.map((name) => query[name]).find((value) => value !== undefined && value !== '');
 
 /**
  * Builds a Mongoose filter object from public query parameters.
@@ -194,6 +270,8 @@ export const getAvailableCars = async (query) => {
       .lean(),
     Car.countDocuments(filter),
   ]);
+
+  items.forEach(toPublicCar);
 
   // Filter summary for front-end breadcrumb / active filter display
   const filterSummary = {};
