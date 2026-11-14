@@ -4,12 +4,15 @@
  * Contains ZERO business logic; delegates everything to publicCarService.js.
  *
  * Routes handled (FE-01, FE-02, FE-03):
- * - GET /api/v1/public/cars           → listAvailableCars (with filters)
- * - GET /api/v1/public/cars/filters   → getFilterOptions (dropdown metadata)
- * - GET /api/v1/public/cars/:id       → getCarDetail
+ * - GET /api/v1/public/cars             → listAvailableCars (with filters)
+ * - GET /api/v1/public/cars/filters     → getFilterOptions (dropdown metadata)
+ * - GET /api/v1/public/cars/featured    → getFeaturedCars (homepage showcase)
+ * - GET /api/v1/public/cars/:id         → getCarDetail
  */
 
 import * as publicCarService from '../services/publicCarService.js';
+import * as inspectionReportService from '../services/inspectionReportService.js';
+import { renderCertificatePdf } from '../services/cpoCertificatePdf.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 
 /**
@@ -51,6 +54,22 @@ export const getFilterOptions = async (_req, res, next) => {
 };
 
 /**
+ * @route   GET /api/v1/public/cars/featured?limit=8
+ * @access  Public (no auth required)
+ * @desc    Returns the latest AVAILABLE cars for homepage showcase (catalog fields only).
+ *          Ref: FE-01 (featured section)
+ */
+export const getFeaturedCars = async (req, res, next) => {
+  try {
+    const limit = publicCarService.normalizeFeaturedLimit(req.query.limit);
+    const cars = await publicCarService.getFeaturedCars(limit);
+    return sendSuccess(res, 200, 'Featured vehicles retrieved successfully.', cars);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * @route   GET /api/v1/public/cars/:id
  * @access  Public
  * @param   id - MongoDB ObjectId OR vehicleCode (TC-YYYY-NNNN)
@@ -66,4 +85,39 @@ export const getCarDetail = async (req, res, next) => {
   }
 };
 
-export default { listAvailableCars, getFilterOptions, getCarDetail };
+/**
+ * @route   GET /api/v1/public/cars/:id/inspection-report
+ * @access  Public
+ * @desc    Public CPO inspection report of a certified car (APPROVED_CPO or AVAILABLE).
+ */
+export const getInspectionReport = async (req, res, next) => {
+  try {
+    const report = await inspectionReportService.getPublicInspectionReport(req.params.id);
+    return sendSuccess(res, 200, 'Inspection report retrieved successfully.', report);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @route   GET /api/v1/public/cars/:id/cpo-certificate.pdf
+ * @access  Public
+ * @desc    Downloadable CPO certificate (PDF) for a certified car. Same visibility
+ *          rules as the inspection report: 404 INSPECTION_REPORT_NOT_FOUND otherwise.
+ */
+export const getCpoCertificatePdf = async (req, res, next) => {
+  try {
+    const report = await inspectionReportService.getPublicInspectionReport(req.params.id);
+    const pdf = renderCertificatePdf(report, { idOrCode: req.params.id });
+    const fileName = `chung-nhan-${report.certificateId || 'cpo'}.pdf`;
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="${fileName}"`);
+    return res.status(200).send(pdf);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export default {
+  listAvailableCars, getFilterOptions, getFeaturedCars, getCarDetail, getInspectionReport, getCpoCertificatePdf,
+};

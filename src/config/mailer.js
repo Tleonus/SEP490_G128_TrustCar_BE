@@ -14,6 +14,8 @@
 
 import { MailerSend, EmailParams, Sender, Recipient } from 'mailersend';
 import nodemailer from 'nodemailer';
+import { renderEmailLayout } from '../utils/emailLayout.js';
+import { recordEmailAttempt } from '../services/emailLogService.js';
 
 // ── MailerSend Primary Transport ──────────────────────────────────────────────
 
@@ -33,16 +35,29 @@ if (!mailersendClient) {
 
   if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
     smtpTransport = nodemailer.createTransport({
-      host:   SMTP_HOST,
-      port:   Number(SMTP_PORT) || 587,
+      host: SMTP_HOST,
+      port: Number(SMTP_PORT) || 587,
       secure: process.env.SMTP_SECURE === 'true',
-      auth:   { user: SMTP_USER, pass: SMTP_PASS },
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
     });
     console.log(`✅  Mailer: Nodemailer SMTP fallback ready (host: ${SMTP_HOST})`);
   } else {
     console.warn('⚠️   Mailer: No email transport configured – emails will be no-op in development.');
   }
 }
+
+/**
+ * The MailerSend SDK rejects with a plain object ({ statusCode, body, headers })
+ * instead of an Error, so `error.message` is undefined in callers' logs.
+ * Convert it into an Error carrying the HTTP status and MailerSend's message.
+ * The API key and the email content are never included.
+ */
+const toMailerSendError = (error) => {
+  if (error instanceof Error) return error;
+  const status = error?.statusCode ?? 'unknown';
+  const detail = error?.body?.message || 'no error message returned';
+  return Object.assign(new Error(`MailerSend ${status}: ${detail}`), { statusCode: error?.statusCode });
+};
 
 // ── Unified Send Interface ─────────────────────────────────────────────────────
 
@@ -51,7 +66,8 @@ if (!mailersendClient) {
  * @property {string}   to        - Recipient email address.
  * @property {string}   [toName]  - Recipient display name.
  * @property {string}   subject   - Email subject line.
- * @property {string}   html      - HTML email body.
+ * @property {string}   html      - HTML body content; wrapped in the TrustCar branded layout.
+ * @property {string}   [preheader] - Inbox preview text shown next to the subject.
  * @property {string}   [text]    - Plain text fallback body.
  */
 
@@ -62,13 +78,16 @@ if (!mailersendClient) {
  * @param {MailOptions} options
  * @returns {Promise<void>}
  */
-export const sendMail = async ({ to, toName = '', subject, html, text }) => {
+export const sendMail = async ({ to, toName = '', subject, html: contentHtml, text, preheader }) => {
+  // Every email gets the same branded shell; plain text comes from the content only.
+  const html = renderEmailLayout({ subject, contentHtml, preheader });
+  const plainText = text || contentHtml.replace(/<[^>]*>/g, '').replace(/\s+\n/g, '\n').trim();
   const fromEmail = process.env.MAILERSEND_FROM_EMAIL || process.env.SMTP_USER || 'noreply@trustcar.vn';
-  const fromName  = process.env.MAILERSEND_FROM_NAME  || 'TrustCar Platform';
+  const fromName = process.env.MAILERSEND_FROM_NAME || 'TrustCar Platform';
 
   // ── MailerSend Path ───────────────────────────────────────────────────────
   if (mailersendClient) {
-    const sentFrom  = new Sender(fromEmail, fromName);
+    const sentFrom = new Sender(fromEmail, fromName);
     const recipients = [new Recipient(to, toName || to)];
 
     const emailParams = new EmailParams()
@@ -76,27 +95,41 @@ export const sendMail = async ({ to, toName = '', subject, html, text }) => {
       .setTo(recipients)
       .setSubject(subject)
       .setHtml(html)
-      .setText(text || html.replace(/<[^>]*>/g, '')); // Strip HTML for plain text
+      .setText(plainText);
 
-    await mailersendClient.email.send(emailParams);
+    try {
+      await mailersendClient.email.send(emailParams);
+    } catch (error) {
+      const failure = toMailerSendError(error);
+      await recordEmailAttempt({ to, subject, transport: 'mailersend', status: 'FAILED', error: failure.message });
+      throw failure;
+    }
+    await recordEmailAttempt({ to, subject, transport: 'mailersend', status: 'SENT' });
     console.log(`📧  Email sent via MailerSend to: ${to} | Subject: "${subject}"`);
     return;
   }
 
   // ── SMTP Fallback Path ───────────────────────────────────────────────────
   if (smtpTransport) {
-    await smtpTransport.sendMail({
-      from:    `"${fromName}" <${fromEmail}>`,
-      to,
-      subject,
-      html,
-      text:    text || html.replace(/<[^>]*>/g, ''),
-    });
+    try {
+      await smtpTransport.sendMail({
+        from: `"${fromName}" <${fromEmail}>`,
+        to,
+        subject,
+        html,
+        text: plainText,
+      });
+    } catch (error) {
+      await recordEmailAttempt({ to, subject, transport: 'smtp', status: 'FAILED', error: error.message });
+      throw error;
+    }
+    await recordEmailAttempt({ to, subject, transport: 'smtp', status: 'SENT' });
     console.log(`📧  Email sent via SMTP to: ${to} | Subject: "${subject}"`);
     return;
   }
 
   // ── Development No-Op ─────────────────────────────────────────────────────
+  await recordEmailAttempt({ to, subject, transport: 'none', status: 'SKIPPED' });
   console.log(`📧  [DEV] Email not sent (no transport). Would send to: ${to}`);
   console.log(`    Subject: "${subject}"`);
 };

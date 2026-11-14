@@ -10,9 +10,11 @@
 import { Router } from 'express';
 import Joi from 'joi';
 import * as authController from '../controllers/authController.js';
-import { verifyToken } from '../middlewares/authMiddleware.js';
+import * as registrationController from '../controllers/registrationController.js';
+import { verifyToken, verifyTokenAllowIncomplete } from '../middlewares/authMiddleware.js';
+import { authorizeRoles } from '../middlewares/roleMiddleware.js';
 import { validate } from '../middlewares/validateMiddleware.js';
-import { joiPassword } from '../utils/validators.js';
+import { joiPassword, joiPhone } from '../utils/validators.js';
 
 const router = Router();
 
@@ -60,6 +62,32 @@ const resetPasswordSchema = Joi.object({
   }),
 });
 
+const registerSchema = Joi.object({
+  email:           Joi.string().email().lowercase().required(),
+  password:        joiPassword().required(),
+  confirmPassword: Joi.string().valid(Joi.ref('password')).required().messages({
+    'any.only': 'Confirm password must match password.',
+  }),
+  fullName:        Joi.string().trim().min(2).max(100).required(),
+  phone:           joiPhone().required(),
+});
+
+const googleSignInSchema = Joi.object({
+  idToken: Joi.string().max(4096).required(),
+});
+
+const completeProfileSchema = Joi.object({
+  fullName:        Joi.string().trim().min(2).max(100),
+  phone:           joiPhone(),
+  password:        joiPassword(),
+  confirmPassword: Joi.string().valid(Joi.ref('password')).messages({
+    'any.only': 'Confirm password must match password.',
+  }),
+})
+  .or('fullName', 'phone', 'password')
+  .with('password', 'confirmPassword')
+  .with('confirmPassword', 'password');
+
 // ── Routes ────────────────────────────────────────────────────────────────
 
 /**
@@ -81,14 +109,14 @@ router.post('/refresh', validate(refreshSchema), authController.refreshToken);
  * @access  Protected
  * @desc    Logs out the current session (client discards token; server logs event).
  */
-router.post('/logout', verifyToken, authController.logout);
+router.post('/logout', verifyTokenAllowIncomplete, authController.logout);
 
 /**
  * @route   GET /api/v1/auth/me
  * @access  Protected
  * @desc    Returns the authenticated user's own profile.
  */
-router.get('/me', verifyToken, authController.getMyProfile);
+router.get('/me', verifyTokenAllowIncomplete, authController.getMyProfile);
 
 /**
  * @route   PATCH /api/v1/auth/change-password
@@ -115,5 +143,31 @@ router.post('/forgot-password', validate(forgotPasswordSchema), authController.f
  * @desc    Resets the password using the token received by email.
  */
 router.post('/reset-password', validate(resetPasswordSchema), authController.resetPassword);
+
+/**
+ * @route   POST /api/v1/auth/register
+ * @access  Public
+ * @desc    Self-registration of a website customer (CUSTOMER role) with email + password.
+ */
+router.post('/register', validate(registerSchema), registrationController.register);
+
+/**
+ * @route   POST /api/v1/auth/google
+ * @access  Public (Firebase ID token from Google sign-in)
+ * @desc    Signs a customer in with Google; creates an incomplete account on first use.
+ */
+router.post('/google', validate(googleSignInSchema), registrationController.googleSignIn);
+
+/**
+ * @route   PATCH /api/v1/auth/complete-profile
+ * @access  Protected (allowed while the customer profile is incomplete)
+ * @desc    Fills the missing profile fields (phone, password, full name) and links the Customer.
+ */
+router.patch(
+  '/complete-profile',
+  verifyTokenAllowIncomplete,
+  validate(completeProfileSchema),
+  registrationController.completeProfile
+);
 
 export default router;

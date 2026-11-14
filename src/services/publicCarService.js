@@ -6,18 +6,17 @@
  * - GBR-11: Only AVAILABLE vehicles are exposed publicly (hard-coded filter,
  *   cannot be overridden by any caller input).
  *
- * Supported filters (FE-01, FE-02, FE-03):
- * - brand (make)
- * - model
- * - bodyType
- * - fuelType
- * - transmission
- * - priceMin / priceMax (VND)
- * - yearMin / yearMax
- * - mileageMax
- * - search (text search across make, model, vehicleCode)
- * - sortBy (price, year, mileage, createdAt)
- * - sortDir (asc | desc)
+ * Supported filters (FE-01, FE-02, FE-03, KAN-32):
+ * - search (keyword over make, model, variant, vehicleCode)
+ * - make / brand and model, each accepting a comma-separated list
+ * - bodyType, fuelType, transmission (comma-separated lists, matched with $in)
+ * - color (specifications.color)
+ * - minPrice / maxPrice (aliases: priceMin / priceMax)
+ * - minYear / maxYear (aliases: yearMin / yearMax)
+ * - maxMileage (alias: mileageMax)
+ * - sortBy: price_asc | price_desc | year_desc | mileage_asc | newest,
+ *   with the legacy sortBy + sortDir pair still accepted
+ * - page, limit
  */
 
 import Car from '../models/Car.js';
@@ -27,22 +26,24 @@ import { SystemMessages as MSG } from '../constants/systemMessages.js';
 
 // ── Fields exposed on public listing (excludes internal notes, audit fields) ──
 const PUBLIC_LIST_PROJECTION = {
-  vehicleCode:     1,
-  make:            1,
-  model:           1,
-  variant:         1,
-  year:            1,
-  bodyType:        1,
-  fuelType:        1,
-  transmission:    1,
-  driveType:       1,
-  mileage:         1,
-  price:           1,
-  status:          1,
-  images:          1,
-  conditionGrade:  1,
-  description:     1,
-  createdAt:       1,
+  vehicleCode: 1,
+  make: 1,
+  model: 1,
+  variant: 1,
+  year: 1,
+  bodyType: 1,
+  fuelType: 1,
+  transmission: 1,
+  driveType: 1,
+  mileage: 1,
+  price: 1,
+  marketPrice: 1,
+  status: 1,
+  images: 1,
+  conditionGrade: 1,
+  cpoCertificateId: 1, // lets the catalog show the CPO badge without an extra call
+  description: 1,
+  createdAt: 1,
   'specifications.numberOfSeats': 1,
   'specifications.engineDisplacementCC': 1,
   'specifications.horsePower': 1,
@@ -50,108 +51,199 @@ const PUBLIC_LIST_PROJECTION = {
   'specifications.features': 1,
 };
 
-// ── Fields exposed on public detail view (full specs, no internal notes) ──
+
+// Fields a public caller must never see, whatever projection is in use: cost and
+// floor prices, inventory metrics, vehicle identity and audit data stay staff-only.
+const PUBLIC_HIDDEN_FIELDS = [
+  'originalPrice', 'floorPrice', 'listedPrice', 'priceDropCount', 'priceHistory',
+  'daysInStock', 'agingCategory', 'inventoryType', 'listedDate',
+  'internalNotes', 'vin', 'licensePlate', 'carModelRef', 'soldAt', 'statusChangedAt',
+  'createdBy', 'updatedBy', 'statusChangedBy', 'isActive',
+];
+
+// ── Fields exposed on public detail view: an allow-list, so a field added to the
+// model later stays hidden until someone deliberately exposes it here ──
 const PUBLIC_DETAIL_PROJECTION = {
-  internalNotes: 0, // Exclude internal notes
-  priceHistory:  0, // Price history is staff-only
-  createdBy:     0,
-  updatedBy:     0,
-  statusChangedBy: 0,
-  isActive:      0,
+  vehicleCode: 1,
+  make: 1,
+  model: 1,
+  variant: 1,
+  year: 1,
+  bodyType: 1,
+  fuelType: 1,
+  transmission: 1,
+  driveType: 1,
+  mileage: 1,
+  specifications: 1,
+  price: 1,
+  marketPrice: 1,
+  ownerType: 1,
+  status: 1,
+  cpoCertificateId: 1,
+  images: 1,
+  description: 1,
+  conditionGrade: 1,
+  registrationExpiry: 1,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+const FEATURED_DEFAULT_LIMIT = 8;
+const FEATURED_MAX_LIMIT = 20;
+
+/**
+ * Second guard applied after every public query: drops staff-only fields even if a
+ * projection is edited by mistake, and trims each image to what the storefront
+ * renders (`publicId` is the Cloudinary asset id, `_id` is the FE list key).
+ *
+ * @param {object} car - Lean Car document.
+ * @returns {object} The same object, safe to return to a public caller.
+ */
+export const toPublicCar = (car) => {
+  for (const field of PUBLIC_HIDDEN_FIELDS) delete car[field];
+  if (Array.isArray(car.images)) {
+    car.images = car.images.map(({ _id, url, isPrimary }) => ({ _id, url, isPrimary }));
+  }
+  if (car.marketPrice === undefined) car.marketPrice = null;
+  return car;
 };
 
 /**
+ * Splits a comma-separated query value into a clean list.
+ * "Toyota, Honda," → ["Toyota", "Honda"].
+ *
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+const splitList = (value) => String(value)
+  .split(',')
+  .map((part) => part.trim())
+  .filter(Boolean);
+
+/**
+ * Matches one value exactly, or several with $in. Comparison fields such as
+ * make and the enums are stored uppercase, so values are normalised.
+ *
+ * @param {string} value
+ * @param {{ uppercase?: boolean }} [options]
+ * @returns {string | { $in: string[] }}
+ */
+const matchOneOrMany = (value, { uppercase = false } = {}) => {
+  const values = splitList(value).map((part) => (uppercase ? part.toUpperCase() : part));
+  return values.length > 1 ? { $in: values } : values[0];
+};
+
+/**
+ * Escapes a keyword so it is matched literally inside a regex.
+ * @param {string} value
+ * @returns {string}
+ */
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * First query param that the caller actually sent.
+ * @param {object} query
+ * @param {...string} names
+ * @returns {string|undefined}
+ */
+const firstParam = (query, ...names) => names.map((name) => query[name]).find((value) => value !== undefined && value !== '');
+
+/**
  * Builds a Mongoose filter object from public query parameters.
- * Always enforces status=AVAILABLE (GBR-11).
+ * Always enforces status=AVAILABLE and isActive=true (GBR-11); no caller
+ * input can widen that.
  *
  * @param {object} query - Express req.query
  * @returns {object} Mongoose filter document.
  */
 const buildPublicFilter = (query) => {
-  // GBR-11: AVAILABLE ONLY – immutable base filter
   const filter = {
-    status:   CarStatus.AVAILABLE,
+    status: CarStatus.AVAILABLE,
     isActive: true,
   };
 
-  // ── Make / Brand filter ──────────────────────────────────────────────
-  if (query.brand || query.make) {
-    filter.make = { $regex: query.brand || query.make, $options: 'i' };
+  // ── Make / brand, one or many (make=Toyota,Honda) ────────────────────
+  const make = firstParam(query, 'make', 'brand');
+  if (make) filter.make = matchOneOrMany(make, { uppercase: true });
+
+  // ── Model, one or many (model=Camry,Civic) ───────────────────────────
+  if (query.model) filter.model = matchOneOrMany(query.model);
+
+  // ── Enum specs, one or many, matched with $in ────────────────────────
+  if (query.bodyType) filter.bodyType = matchOneOrMany(query.bodyType, { uppercase: true });
+  if (query.fuelType) filter.fuelType = matchOneOrMany(query.fuelType, { uppercase: true });
+  if (query.transmission) filter.transmission = matchOneOrMany(query.transmission, { uppercase: true });
+
+  // ── Colour lives inside specifications ───────────────────────────────
+  if (query.color) {
+    filter['specifications.color'] = { $regex: `^${escapeRegex(query.color.trim())}$`, $options: 'i' };
   }
 
-  // ── Model filter ─────────────────────────────────────────────────────
-  if (query.model) {
-    filter.model = { $regex: query.model, $options: 'i' };
-  }
-
-  // ── Body type ─────────────────────────────────────────────────────────
-  if (query.bodyType) {
-    filter.bodyType = query.bodyType.toUpperCase();
-  }
-
-  // ── Fuel type ─────────────────────────────────────────────────────────
-  if (query.fuelType) {
-    filter.fuelType = query.fuelType.toUpperCase();
-  }
-
-  // ── Transmission ──────────────────────────────────────────────────────
-  if (query.transmission) {
-    filter.transmission = query.transmission.toUpperCase();
-  }
-
-  // ── Price range (VND) ─────────────────────────────────────────────────
-  if (query.priceMin || query.priceMax) {
+  // ── Price range (VND). minPrice/maxPrice are canonical, priceMin/priceMax stay for the current FE. ──
+  const minPrice = firstParam(query, 'minPrice', 'priceMin');
+  const maxPrice = firstParam(query, 'maxPrice', 'priceMax');
+  if (minPrice || maxPrice) {
     filter.price = {};
-    if (query.priceMin) filter.price.$gte = Number(query.priceMin);
-    if (query.priceMax) filter.price.$lte = Number(query.priceMax);
+    if (minPrice) filter.price.$gte = Number(minPrice);
+    if (maxPrice) filter.price.$lte = Number(maxPrice);
   }
 
-  // ── Year range ────────────────────────────────────────────────────────
-  if (query.yearMin || query.yearMax) {
+  // ── Year range. minYear/maxYear are canonical, yearMin/yearMax stay for the current FE. ──
+  const minYear = firstParam(query, 'minYear', 'yearMin');
+  const maxYear = firstParam(query, 'maxYear', 'yearMax');
+  if (minYear || maxYear) {
     filter.year = {};
-    if (query.yearMin) filter.year.$gte = Number(query.yearMin);
-    if (query.yearMax) filter.year.$lte = Number(query.yearMax);
+    if (minYear) filter.year.$gte = Number(minYear);
+    if (maxYear) filter.year.$lte = Number(maxYear);
   }
 
-  // ── Mileage max ───────────────────────────────────────────────────────
-  if (query.mileageMax) {
-    filter.mileage = { $lte: Number(query.mileageMax) };
-  }
+  // ── Mileage ceiling ──────────────────────────────────────────────────
+  const maxMileage = firstParam(query, 'maxMileage', 'mileageMax');
+  if (maxMileage) filter.mileage = { $lte: Number(maxMileage) };
 
-  // ── Drive type ────────────────────────────────────────────────────────
-  if (query.driveType) {
-    filter.driveType = query.driveType.toUpperCase();
-  }
-
-  // ── Condition grade ───────────────────────────────────────────────────
-  if (query.conditionGrade) {
-    filter.conditionGrade = query.conditionGrade.toUpperCase();
-  }
-
-  // ── Full-text search ──────────────────────────────────────────────────
+  // ── Keyword over the public-facing text fields, case-insensitive ─────
   if (query.search) {
-    const regex = { $regex: query.search, $options: 'i' };
+    const regex = { $regex: escapeRegex(query.search.trim()), $options: 'i' };
     filter.$or = [
-      { make:        regex },
-      { model:       regex },
-      { variant:     regex },
+      { make: regex },
+      { model: regex },
+      { variant: regex },
       { vehicleCode: regex },
-      { description: regex },
     ];
   }
 
   return filter;
 };
 
+// Combined sort tokens from KAN-32, plus the field names the FE already sends.
+const SORT_TOKENS = {
+  price_asc: { price: 1 },
+  price_desc: { price: -1 },
+  year_desc: { year: -1 },
+  year_asc: { year: 1 },
+  mileage_asc: { mileage: 1 },
+  mileage_desc: { mileage: -1 },
+  newest: { createdAt: -1 },
+};
+
 /**
  * Builds a sort object from query parameters.
- * Allowed sort fields to prevent arbitrary index scans.
+ * Accepts the KAN-32 tokens (price_asc, year_desc, newest, ...) and the
+ * legacy sortBy + sortDir pair. Anything outside the whitelist falls back
+ * to newest, so a caller cannot trigger an arbitrary index scan.
+ *
+ * @param {object} query
+ * @returns {object}
  */
 const buildPublicSort = (query) => {
-  const ALLOWED_SORT_FIELDS = ['price', 'year', 'mileage', 'createdAt'];
-  const sortBy  = ALLOWED_SORT_FIELDS.includes(query.sortBy) ? query.sortBy : 'createdAt';
-  const sortDir = query.sortDir === 'asc' ? 1 : -1;
-  return { [sortBy]: sortDir };
+  const token = String(query.sortBy || '').toLowerCase();
+  if (SORT_TOKENS[token]) return SORT_TOKENS[token];
+
+  const LEGACY_FIELDS = { price: 'price', year: 'year', mileage: 'mileage', createdat: 'createdAt' };
+  const field = LEGACY_FIELDS[token];
+  if (field) return { [field]: query.sortDir === 'asc' ? 1 : -1 };
+
+  return SORT_TOKENS.newest;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -168,7 +260,7 @@ const buildPublicSort = (query) => {
 export const getAvailableCars = async (query) => {
   const { page, limit, skip } = parsePagination(query, PAGINATION.MAX_LIMIT);
   const filter = buildPublicFilter(query);
-  const sort   = buildPublicSort(query);
+  const sort = buildPublicSort(query);
 
   const [items, total] = await Promise.all([
     Car.find(filter, PUBLIC_LIST_PROJECTION)
@@ -179,23 +271,32 @@ export const getAvailableCars = async (query) => {
     Car.countDocuments(filter),
   ]);
 
+  items.forEach(toPublicCar);
+
   // Filter summary for front-end breadcrumb / active filter display
   const filterSummary = {};
-  if (query.brand || query.make)  filterSummary.brand        = query.brand || query.make;
-  if (query.model)                filterSummary.model        = query.model;
-  if (query.bodyType)             filterSummary.bodyType     = query.bodyType;
-  if (query.fuelType)             filterSummary.fuelType     = query.fuelType;
-  if (query.transmission)        filterSummary.transmission  = query.transmission;
-  if (query.priceMin)             filterSummary.priceMin     = Number(query.priceMin);
-  if (query.priceMax)             filterSummary.priceMax     = Number(query.priceMax);
-  if (query.yearMin)              filterSummary.yearMin      = Number(query.yearMin);
-  if (query.yearMax)              filterSummary.yearMax      = Number(query.yearMax);
-  if (query.mileageMax)           filterSummary.mileageMax   = Number(query.mileageMax);
-  if (query.search)               filterSummary.search       = query.search;
+  const make = firstParam(query, 'make', 'brand');
+  if (make) filterSummary.make = splitList(make);
+  if (query.model) filterSummary.model = splitList(query.model);
+  if (query.bodyType) filterSummary.bodyType = splitList(query.bodyType);
+  if (query.fuelType) filterSummary.fuelType = splitList(query.fuelType);
+  if (query.transmission) filterSummary.transmission = splitList(query.transmission);
+  if (query.color) filterSummary.color = query.color;
+  const minPrice = firstParam(query, 'minPrice', 'priceMin');
+  const maxPrice = firstParam(query, 'maxPrice', 'priceMax');
+  const minYear = firstParam(query, 'minYear', 'yearMin');
+  const maxYear = firstParam(query, 'maxYear', 'yearMax');
+  const maxMileage = firstParam(query, 'maxMileage', 'mileageMax');
+  if (minPrice) filterSummary.minPrice = Number(minPrice);
+  if (maxPrice) filterSummary.maxPrice = Number(maxPrice);
+  if (minYear) filterSummary.minYear = Number(minYear);
+  if (maxYear) filterSummary.maxYear = Number(maxYear);
+  if (maxMileage) filterSummary.maxMileage = Number(maxMileage);
+  if (query.search) filterSummary.search = query.search;
 
   return {
     items,
-    pagination:    buildPaginationMeta(total, page, limit),
+    pagination: buildPaginationMeta(total, page, limit),
     filterSummary,
   };
 };
@@ -211,7 +312,7 @@ export const getPublicCarDetail = async (carId) => {
   // Support lookup by either _id or vehicleCode
   const isObjectId = /^[0-9a-fA-F]{24}$/.test(carId);
   const filter = isObjectId
-    ? { _id: carId,       status: CarStatus.AVAILABLE, isActive: true }
+    ? { _id: carId, status: CarStatus.AVAILABLE, isActive: true }
     : { vehicleCode: carId, status: CarStatus.AVAILABLE, isActive: true };
 
   const car = await Car.findOne(filter, PUBLIC_DETAIL_PROJECTION).lean();
@@ -224,7 +325,36 @@ export const getPublicCarDetail = async (carId) => {
     );
   }
 
-  return car;
+  return toPublicCar(car);
+};
+
+/**
+ * Normalises the featured `limit` query value: missing, non-numeric or below 1 → 8;
+ * above 20 → 20.
+ *
+ * @param {unknown} value
+ * @returns {number}
+ */
+export const normalizeFeaturedLimit = (value) => {
+  const limit = parseInt(value, 10);
+  if (!Number.isInteger(limit) || limit < 1) return FEATURED_DEFAULT_LIMIT;
+  return Math.min(limit, FEATURED_MAX_LIMIT);
+};
+
+/**
+ * Newest AVAILABLE vehicles for the storefront's featured section, with the same
+ * fields as one catalog item. Cars not yet on sale are excluded so every featured
+ * card opens a detail page that exists.
+ *
+ * @param {number} limit - Already normalised with normalizeFeaturedLimit.
+ * @returns {Promise<Array<object>>}
+ */
+export const getFeaturedCars = async (limit) => {
+  const cars = await Car.find({ status: CarStatus.AVAILABLE, isActive: true }, PUBLIC_LIST_PROJECTION)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  return cars.map(toPublicCar);
 };
 
 /**
@@ -252,17 +382,20 @@ export const getPublicFilterOptions = async () => {
   ]);
 
   return {
-    brands:       brands.sort(),
+    brands: brands.sort(),
     bodyTypes,
     fuelTypes,
     transmissions,
-    priceRange:   priceRange[0] || { minPrice: 0, maxPrice: 0 },
-    yearRange:    yearRange[0]  || { minYear: 2000, maxYear: new Date().getFullYear() },
+    priceRange: priceRange[0] || { minPrice: 0, maxPrice: 0 },
+    yearRange: yearRange[0] || { minYear: 2000, maxYear: new Date().getFullYear() },
   };
 };
 
 export default {
   getAvailableCars,
   getPublicCarDetail,
+  getFeaturedCars,
+  normalizeFeaturedLimit,
+  toPublicCar,
   getPublicFilterOptions,
 };

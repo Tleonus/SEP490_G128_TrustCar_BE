@@ -75,6 +75,15 @@ const listCarsQuerySchema = Joi.object({
 router.get('/filters', publicCarController.getFilterOptions);
 
 /**
+ * @route   GET /api/v1/public/cars/featured?limit=8
+ * @access  Public
+ * @desc    Returns the newest AVAILABLE/CPO-approved cars for the homepage.
+ *          Must be before /:id so Express doesn't capture "featured" as an ID.
+ *          Ref: FE-01 (homepage featured section)
+ */
+router.get('/featured', publicCarController.getFeaturedCars);
+
+/**
  * @route   GET /api/v1/public/cars
  * @access  Public
  * @desc    Paginated list of available vehicles with optional filters.
@@ -90,5 +99,24 @@ router.get('/', publicCarController.listAvailableCars);
  *          Ref: FE-03
  */
 router.get('/:id', publicCarController.getCarDetail);
+
+/**
+ * @route   GET /api/v1/public/cars/:id/inspection-report
+ * @access  Public
+ * @param   id - MongoDB ObjectId OR vehicleCode (TC-YYYY-NNNN)
+ * @desc    Public CPO inspection report (APPROVED_CPO or AVAILABLE cars with a certificate).
+ *          Any other case → 404 INSPECTION_REPORT_NOT_FOUND.
+ */
+router.get('/:id/inspection-report', publicCarController.getInspectionReport);
+
+/**
+ * @route   GET /api/v1/public/cars/:id/cpo-certificate.pdf
+ * @access  Public
+ * @param   id - MongoDB ObjectId OR vehicleCode (TC-YYYY-NNNN)
+ * @desc    CPO certificate as a downloadable PDF with a QR code pointing at the
+ *          public car page. Registered before /:id so the ".pdf" suffix is not
+ *          swallowed by the detail route.
+ */
+router.get('/:id/cpo-certificate.pdf', publicCarController.getCpoCertificatePdf);
 
 export default router;

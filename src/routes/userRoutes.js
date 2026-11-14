@@ -11,7 +11,7 @@ import { verifyToken } from '../middlewares/authMiddleware.js';
 import { requireAdmin } from '../middlewares/roleMiddleware.js';
 import { validate, validateParams, objectIdParamSchema } from '../middlewares/validateMiddleware.js';
 import { joiPassword, joiPhone } from '../utils/validators.js';
-import { Roles } from '../constants/appConstants.js';
+import { Roles, StaffRoles } from '../constants/appConstants.js';
 
 const router = Router();
 
@@ -29,10 +29,10 @@ const createUserSchema = Joi.object({
   }),
   password: joiPassword().required(),
   roleName: Joi.string()
-    .valid(...Object.values(Roles))
+    .valid(...StaffRoles)
     .default(Roles.SALES_STAFF)
     .messages({
-      'any.only': `Role must be one of: ${Object.values(Roles).join(', ')}`,
+      'any.only': `Role must be one of: ${StaffRoles.join(', ')}`,
     }),
   phone: joiPhone().optional(),
 });
@@ -40,7 +40,7 @@ const createUserSchema = Joi.object({
 const updateUserSchema = Joi.object({
   fullName: Joi.string().trim().min(2).max(100),
   phone:    joiPhone().optional(),
-  roleName: Joi.string().valid(...Object.values(Roles)).optional(),
+  roleName: Joi.string().valid(...StaffRoles).optional(),
 }).min(1).messages({
   'object.min': 'At least one field must be provided for update.',
 });

@@ -236,6 +236,13 @@ const CarSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Reference price of comparable cars on the market, entered by staff and shown to
+    // customers next to `price`. Independent of `priceHistory` and automatic markdowns.
+    marketPrice: {
+      type:    Number,
+      default: null,
+      min:     [1, 'Market price must be a positive number in VND.'],
+    },
     listedDate: {
       type: Date,
       default: () => new Date(),
@@ -248,6 +255,12 @@ const CarSchema = new mongoose.Schema(
       type: String,
       enum: ['FRESH', 'SLOW', 'STAGNANT'],
       default: 'FRESH',
+    },
+    // Chủ đứng tên đăng ký: công ty (CTY) hay cá nhân (CN)
+    ownerType: {
+      type: String,
+      enum: ['COMPANY', 'INDIVIDUAL'],
+      default: 'INDIVIDUAL',
     },
 
     priceHistory: {
@@ -265,6 +278,14 @@ const CarSchema = new mongoose.Schema(
       },
       default: CarStatus.INCOMING,
       index:   true,
+    },
+
+    cpoCertificateId: {
+      type:    String,
+      trim:    true,
+      unique:  true,
+      sparse:  true,
+      default: null,
     },
 
     // ── Media ─────────────────────────────────────────────────────────
@@ -352,15 +373,12 @@ const CarSchema = new mongoose.Schema(
 );
 
 // ── Indexes ────────────────────────────────────────────────────────────────
-CarSchema.index({ vin: 1 });
 CarSchema.index({ licensePlate: 1 });
-CarSchema.index({ status: 1 });
 CarSchema.index({ make: 1, model: 1 });
 CarSchema.index({ year: 1 });
 CarSchema.index({ price: 1 });
 CarSchema.index({ mileage: 1 });
 CarSchema.index({ status: 1, isActive: 1 });
-CarSchema.index({ vehicleCode: 1 });
 CarSchema.index({ make: 1, status: 1, price: 1 }); // Public filter compound index
 
 // ── Virtual: primaryImage ─────────────────────────────────────────────────

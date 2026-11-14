@@ -5,14 +5,14 @@
   "main": "src/server.js",
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "nodemon --experimental-vm-modules src/server.js",
+    "dev": "npx nodemon --experimental-vm-modules src/server.js",
     "start": "node src/server.js",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest --runInBand --detectOpenHandles --forceExit",
-    "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --detectOpenHandles --forceExit",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "lint": "eslint src/ --ext .js"
   },
   "dependencies": {
@@ -23,6 +23,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.3.1",
+    "firebase-admin": "^14.5.0",
     "helmet": "^7.1.0",
     "joi": "^17.13.1",
     "jsonwebtoken": "^9.0.2",
@@ -30,11 +31,13 @@
     "mongoose": "^8.4.4",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.9.14"
+    "nodemailer": "^10.3.1",
+    "socket.io": "^4.8.4"
   },
   "devDependencies": {
     "jest": "^29.7.0",
     "nodemon": "^3.1.4",
+    "socket.io-client": "^4.8.4",
     "supertest": "^7.0.0"
   },
   "jest": {

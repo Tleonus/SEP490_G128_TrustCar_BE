@@ -14,22 +14,25 @@
  *   4. Rate limiter (global request throttle)
  *   5. JSON body parser
  *   6. URL-encoded parser
- *   7. API Routes (/api/v1/*)
- *   8. 404 Not Found handler
- *   9. Global Error handler
+ *   7. Share pages (/share/car/:code) — HTML for crawlers, mounted before the API
+ *   8. API Routes (/api/v1/*)
+ *   9. 404 Not Found handler
+ *  10. Global Error handler
  */
 
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import rateLimit from 'express-rate-limit';
 
 // Route aggregator
 import apiRouter from './routes/index.js';
+import inventoryRoutes from './routes/inventoryRoutes.js';
+import shareCarRoutes from './routes/shareCarRoutes.js';
 
 // Error handlers (MUST be last in the chain)
 import { notFoundHandler, errorHandler } from './middlewares/errorMiddleware.js';
+import { createAuthLimiter, createGlobalLimiter, identifyCaller } from './middlewares/rateLimiters.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EXPRESS INSTANCE
@@ -47,9 +50,9 @@ app.set('trust proxy', 1);
 app.use(helmet());
 
 // CORS: Configurable allowed origins; defaults to permissive in dev
-const corsOptions = {
-  origin: process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+export const corsOptions = {
+  origin: process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
     : '*',
   methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -72,32 +75,15 @@ app.use(morgan(logFormat, {
 // RATE LIMITING (Global)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,               // 15-minute window
-  max:      parseInt(process.env.RATE_LIMIT_MAX, 10) || 200,  // max requests per window
-  standardHeaders: true,                   // RateLimit-* headers
-  legacyHeaders:   false,                  // Disable X-RateLimit-*
-  message: {
-    success: false,
-    message: 'Too many requests from this IP, please try again later.',
-    code:    'RATE_LIMIT_EXCEEDED',
-  },
-});
-app.use('/api/', globalLimiter);
+// Per-account and per-IP quotas are documented in middlewares/rateLimiters.js.
+app.use('/api/', identifyCaller, createGlobalLimiter());
 
-// Auth endpoints get a stricter limiter to mitigate brute-force attacks (GBR-12)
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max:      30,
-  standardHeaders: true,
-  legacyHeaders:   false,
-  message: {
-    success: false,
-    message: 'Too many authentication attempts. Please try again in 15 minutes.',
-    code:    'AUTH_RATE_LIMIT',
-  },
-});
-app.use('/api/v1/auth/', authLimiter);
+// Auth endpoints get a stricter limit to mitigate brute-force attacks (GBR-12).
+// A regex because Express also routes /api/v1//auth/login to the auth handlers,
+// while a '/api/v1/auth/' mount does not match it and would leave that path unlimited.
+// The lookahead keeps the next '/' unmatched: Express skips a mount whose match is
+// followed by anything but '/' or '.', and that would disable the limit altogether.
+app.use(/^\/api\/v1\/+auth(?=\/|$)/i, createAuthLimiter());
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BODY PARSERS
@@ -114,6 +100,12 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
  * All API routes are mounted under /api/v1 via the master router.
  * See src/routes/index.js for the full route map.
  */
+// KAN-64: crawler share pages return text/html, so they live outside /api/v1
+// and ahead of the JSON 404 handler. Helmet's CSP stays permissive enough for
+// the inline redirect script (script-src 'self' is not set by default).
+app.use(shareCarRoutes);
+
+app.use('/api/v1/inventory', inventoryRoutes);
 app.use('/api/v1', apiRouter);
 
 // ── Root redirect / API info ──────────────────────────────────────────────

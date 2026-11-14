@@ -21,6 +21,20 @@ import authRoutes        from './authRoutes.js';
 import userRoutes        from './userRoutes.js';
 import carRoutes         from './carRoutes.js';
 import publicCarRoutes   from './publicCarRoutes.js';
+import inventoryRoutes   from './inventoryRoutes.js';
+import inspectionRoutes  from './inspectionRoutes.js';
+import customerCarRoutes from './customerCarRoutes.js';
+import baseSettingsRoutes   from './baseSettingsRoutes.js';
+import publicSettingsRoutes from './publicSettingsRoutes.js';
+import wishlistRoutes       from './wishlistRoutes.js';
+import publicWishlistRoutes from './publicWishlistRoutes.js';
+import testDriveRoutes      from './testDriveRoutes.js';
+import leadPublicRoutes     from './leadPublicRoutes.js';
+import leadRoutes           from './leadRoutes.js';
+import emailLogRoutes       from './emailLogRoutes.js';
+import marketingRoutes      from './marketingRoutes.js';
+import loanSettingsRoutes   from './loanSettingsRoutes.js';
+import publicChatRoutes     from './publicChatRoutes.js';
 
 const router = Router();
 
@@ -39,5 +53,32 @@ router.use('/manage/cars', carRoutes);
 
 // ── Public Catalog (No Auth) ───────────────────────────────────────────────
 router.use('/public/cars', publicCarRoutes);
+router.use('/public/wishlist', publicWishlistRoutes);
+router.use('/public/chat', publicChatRoutes);
+router.use('/public', publicSettingsRoutes);
+router.use('/settings', loanSettingsRoutes);
+
+// ── Inventory Aging & Markdown (Staff & Admin) ───────────────────────────
+router.use('/inventory', inventoryRoutes);
+
+// ── Car Inspection Workflow & Approval Engine (Inspector & Admin) ─────────
+router.use('/inspections', inspectionRoutes);
+
+// ── Customer-only Vehicle Comparison (CUSTOMER role) ───────────────────────
+router.use('/customer/cars', customerCarRoutes);
+router.use('/customer/wishlist', wishlistRoutes);
+router.use('/admin', baseSettingsRoutes);
+router.use('/admin', emailLogRoutes);
+
+// ── Test-Drive Booking (Customer, Staff & Admin) ───────────────────────────
+router.use('/test-drives', testDriveRoutes);
+
+// ── Lead Pipeline ─────────────────────────────────────────────────────────// Public intake first: it only owns POST /, so it must not shadow the
+// authenticated router's GET /:id. See leadPublicRoutes.js.
+router.use('/leads', leadPublicRoutes);
+router.use('/leads', leadRoutes);
+
+// ── Marketing Tooling (Admin & Sales staff) ────────────────────────────────
+router.use('/marketing', marketingRoutes);
 
 export default router;

@@ -10,12 +10,16 @@
 // ── Vehicle Lifecycle States ──────────────────────────────────────────────────
 // Ref: GBR-05 (state machine), GBR-06 (sold lock), FE-09
 export const CarStatus = Object.freeze({
-  INCOMING:    'INCOMING',    // Intake initiated; not yet certified or publicly listed
-  MAINTENANCE: 'MAINTENANCE', // Undergoing pre-sale conditioning (scheduling ONLY – LI-05)
-  AVAILABLE:   'AVAILABLE',   // Passed inspection; listed on public catalog
-  RESERVED:    'RESERVED',    // Hold placed by a customer; blocks new viewings
-  SOLD:        'SOLD',        // Transaction completed; record becomes read-only (GBR-06)
-  DELISTED:    'DELISTED',    // Manually removed; not sold (terminal state)
+  DRAFT:            'DRAFT',
+  UNDER_INSPECTION: 'UNDER_INSPECTION',
+  APPROVED_CPO:     'APPROVED_CPO',
+  REJECTED:         'REJECTED',
+  INCOMING:         'INCOMING',    // Intake initiated; not yet certified or publicly listed
+  MAINTENANCE:      'MAINTENANCE', // Undergoing pre-sale conditioning (scheduling ONLY – LI-05)
+  AVAILABLE:        'AVAILABLE',   // Passed inspection; listed on public catalog
+  RESERVED:         'RESERVED',    // Hold placed by a customer; blocks new viewings
+  SOLD:             'SOLD',        // Transaction completed; record becomes read-only (GBR-06)
+  DELISTED:         'DELISTED',    // Manually removed; not sold (terminal state)
 });
 
 /**
@@ -24,12 +28,34 @@ export const CarStatus = Object.freeze({
  * Ref: GBR-05
  */
 export const CAR_STATUS_TRANSITIONS = Object.freeze({
-  [CarStatus.INCOMING]:    [CarStatus.AVAILABLE, CarStatus.MAINTENANCE, CarStatus.DELISTED],
-  [CarStatus.MAINTENANCE]: [CarStatus.AVAILABLE, CarStatus.DELISTED],
-  [CarStatus.AVAILABLE]:   [CarStatus.RESERVED, CarStatus.DELISTED],
-  [CarStatus.RESERVED]:    [CarStatus.AVAILABLE, CarStatus.SOLD],
-  [CarStatus.SOLD]:        [], // Terminal – GBR-06
-  [CarStatus.DELISTED]:    [], // Terminal – GBR-25
+  [CarStatus.DRAFT]:            [CarStatus.UNDER_INSPECTION, CarStatus.DELISTED],
+  [CarStatus.UNDER_INSPECTION]: [CarStatus.APPROVED_CPO, CarStatus.REJECTED],
+  [CarStatus.APPROVED_CPO]:     [CarStatus.AVAILABLE, CarStatus.DELISTED],
+  [CarStatus.REJECTED]:         [CarStatus.UNDER_INSPECTION, CarStatus.DELISTED],
+  [CarStatus.INCOMING]:         [CarStatus.AVAILABLE, CarStatus.MAINTENANCE, CarStatus.DELISTED, CarStatus.UNDER_INSPECTION],
+  [CarStatus.MAINTENANCE]:      [CarStatus.AVAILABLE, CarStatus.DELISTED],
+  [CarStatus.AVAILABLE]:        [CarStatus.RESERVED, CarStatus.DELISTED],
+  [CarStatus.RESERVED]:         [CarStatus.AVAILABLE, CarStatus.SOLD],
+  [CarStatus.SOLD]:             [], // Terminal – GBR-06
+  [CarStatus.DELISTED]:         [], // Terminal – GBR-25
+});
+
+// ── Inspection Record Lifecycle ───────────────────────────────────────────────
+// A DRAFT record is editable; SUBMITTED is locked and carries the CPO verdict.
+export const InspectionStatus = Object.freeze({
+  DRAFT:     'DRAFT',
+  SUBMITTED: 'SUBMITTED',
+});
+
+/**
+ * How an inspection record was produced.
+ * STAFF: full digital checklist; ADMIN_QUICK: admin 5-boolean shortcut;
+ * LEGACY: records created before the checklist existed (no `source` stored).
+ */
+export const InspectionSource = Object.freeze({
+  STAFF:       'STAFF',
+  ADMIN_QUICK: 'ADMIN_QUICK',
+  LEGACY:      'LEGACY',
 });
 
 // ── CRM Lead / Sales Pipeline Stages ─────────────────────────────────────────
@@ -74,7 +100,11 @@ export const AppointmentStatus = Object.freeze({
 export const Roles = Object.freeze({
   ADMIN:       'ADMIN',
   SALES_STAFF: 'SALES_STAFF',
+  CUSTOMER:    'CUSTOMER', // self-registered website customer – no internal permissions
 });
+
+// Internal (staff) roles – the only roles Admin can assign via user management.
+export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
 
 // ── Granular Permissions ───────────────────────────────────────────────────────
 // Ref: FE-13
@@ -131,6 +161,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.APPOINTMENT_UPDATE,
     Permissions.REPORT_VIEW,
   ],
+
+  [Roles.CUSTOMER]: [],
 });
 
 // ── Vehicle Specification Enums ───────────────────────────────────────────────
@@ -179,6 +211,9 @@ export const ActivityEventType = Object.freeze({
   ACCOUNT_LOCKED:        'ACCOUNT_LOCKED',
   PASSWORD_CHANGED:      'PASSWORD_CHANGED',
   PASSWORD_RESET:        'PASSWORD_RESET',
+  CUSTOMER_REGISTERED:   'CUSTOMER_REGISTERED',
+  GOOGLE_LINKED:         'GOOGLE_LINKED',
+  PROFILE_COMPLETED:     'PROFILE_COMPLETED',
 
   // User Management
   USER_CREATED:          'USER_CREATED',
@@ -206,13 +241,19 @@ export const ActivityEventType = Object.freeze({
   APPOINTMENT_CONFIRMED: 'APPOINTMENT_CONFIRMED',
   APPOINTMENT_CANCELLED: 'APPOINTMENT_CANCELLED',
   APPOINTMENT_COMPLETED: 'APPOINTMENT_COMPLETED',
-});
+  APPOINTMENT_NO_SHOW:   'APPOINTMENT_NO_SHOW',
+  APPOINTMENT_REASSIGNED: 'APPOINTMENT_REASSIGNED',
+  APPOINTMENT_NO_SHOW_CORRECTED: 'APPOINTMENT_NO_SHOW_CORRECTED',
 
-// ── Brute-Force / Account Lock Thresholds ─────────────────────────────────────
-// Ref: GBR-12
-export const AUTH_LOCK = Object.freeze({
-  MAX_FAILED_ATTEMPTS:    5,
-  LOCK_DURATION_MINUTES:  30,
+  // Inspection (CPO checklist)
+  INSPECTION_DRAFT_CREATED: 'INSPECTION_DRAFT_CREATED',
+  INSPECTION_SUBMITTED:     'INSPECTION_SUBMITTED',
+
+  // Wishlist & Price Drop Alerts
+  CAR_SAVED_WISHLIST:       'CAR_SAVED_WISHLIST',
+  CAR_REMOVED_WISHLIST:     'CAR_REMOVED_WISHLIST',
+  WISHLIST_SYNCED:          'WISHLIST_SYNCED',
+  PRICE_ALERT_SENT:         'PRICE_ALERT_SENT',
 });
 
 // ── File Upload Constraints ───────────────────────────────────────────────────
@@ -237,4 +278,42 @@ export const APPOINTMENT_CONSTRAINTS = Object.freeze({
   MIN_HOURS_AHEAD:     2,   // Must be at least 2 hours in the future
   MAX_DAYS_AHEAD:      60,  // Cannot schedule more than 60 days out
   CONFLICT_BUFFER_MIN: 30,  // ±30 minute buffer for conflict detection (GBR-20)
+});
+
+// ── Test-Drive Booking ───────────────────────────────────────────────────────
+export const TEST_DRIVE_LIMITS = Object.freeze({
+  MAX_ACTIVE_BOOKINGS:       2,  // Upcoming bookings per customer
+  MAX_ACTIVE_PER_CAR:        1,  // Upcoming bookings per customer and car
+  MAX_BOOKINGS_PER_DAY:      3,  // Includes cancelled bookings
+  MAX_COMPLETED_IN_WINDOW:   3,  // Completed test drives within WINDOW_DAYS
+  NO_SHOWS_TO_LOCK:          2,  // Within WINDOW_DAYS of each other
+  WINDOW_DAYS:               30,
+  LOCK_DAYS:                 30, // Counted from the latest no-show's scheduled time
+  NEAREST_SLOTS:             3,  // Alternatives returned on SLOT_FULL/CAR_SLOT_TAKEN
+  NEAREST_SLOTS_DAYS:        7,
+  BOOKING_MAX_ATTEMPTS:      5,  // Transaction retries on write conflict/duplicate key
+  BOOKING_RATE_MAX:          10, // Booking requests per account per window
+  BOOKING_RATE_WINDOW_MS:    15 * 60 * 1000,
+  REMINDER_LEAD_MINUTES:     60,
+  JOB_INTERVAL_MS:           5 * 60 * 1000,
+  JOB_BATCH_SIZE:            200,
+});
+
+// Statuses in which an appointment holds its place in a slot.
+export const TEST_DRIVE_ACTIVE_STATUSES = Object.freeze([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]);
+
+// Staff-selectable cancellation reasons; the text is what the customer sees.
+export const TestDriveCancelReason = Object.freeze({
+  SLOT_FULL:       'SLOT_FULL',
+  OVER_CAPACITY:   'OVER_CAPACITY',
+  CAR_UNAVAILABLE: 'CAR_UNAVAILABLE',
+  OTHER:           'OTHER',
+});
+
+export const TEST_DRIVE_CANCEL_TEXT = Object.freeze({
+  SLOT_FULL:          'Khung giờ đã hết chỗ',
+  OVER_CAPACITY:      'Showroom quá số lượng khách trong khung giờ này',
+  CAR_UNAVAILABLE:    'Xe không còn sẵn sàng để lái thử',
+  OTHER:              'Lý do khác',
+  CUSTOMER_CANCELLED: 'Khách hủy lịch',
 });

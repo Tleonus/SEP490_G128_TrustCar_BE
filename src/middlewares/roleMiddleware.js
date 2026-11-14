@@ -119,4 +119,20 @@ export const requireOwnerOrAdmin = (paramName = 'id') => {
   };
 };
 
-export default { requirePermission, requireRole, requireAdmin, requireOwnerOrAdmin };
+export const authorizeRoles = (...allowedRoles) => {
+  return (req, _res, next) => {
+    if (!req.user) {
+      // Should have passed verifyToken first
+      return next(new AppError('Token missing or invalid', 401, 'UNAUTHORIZED'));
+    }
+    const userRole = req.user.roleName || (typeof req.user.role === 'object' ? req.user.role?.name : req.user.role);
+    if (!allowedRoles.includes(userRole)) {
+      return next(new AppError('Access denied: insufficient permissions', 403, 'FORBIDDEN'));
+    }
+    next();
+  };
+};
+
+export const restrictTo = (...roles) => authorizeRoles(...roles);
+
+export default { requirePermission, requireRole, requireAdmin, requireOwnerOrAdmin, authorizeRoles, restrictTo };

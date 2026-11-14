@@ -95,11 +95,15 @@ export const generateLeadCode = async (LeadModel) => {
  * @returns {Promise<string>}
  */
 export const generateAppointmentCode = async (AppointmentModel) => {
-  const lastAppt = await AppointmentModel.findOne(
-    { appointmentCode: { $regex: '^APT-' } },
+  const highestMatching = (pattern) => AppointmentModel.findOne(
+    { appointmentCode: { $regex: pattern } },
     { appointmentCode: 1 },
     { sort: { appointmentCode: -1 }, lean: true }
   );
+
+  // Codes sort as strings, so APT-9999 outranks APT-00010000. Eight-digit codes are
+  // always numerically higher and sort correctly among themselves, so check them first.
+  const lastAppt = await highestMatching('^APT-\\d{8}$') || await highestMatching('^APT-');
 
   let nextNum = 1;
   if (lastAppt && lastAppt.appointmentCode) {
