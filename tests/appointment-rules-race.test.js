@@ -20,7 +20,7 @@ let seq = 0;
 const row = (customer, car, scheduledAt, extra = {}) => ({
   _id: `row-${++seq}`, customer, car, scheduledAt, status: 'PENDING', isActive: true, ...extra,
 });
-const check = (args) => evaluateBooking({ scheduledAt: SLOT, now: NOW, mine: [], slotRows: [], customerRows: [], ...args });
+const check = (args) => evaluateBooking({ scheduledAt: SLOT, now: NOW, mine: [], slotRows: [], customerRows: [], capacity: 2, ...args });
 
 // ── Exhaustive interleaving of the save-then-recheck protocol (REQ-012) ─────
 
@@ -51,7 +51,7 @@ const simulate = (parties, order, preRows = []) => {
     }
     const verdict = evaluateBooking({
       slotRows: rows, customerRows: rows.filter((r) => r.customer === party.customer),
-      customerId: party.customer, carIds: party.carIds, scheduledAt: SLOT, now: NOW,
+      customerId: party.customer, carIds: party.carIds, scheduledAt: SLOT, now: NOW, capacity: 2,
       mine: written[p].map((r) => r._id),
     });
     won[p] = verdict === null;
@@ -118,7 +118,7 @@ describe('save-then-recheck protocol (REQ-012, AC-11)', () => {
         }
         const verdict = evaluateBooking({
           slotRows: rows.filter((r) => r.scheduledAt === slots[p]), customerRows: rows, customerId: 'A',
-          carIds: [`n${p}`], scheduledAt: slots[p], now: NOW, mine: written[p].map((r) => r._id),
+          carIds: [`n${p}`], scheduledAt: slots[p], now: NOW, capacity: 2, mine: written[p].map((r) => r._id),
         });
         won[p] = verdict === null;
         if (!won[p]) rows = rows.filter((r) => !written[p].includes(r));

@@ -3,8 +3,11 @@
  * @description Staff book a visit for a customer who phoned in: who can be found and booked,
  * CONFIRMED at once, the 2-hour lead time waived, every other rule unchanged, the customer
  * stays the owner (can cancel it), and a race with the customer's own booking.
+ * Staff booking runs on the same transaction core as a customer's (appointmentBookingService):
+ * same car/capacity/limit rules, same hold fields, same unique indexes.
  *
  * Ref: .sdd/features/test-drive-booking/SPEC.md (REQ-038…041, C19, C28; AC-36, AC-37)
+ * @ears .sdd/features/test-drive-capacity-guard/SPEC.md#REQ-210
  */
 
 import { jest } from '@jest/globals';
@@ -203,13 +206,47 @@ describe('racing the customer\'s own booking', () => {
         });
       };
     })();
+    fakes.enableIndexes();
+    fakes.allowDuplicateCodes(); // so the car index, not the code, decides
     fakes.hook = barrier;
     const other = fakes.addCustomer();
     const results = await Promise.allSettled([
       createVisitForCustomer({ userId: staffId, customerId: customer._id, carIds: [String(car._id)], scheduledAt: SLOT, now: NOW }),
       createVisit({ userId: new mongoose.Types.ObjectId(), customerId: other._id, carIds: [String(car._id)], scheduledAt: SLOT, now: NOW }),
     ]);
-    expect(results.filter((r) => r.status === 'fulfilled').length).toBeLessThanOrEqual(1);
-    expect(openRows().filter((r) => String(r.car) === String(car._id))).toHaveLength(results.some((r) => r.status === 'fulfilled') ? 1 : 0);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find((r) => r.status === 'rejected').reason).toMatchObject({ code: 'APPOINTMENT_CONFLICT' });
+    expect(openRows().filter((r) => String(r.car) === String(car._id))).toHaveLength(1);
+  });
+});
+
+describe('capacity and hold fields on the shared core (REQ-201, REQ-212)', () => {
+  it('uses the Admin capacity: with 3 places the third customer is accepted and the fourth is not', async () => {
+    fakes.capacity = 3;
+    const [x, y] = [fakes.addCustomer(), fakes.addCustomer()];
+    fakes.addAppointment({ customer: x._id, car: fakes.addCar()._id, scheduledAt: SLOT });
+    fakes.addAppointment({ customer: y._id, car: fakes.addCar()._id, scheduledAt: SLOT });
+    await expect(book()).resolves.toBeDefined(); // third
+    const late = fakes.addCustomer();
+    fakes.addUser({ customer: late._id, roleName: 'CUSTOMER', isActive: true });
+    expect((await reject(book({ customerId: late._id }))).code).toBe('APPOINTMENT_CAPACITY_FULL');
+  });
+
+  it('writes holdsCar on every row and one visitSeat, with the staff fields kept', async () => {
+    await book({ carIds: carIds(2) });
+    expect(fakes.appointments).toHaveLength(2);
+    expect(fakes.appointments.every((r) => r.holdsCar === true && r.status === 'CONFIRMED')).toBe(true);
+    expect(String(fakes.appointments[0].assignedTo)).toBe(String(staffId));
+    expect(fakes.appointments.filter((r) => typeof r.visitSeat === 'number')).toHaveLength(1);
+  });
+
+  it('a refused staff booking leaves nothing behind, not even a hidden row', async () => {
+    const [x, y] = [fakes.addCustomer(), fakes.addCustomer()];
+    fakes.addAppointment({ customer: x._id, car: fakes.addCar()._id, scheduledAt: SLOT });
+    fakes.addAppointment({ customer: y._id, car: fakes.addCar()._id, scheduledAt: SLOT });
+    const before = fakes.appointments.length;
+    await reject(book({ carIds: carIds(3) }));
+    expect(fakes.appointments).toHaveLength(before);
+    expect(fakes.openTransactions).toBe(0);
   });
 });

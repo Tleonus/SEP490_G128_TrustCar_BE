@@ -1,55 +1,80 @@
 /**
  * @file appointmentBookingService.js
- * @description Creates a test-drive visit (1..3 cars, one fixed slot) safely under
- * concurrency using "save, then re-check":
+ * @description Creates a test-drive visit (1..3 cars, one fixed slot) inside ONE transaction:
  *
- *   1. pure time checks (no DB)  2. load bookable cars  3. pre-check rules
- *   4. write N appointments      5. re-check with the SAME rules (ignoring my rows)
- *   6. on violation: hide my rows (isActive=false) and fail — all or nothing.
+ *   outside:  pure time checks · cars still for sale · slot capacity (Admin setting)
+ *   inside :  touch the customer (their requests queue up) · read the slot and the customer's
+ *             open rows · rule check · pick the visit's seat · write every row
+ *   retry  :  a write conflict or a car/seat clash re-runs the whole transaction, which then sees
+ *             the winner and answers with the proper business error (appointmentTransaction.js)
  *
- * Two concurrent requests can never both succeed (they may both fail); see
- * `appointmentBookingRules.js` and the exhaustive simulation in the tests.
+ * All or nothing: if any step fails the transaction is rolled back, so NO row (not even a hidden
+ * one) is left behind. The unique indexes `uniq_visit_car_time` / `uniq_visit_seat_time`
+ * (appointmentHoldIndexes.js) are the last line of defence for requests of DIFFERENT customers.
  *
- * Ref: .sdd/features/test-drive-booking/SPEC.md (REQ-003…012, 023; C9, C15)
+ * Ref: .sdd/features/test-drive-capacity-guard/SPEC.md (REQ-210…213, AC-10…14, 18)
  */
 
 import { AppointmentType, AppointmentStatus } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
-import {
-  VISIT_DURATION_MIN, SHOWROOM_LOCATION, RACE_LOST_REASON, ABORTED_REASON,
-} from '../constants/appointmentRules.js';
+import { VISIT_DURATION_MIN, SHOWROOM_LOCATION } from '../constants/appointmentRules.js';
+import Appointment from '../models/Appointment.js';
+import Customer from '../models/Customer.js';
+import { withTransaction } from '../utils/withTransaction.js';
 import { fail } from './appointmentErrors.js';
 import { assertBookableTime } from './appointmentSlotRules.js';
-import { violationToError } from './appointmentBookingRules.js';
-import { findBookableCars } from './appointmentQueries.js';
-import { violationNow, insertWithCode, hideRows } from './appointmentWrite.js';
+import { evaluateBooking, violationToError } from './appointmentBookingRules.js';
+import { findBookableCars, findOpenAtSlot, findCustomerOpen, plain } from './appointmentQueries.js';
+import { allocateCodes } from './appointmentWrite.js';
+import { getSlotCapacity } from './appointmentCapacity.js';
+import { holdFields, pickVisitSeat } from './appointmentHolds.js';
+import { runWithRetry } from './appointmentTransaction.js';
 import { groupIntoVisits, customerExtras } from './appointmentVisitRules.js';
 import { toCustomerVisit } from './appointmentVisitMapper.js';
 import { logAppointmentEvents } from './appointmentAudit.js';
 import { MailEvent } from './appointmentMailTemplates.js';
 import { dispatchMail, describeVisit } from './appointmentMailService.js';
 
-const writeRows = async ({ customerId, userId, carIds, scheduledAt, notes }, extra, written) => {
-  for (const car of carIds) {
-    written.push(await insertWithCode({
-      customer: customerId,
-      car,
-      type: AppointmentType.TEST_DRIVE,
-      scheduledAt,
-      durationMinutes: VISIT_DURATION_MIN,
-      location: SHOWROOM_LOCATION,
-      notes: notes?.trim() ? notes.trim() : null,
-      createdBy: userId,
-      ...extra,
-    }));
-  }
+/**
+ * One try of the booking transaction. Throws a business error (nothing is written) or returns
+ * the rows it created. Reads and writes use `session`; the reads are sequential because one
+ * transaction session cannot run two operations at once.
+ */
+const bookInTransaction = async (session, { userId, customerId, carIds, scheduledAt, notes, now }, { extra, capacity }) => {
+  // Writing the customer's document makes two requests of the same customer collide, so they run one after the other.
+  const touched = await Customer.updateOne({ _id: customerId }, { $set: { updatedAt: new Date() } }, { session });
+  if (touched.matchedCount === 0) throw fail(MSG.MSG31);
+
+  const slotRows = await findOpenAtSlot(scheduledAt, { session });
+  const customerRows = await findCustomerOpen(customerId, now, { session });
+  const violation = evaluateBooking({ slotRows, customerRows, customerId, carIds, scheduledAt, now, capacity, mine: [] });
+  if (violation) throw violationToError(violation, scheduledAt);
+
+  const seat = pickVisitSeat(slotRows, capacity);
+  if (seat === null) throw fail(MSG.MSG83); // cannot happen when the rule check passed; kept as a guard
+  const codes = await allocateCodes(carIds.length);
+
+  const docs = carIds.map((car, index) => ({
+    customer: customerId,
+    car,
+    type: AppointmentType.TEST_DRIVE,
+    scheduledAt,
+    durationMinutes: VISIT_DURATION_MIN,
+    location: SHOWROOM_LOCATION,
+    notes: notes?.trim() ? notes.trim() : null,
+    createdBy: userId,
+    ...extra,
+    appointmentCode: codes[index],
+    ...holdFields({ lead: index === 0, seat }), // codes count up, so row 0 has the lowest code
+  }));
+  const created = await Appointment.create(docs, { session, ordered: true });
+  return created.map(plain);
 };
 
 /**
  * The booking core shared by customers (`createVisit`) and staff (`createVisitForCustomer`):
- * time rule of the actor → cars still for sale → pre-check → write → re-check → all or nothing.
- * Only the actor's time rule and the extra fields of the new rows differ between them, so the
- * concurrency argument (appointmentBookingRules.js) is the same for both.
+ * time rule of the actor → cars still for sale → one transaction (see the file header). Only the
+ * actor's time rule and the extra fields of the new rows differ between them.
  *
  * @param {object} p  `{ userId, customerId, carIds, scheduledAt, notes?, now? }`
  * @param {object} [options]
@@ -58,29 +83,15 @@ const writeRows = async ({ customerId, userId, carIds, scheduledAt, notes }, ext
  * @returns {Promise<{ written: object[], cars: object[] }>}
  */
 export const bookRows = async (p, { assertTime = assertBookableTime, extra = {} } = {}) => {
-  const { userId, customerId, carIds, scheduledAt, now = new Date() } = p;
+  const { carIds, scheduledAt, now = new Date() } = p;
   assertTime(scheduledAt, now);
 
   const cars = await findBookableCars(carIds);
   if (cars.length !== carIds.length) throw fail(MSG.MSG61); // C14: no distinction of the cause
 
-  const rule = { customerId, carIds, scheduledAt, now };
-  const before = await violationNow({ ...rule, mine: [] });
-  if (before) throw violationToError(before, scheduledAt);
-
-  const written = [];
-  let after;
-  try {
-    await writeRows(p, extra, written);
-    after = await violationNow({ ...rule, mine: written.map((row) => row._id) });
-  } catch (error) {
-    await hideRows(written, userId, ABORTED_REASON); // a write or the re-check failed: leave nothing behind
-    throw error;
-  }
-  if (after) {
-    await hideRows(written, userId, RACE_LOST_REASON); // lost the race: all or nothing
-    throw violationToError(after, scheduledAt);
-  }
+  const capacity = await getSlotCapacity();
+  const written = await runWithRetry(() => withTransaction((session) =>
+    bookInTransaction(session, { ...p, now }, { extra, capacity })));
   return { written, cars };
 };
 

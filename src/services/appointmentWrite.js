@@ -1,64 +1,33 @@
 /**
  * @file appointmentWrite.js
- * @description Write-side helpers shared by every flow that creates appointment rows
- * (booking, rescheduling, staff booking). Keeping ONE copy of "check, insert with a fresh
- * APT code, hide on failure" is what lets all of them share the same proven concurrency
- * argument (see appointmentBookingRules.js).
+ * @description Write-side helper shared by the flows that create appointment rows (booking,
+ * staff booking, rescheduling): the APT codes of a new visit.
  *
- * Ref: .sdd/features/test-drive-booking/SPEC.md (REQ-012, REQ-033, C9, C15, INV-2/3/4/10)
+ * Ref: .sdd/features/test-drive-capacity-guard/SPEC.md (REQ-210, REQ-213)
  */
 
 import Appointment from '../models/Appointment.js';
-import { AppointmentStatus } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
-import { CODE_RETRY_LIMIT } from '../constants/appointmentRules.js';
 import { generateAppointmentCode } from '../utils/codeGenerator.js';
 import { fail } from './appointmentErrors.js';
-import { evaluateBooking } from './appointmentBookingRules.js';
-import { findOpenAtSlot, findCustomerOpen, plain } from './appointmentQueries.js';
 
-const isDuplicateCode = (error) =>
-  error?.code === 11000 && (error.keyPattern?.appointmentCode || /appointmentCode/.test(error.message ?? ''));
+const CODE_DIGITS = /^APT-(\d+)$/;
+const formatCode = (number) => `APT-${String(number).padStart(number > 9999 ? 8 : 4, '0')}`;
 
 /**
- * Rule check against the CURRENT database state.
- * `mine` = ids of rows that must not count against the request (rows it wrote itself and,
- * when rescheduling, the rows of the visit being moved).
+ * `count` consecutive appointment codes for the rows of ONE visit. `generateAppointmentCode` reads
+ * outside any transaction, so calling it once per row would hand every row the same code: it is
+ * called once and the rest are counted up from it. Two requests that start from the same code
+ * collide on the unique `appointmentCode` and the transaction is retried with a fresh one.
  *
- * @returns {Promise<null | { kind: string, carIds?: string[] }>}
+ * @param {number} count
+ * @returns {Promise<string[]>}
  */
-export const violationNow = async ({ customerId, carIds, scheduledAt, mine, now }) => {
-  const [slotRows, customerRows] = await Promise.all([
-    findOpenAtSlot(scheduledAt),
-    findCustomerOpen(customerId, now),
-  ]);
-  return evaluateBooking({ slotRows, customerRows, customerId, carIds, scheduledAt, mine, now });
+export const allocateCodes = async (count) => {
+  const first = await generateAppointmentCode(Appointment);
+  const start = Number(CODE_DIGITS.exec(first)?.[1]);
+  if (!Number.isInteger(start)) throw fail(MSG.MSG62);
+  return Array.from({ length: count }, (_, index) => formatCode(start + index));
 };
 
-/** Inserts one row, regenerating the APT code when another request took it (C15). */
-export const insertWithCode = async (data) => {
-  for (let attempt = 1; attempt <= CODE_RETRY_LIMIT; attempt += 1) {
-    const appointmentCode = await generateAppointmentCode(Appointment);
-    try {
-      return plain(await Appointment.create({ ...data, appointmentCode }));
-    } catch (error) {
-      if (!isDuplicateCode(error)) throw error;
-    }
-  }
-  throw fail(MSG.MSG62);
-};
-
-/** Soft-hides rows so they vanish from every API and free their car/slot/limits. Never throws. */
-export const hideRows = async (rows, userId, reason) => {
-  if (rows.length === 0) return;
-  try {
-    await Appointment.updateMany(
-      { _id: { $in: rows.map((row) => row._id) } },
-      { $set: { status: AppointmentStatus.CANCELLED, isActive: false, cancellationReason: reason, updatedBy: userId } },
-    );
-  } catch (error) {
-    console.error('Appointment cleanup failed after a booking error:', error.message);
-  }
-};
-
-export default { violationNow, insertWithCode, hideRows };
+export default { allocateCodes };

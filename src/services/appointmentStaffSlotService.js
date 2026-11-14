@@ -15,7 +15,8 @@
  */
 
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
-import { SlotReason, MAX_CONCURRENT_VISITS_PER_SLOT } from '../constants/appointmentRules.js';
+import { SlotReason } from '../constants/appointmentRules.js';
+import { getSlotCapacity } from './appointmentCapacity.js';
 import { fail } from './appointmentErrors.js';
 import { parseRange } from './appointmentSlotService.js';
 import { vnDateKey, slotStartsForDate, staffWindowReason, formatVnIso } from './appointmentSlotRules.js';
@@ -48,13 +49,13 @@ const visitBrief = (visit, { carsById, customersById }) => {
 };
 
 /** Why `start` cannot take the wanted cars, or null when it can. */
-const reasonFor = (start, { visits, wanted, now }) => {
+const reasonFor = (start, { visits, wanted, now, capacity }) => {
   const timeReason = staffWindowReason(start, now);
   if (timeReason) return { reason: timeReason };
   const held = new Set(visits.flatMap((visit) => visit.rows.map((row) => idOf(row.car))));
   const busy = wanted.filter((carId) => held.has(carId));
   if (busy.length > 0) return { reason: SlotReason.CAR_BOOKED, carIds: busy };
-  if (visits.length >= MAX_CONCURRENT_VISITS_PER_SLOT) return { reason: SlotReason.CAPACITY_FULL };
+  if (visits.length >= capacity) return { reason: SlotReason.CAPACITY_FULL };
   return { reason: null };
 };
 
@@ -69,6 +70,7 @@ const reasonFor = (start, { visits, wanted, now }) => {
  */
 export const getStaffSlots = async ({ from, to, carIds = [], excludeVisitId = null, now = new Date() }) => {
   const { first, days } = parseRange(from, to, now);
+  const capacity = await getSlotCapacity();
   let rows = await findOpenInRangeWithCode(first, new Date(first.getTime() + days * DAY_MS));
   if (excludeVisitId) {
     const own = await findVisitRowsByAnyId(excludeVisitId);
@@ -91,11 +93,11 @@ export const getStaffSlots = async ({ from, to, carIds = [], excludeVisitId = nu
     const date = vnDateKey(new Date(first.getTime() + i * DAY_MS));
     const slots = slotStartsForDate(date).map((start) => {
       const there = bySlot.get(start.getTime()) ?? [];
-      const { reason, carIds: busy } = reasonFor(start, { visits: there, wanted, now });
+      const { reason, carIds: busy } = reasonFor(start, { visits: there, wanted, now, capacity });
       return {
         start: formatVnIso(start),
         available: reason === null,
-        capacityRemaining: Math.max(0, MAX_CONCURRENT_VISITS_PER_SLOT - there.length),
+        capacityRemaining: Math.max(0, capacity - there.length),
         reason,
         ...(busy ? { carIds: busy } : {}),
         visits: there.map((visit) => visitBrief(visit, context)),

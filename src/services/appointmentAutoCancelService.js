@@ -19,10 +19,10 @@
  * Ref: .sdd/features/test-drive-booking/SPEC.md (REQ-022, 023, 028, C7, C8, C24, INV-9, INV-12)
  */
 
-import Appointment from '../models/Appointment.js';
 import { AppointmentStatus } from '../constants/appConstants.js';
-import { AUTO_CANCEL_PREFIX, OPEN_STATUSES } from '../constants/appointmentRules.js';
+import { AUTO_CANCEL_PREFIX } from '../constants/appointmentRules.js';
 import { findOpenByCar, findRowsOfVisits, loadVisitContext } from './appointmentQueries.js';
+import { closeRowKeepingSeat } from './appointmentRelease.js';
 import { logStatusChanges } from './appointmentAudit.js';
 import { groupIntoVisits, isOpenRow } from './appointmentVisitRules.js';
 import { MailEvent } from './appointmentMailTemplates.js';
@@ -30,13 +30,12 @@ import { dispatchMail, describeVisit, carTitle } from './appointmentMailService.
 
 const visitKey = (row) => `${String(row.customer)}|${new Date(row.scheduledAt).getTime()}`;
 
-/** Cancels one row if it is still open. Returns the cancelled row, or null when somebody else got there first. */
+/**
+ * Cancels one row if it is still open, releasing its holds (and passing the visit's seat to a
+ * remaining car, see appointmentRelease.js). Returns the row, or null when somebody else got there first.
+ */
 const cancelRow = (row, reason, userId) =>
-  Appointment.findOneAndUpdate(
-    { _id: row._id, status: { $in: OPEN_STATUSES }, isActive: true },
-    { $set: { status: AppointmentStatus.CANCELLED, cancellationReason: reason, updatedBy: userId ?? null } },
-    { new: true },
-  ).lean();
+  closeRowKeepingSeat(row, { status: AppointmentStatus.CANCELLED, cancellationReason: reason, updatedBy: userId ?? null });
 
 /** One e-mail per affected visit: which car(s) were cancelled and which remain. */
 const notifyCustomers = async (cancelledRows, carStatus) => {

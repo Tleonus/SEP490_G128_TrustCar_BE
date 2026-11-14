@@ -2,22 +2,24 @@
  * @file appointmentBookingRules.js
  * @description The single pure function that decides whether a booking may exist.
  *
- * `createVisit` calls it twice with the same rule set:
- *   1. before writing, with `mine = []`;
- *   2. after writing, with `mine = ids just written` (re-check).
- * Any open row that is NOT mine and causes a violation makes me lose. Hence two
- * concurrent requests can never both win (they may both lose).
+ * `createVisit` (and staff booking) call it INSIDE the booking transaction, on rows read in that
+ * transaction (`mine = []`). Rescheduling passes the rows of the visit being moved as `mine`.
+ * It decides on what this transaction can see; two requests of different customers that cannot see
+ * each other are separated by the unique indexes and the retry (appointmentTransaction.js), whose
+ * second run sees the winner and gets the violation from this function.
+ * The slot capacity is a parameter (Admin setting), not a constant.
  *
  * Priority of violations: DUPLICATE_SLOT, DUPLICATE_CARS, LIMIT, CONFLICT, CAPACITY.
  *
- * Ref: .sdd/features/test-drive-booking/SPEC.md (REQ-008…012, INV-2/3/4)
+ * Ref: .sdd/features/test-drive-booking/SPEC.md (REQ-008…012, INV-2/3/4);
+ *      .sdd/features/test-drive-capacity-guard/SPEC.md (REQ-201, REQ-210)
  */
 
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
 import {
   OPEN_STATUSES,
   MAX_OPEN_VISITS_PER_CUSTOMER,
-  MAX_CONCURRENT_VISITS_PER_SLOT,
+  DEFAULT_SLOT_CAPACITY,
 } from '../constants/appointmentRules.js';
 import { fail } from './appointmentErrors.js';
 import { formatVnIso } from './appointmentSlotRules.js';
@@ -48,10 +50,11 @@ const isOpenRow = (row) => OPEN_STATUSES.includes(row.status) && row.isActive !=
  * @param {Date}     p.scheduledAt
  * @param {string[]} [p.mine]       Row ids written by this very request (excluded from the check).
  * @param {Date}     [p.now]
+ * @param {number}   [p.capacity]   Visits one slot can hold (Admin setting `maxGuestsPerSlot`).
  * @returns {null | { kind: string, carIds?: string[] }}
  */
 export const evaluateBooking = ({
-  slotRows, customerRows, customerId, carIds, scheduledAt, mine = [], now = new Date(),
+  slotRows, customerRows, customerId, carIds, scheduledAt, mine = [], now = new Date(), capacity = DEFAULT_SLOT_CAPACITY,
 }) => {
   const mineIds = new Set(mine.map(idOf));
   const notMine = (row) => isOpenRow(row) && !mineIds.has(idOf(row._id));
@@ -74,7 +77,7 @@ export const evaluateBooking = ({
   if (conflicts.length > 0) return { kind: Violation.CONFLICT, carIds: conflicts };
 
   const guests = new Set(others.map((row) => idOf(row.customer)));
-  if (guests.size >= MAX_CONCURRENT_VISITS_PER_SLOT) return { kind: Violation.CAPACITY };
+  if (guests.size >= capacity) return { kind: Violation.CAPACITY };
 
   return null;
 };

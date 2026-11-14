@@ -1,34 +1,40 @@
 /**
  * @file appointmentRescheduleService.js
- * @description Moves a visit (all of its OPEN appointments, same cars) to another slot.
+ * @description Moves a visit (all of its OPEN appointments, same cars) to another slot, in ONE
+ * transaction:
  *
- * Why "create new, check, then hide old" and not "edit the time in place":
- *   editing in place and undoing on a lost race could fail after another request already took
- *   the old slot, leaving the customer with nothing. Here the old visit stays untouched until
- *   the new one has PROVEN it fits, so a customer never ends with zero or two open visits
- *   (INV-10).
+ *   outside:  who may move it · time rules · cars still for sale · slot capacity
+ *   inside :  touch the customer · re-read the visit (it must still be exactly what the caller saw)
+ *             · read the new slot · rule check ignoring the visit's own rows · pick the seat ·
+ *             hide the old rows (`RESCHEDULED:<new code>`, holds released) · write the new rows
  *
- *   1. checks that need no write      (who may move it, time rules, cars still for sale)
- *   2. pre-check with the booking rules, ignoring the visit being moved
- *   3. write the new appointments (fresh APT codes; the visit gets a NEW code — Spec C16)
- *   4. re-check (ignoring the old rows and the new rows)  → lost the race: hide the new rows
- *   5. hide the old rows with a compare-and-set on "still open"
- *        all of them changed → done
- *        none / only some    → undo (hide the new rows, restore the old ones) and answer 409;
- *                              this is what makes two concurrent moves of one visit, or a move
- *                              racing a cancel, end in exactly one outcome (INV-11).
+ * Old rows are hidden, not deleted: the "how many times was this visit moved" count follows the
+ * `RESCHEDULED:` reasons (appointmentRescheduleChain.js). They are hidden and their holds released
+ * in the same transaction that creates the new rows, so the customer never holds two slots or
+ * none, and two requests moving or cancelling the same visit end in exactly one outcome (the
+ * second re-reads, finds the visit changed and answers 409; a write conflict is retried).
+ * If anything fails the transaction rolls back: the old visit is untouched.
  *
- * Ref: .sdd/features/test-drive-booking/SPEC.md (REQ-031…034, 041, C16–C18, C27, C29, INV-10/11)
+ * Ref: .sdd/features/test-drive-capacity-guard/SPEC.md (REQ-210, REQ-216, AC-17);
+ *      .sdd/features/test-drive-booking/SPEC.md (REQ-031…034, 041, C16–C18, C27, C29)
  */
 
 import { AppointmentStatus } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
-import { RACE_LOST_REASON, ABORTED_REASON } from '../constants/appointmentRules.js';
+import { OPEN_STATUSES, RESCHEDULED_PREFIX } from '../constants/appointmentRules.js';
+import Appointment from '../models/Appointment.js';
+import Customer from '../models/Customer.js';
+import { withTransaction } from '../utils/withTransaction.js';
 import { fail } from './appointmentErrors.js';
 import { assertBookableTime, assertStaffBookableTime } from './appointmentSlotRules.js';
-import { Violation, violationToError } from './appointmentBookingRules.js';
-import { findVisitRowsByAnyId, loadVisitContext } from './appointmentQueries.js';
-import { violationNow, insertWithCode, hideRows } from './appointmentWrite.js';
+import { Violation, violationToError, evaluateBooking } from './appointmentBookingRules.js';
+import {
+  findVisitRowsByAnyId, loadVisitContext, findOpenAtSlot, findCustomerOpen, findVisitRows, plain,
+} from './appointmentQueries.js';
+import { allocateCodes } from './appointmentWrite.js';
+import { getSlotCapacity } from './appointmentCapacity.js';
+import { RELEASE_HOLDS, holdFields, pickVisitSeat } from './appointmentHolds.js';
+import { runWithRetry } from './appointmentTransaction.js';
 import {
   groupIntoVisits, isOpenRow, rescheduleBlock, visitCodeOf, customerExtras, needsReminderCall, needsOutcome,
 } from './appointmentVisitRules.js';
@@ -38,13 +44,62 @@ import { toCustomerVisit, toStaffVisit } from './appointmentVisitMapper.js';
 import { logRescheduled } from './appointmentAudit.js';
 import { MailEvent } from './appointmentMailTemplates.js';
 import { dispatchMail, describeVisit } from './appointmentMailService.js';
-import { Actor, replacementOf, retireOldRows } from './appointmentRescheduleSettle.js';
+import { Actor, replacementOf } from './appointmentRescheduleSettle.js';
 import { isNewRequest } from './appointmentStaffOrder.js';
 
 const loadVisit = async (id, customerId = null) => {
   const rows = await findVisitRowsByAnyId(id, { customerId });
   if (rows.length === 0) throw fail(MSG.MSG38);
   return groupIntoVisits(rows)[0];
+};
+
+const sameIds = (rows, ids) => rows.length === ids.length && rows.every((row) => ids.includes(String(row._id)));
+
+/**
+ * One try of the move transaction. Throws a business error (nothing changes) or returns the new rows.
+ */
+const moveInTransaction = async (session, { visit, open, scheduledAt, actor, userId, now, capacity }) => {
+  // Same customer → requests queue up (a concurrent move/cancel/booking conflicts here and is retried).
+  const touched = await Customer.updateOne({ _id: visit.customer }, { $set: { updatedAt: new Date() } }, { session });
+  if (touched.matchedCount === 0) throw fail(MSG.MSG31);
+
+  // The visit must still be exactly what the caller saw: every row open, none added or closed.
+  const oldIds = open.map((row) => String(row._id));
+  const current = (await findVisitRows(visit.customer, visit.scheduledAt, { session })).filter(isOpenRow);
+  if (!sameIds(current, oldIds)) throw fail(MSG.MSG81);
+
+  const slotRows = await findOpenAtSlot(scheduledAt, { session });
+  const customerRows = await findCustomerOpen(visit.customer, now, { session });
+  const carIds = open.map((row) => String(row.car));
+  const violation = evaluateBooking({
+    slotRows, customerRows, customerId: visit.customer, carIds, scheduledAt, now, capacity, mine: oldIds,
+  });
+  if (violation) throw violationToError(violation, scheduledAt);
+
+  const seat = pickVisitSeat(slotRows, capacity);
+  if (seat === null) throw fail(MSG.MSG83); // cannot happen when the rule check passed; kept as a guard
+  const codes = await allocateCodes(open.length);
+
+  // Old rows first: hidden, marked with the new visit code, holds released — all in this transaction.
+  const retired = await Appointment.updateMany(
+    { _id: { $in: open.map((row) => row._id) }, status: { $in: OPEN_STATUSES }, isActive: true },
+    {
+      $set: {
+        status: AppointmentStatus.CANCELLED, isActive: false, cancellationReason: `${RESCHEDULED_PREFIX}${codes[0]}`, updatedBy: userId,
+      },
+      $unset: RELEASE_HOLDS,
+    },
+    { session },
+  );
+  if (retired.modifiedCount !== open.length) throw fail(MSG.MSG81);
+
+  const docs = open.map((old, index) => ({
+    ...replacementOf(old, { actor, userId, now, scheduledAt }),
+    appointmentCode: codes[index],
+    ...holdFields({ lead: index === 0, seat }), // codes count up, so row 0 has the lowest code
+  }));
+  const created = await Appointment.create(docs, { session, ordered: true });
+  return created.map(plain);
 };
 
 /** The shared core. Every access/time rule of the actor has been checked by the caller. */
@@ -55,28 +110,11 @@ const moveVisit = async ({ visit, scheduledAt, actor, userId, ipAddress, now }) 
   const carIds = open.map((row) => String(row.car));
   const cars = await assertCarsSellable(carIds, { userId, ipAddress });
 
-  const rule = { customerId: visit.customer, carIds, scheduledAt, now };
-  const oldIds = open.map((row) => String(row._id));
-  const before = await violationNow({ ...rule, mine: oldIds });
-  if (before) throw violationToError(before, scheduledAt);
-
-  const written = [];
-  let after;
-  try {
-    for (const old of open) written.push(await insertWithCode(replacementOf(old, { actor, userId, now, scheduledAt })));
-    after = await violationNow({ ...rule, mine: [...oldIds, ...written.map((row) => String(row._id))] });
-  } catch (error) {
-    await hideRows(written, userId, ABORTED_REASON);
-    throw error;
-  }
-  if (after) {
-    await hideRows(written, userId, RACE_LOST_REASON);
-    throw violationToError(after, scheduledAt);
-  }
+  const capacity = await getSlotCapacity();
+  const written = await runWithRetry(() => withTransaction((session) =>
+    moveInTransaction(session, { visit, open, scheduledAt, actor, userId, now, capacity })));
 
   const newCode = visitCodeOf(written);
-  await retireOldRows({ open, written, newCode, userId });
-
   const previousVisitCode = visitCodeOf(visit.rows);
   await logRescheduled({ newRows: written, previousCode: previousVisitCode, newCode, fromAt: visit.scheduledAt, toAt: scheduledAt, userId, ipAddress });
   const carsById = new Map(cars.map((car) => [String(car._id), car]));

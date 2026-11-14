@@ -7,12 +7,15 @@
  *   repair work orders, or technician dispatching are tracked here.
  *
  * Key constraints:
- * - appointmentCode auto-generated (APT-NNNN) by testDriveBookingService.js.
+ * - appointmentCode auto-generated (APT-NNNN) by appointmentWrite.js.
  * - scheduledAt must be ≥ 2 hours ahead and ≤ 60 days ahead (GBR-19).
  * - No overlapping CONFIRMED/PENDING appointments for the same car (GBR-20).
- * - slotSeat marks an appointment that holds a place in its time slot. Removing it
- *   gives the place back, and the partial unique indexes below only cover documents
- *   that have it, so older appointments are never affected.
+ * - slotSeat marks an appointment that holds a place in its time slot (older KAN-28 rows). Removing
+ *   it gives the place back, and the partial unique indexes below only cover documents that have
+ *   it, so newer appointments are never affected.
+ * - holdsCar / visitSeat are the hold fields of the visit model: every open row holds its car, one
+ *   row per visit holds the seat. They are released in the update that closes the row. Their unique
+ *   indexes (appointmentHoldIndexes.js) are created by the migration script only, never here.
  * - Soft-delete only (GBR-25).
  */
 
@@ -120,6 +123,21 @@ const AppointmentSchema = new mongoose.Schema(
       type: Number,
       min:  1,
       // Present only while PENDING/CONFIRMED; 1…maxGuestsPerSlot within the slot
+    },
+
+    // ── Visit holds (test-drive-capacity-guard) ────────────────────────
+    // Present only while the row is open (PENDING/CONFIRMED, isActive). Both are $unset in the
+    // same update that closes the row. The unique indexes that use them are NOT declared here:
+    // see appointmentHoldIndexes.js (created only by the migration script).
+    holdsCar: {
+      type: Boolean,
+      // true on every open row: one open row per (car, scheduledAt)
+    },
+
+    visitSeat: {
+      type: Number,
+      min:  1,
+      // Only on ONE row of a visit (lowest appointmentCode): the visit's seat in its slot
     },
 
     reminderSentAt: {

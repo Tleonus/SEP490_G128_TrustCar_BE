@@ -9,15 +9,14 @@
 
 import { APPOINTMENT_CONSTRAINTS } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
-import {
-  SlotReason, SLOT_QUERY_MAX_DAYS, MAX_CONCURRENT_VISITS_PER_SLOT,
-} from '../constants/appointmentRules.js';
+import { SlotReason, SLOT_QUERY_MAX_DAYS } from '../constants/appointmentRules.js';
 import { fail } from './appointmentErrors.js';
 import { invalid } from './appointmentInput.js';
 import {
   parseDateKey, vnInstant, startOfVnDay, vnDateKey, slotStartsForDate, windowReason, formatVnIso,
 } from './appointmentSlotRules.js';
 import { findOpenInRange, findVisitRowsByAnyId } from './appointmentQueries.js';
+import { getSlotCapacity } from './appointmentCapacity.js';
 
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -50,7 +49,7 @@ const groupByTime = (rows) => {
 };
 
 /** Describes one slot for this customer and these cars. */
-const describeSlot = (start, rows, { customerId, wanted, now }) => {
+const describeSlot = (start, rows, { customerId, wanted, now, capacity }) => {
   const base = { start: formatVnIso(start) };
   const timeReason = windowReason(start, now);
   if (timeReason) return { ...base, available: false, reason: timeReason };
@@ -62,7 +61,7 @@ const describeSlot = (start, rows, { customerId, wanted, now }) => {
   const busy = wanted.filter((carId) => others.some((row) => String(row.car) === carId));
   if (busy.length > 0) return { ...base, available: false, reason: SlotReason.CAR_BOOKED, carIds: busy };
 
-  if (new Set(others.map((row) => String(row.customer))).size >= MAX_CONCURRENT_VISITS_PER_SLOT) {
+  if (new Set(others.map((row) => String(row.customer))).size >= capacity) {
     return { ...base, available: false, reason: SlotReason.CAPACITY_FULL };
   }
   return { ...base, available: true };
@@ -84,6 +83,7 @@ const describeSlot = (start, rows, { customerId, wanted, now }) => {
 export const getSlots = async ({ customerId, carIds, from, to, excludeVisitId = null, now = new Date() }) => {
   if (!customerId) throw fail(MSG.MSG31);
   const { first, days } = parseRange(from, to, now);
+  const capacity = await getSlotCapacity();
   let rows = await findOpenInRange(first, new Date(first.getTime() + days * DAY_MS));
   if (excludeVisitId) {
     const own = await findVisitRowsByAnyId(excludeVisitId, { customerId });
@@ -98,7 +98,7 @@ export const getSlots = async ({ customerId, carIds, from, to, excludeVisitId = 
   for (let i = 0; i < days; i += 1) {
     const date = vnDateKey(new Date(first.getTime() + i * DAY_MS));
     const slots = slotStartsForDate(date).map((start) =>
-      describeSlot(start, byTime.get(start.getTime()) ?? [], { customerId, wanted, now }));
+      describeSlot(start, byTime.get(start.getTime()) ?? [], { customerId, wanted, now, capacity }));
     result.push({ date, slots });
   }
   return { days: result };

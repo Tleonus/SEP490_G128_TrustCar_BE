@@ -17,7 +17,12 @@ export const VN_UTC_OFFSET_HOURS = 7;
 export const VISIT_DURATION_MIN = 90;
 export const MAX_CARS_PER_VISIT = 3;
 export const MAX_OPEN_VISITS_PER_CUSTOMER = 2;
-export const MAX_CONCURRENT_VISITS_PER_SLOT = 2;
+/** Slot capacity used when the Admin setting `testDrive.maxGuestsPerSlot` is missing or invalid. */
+export const DEFAULT_SLOT_CAPACITY = 3;
+/** A booking/move transaction is tried this many times on a write conflict or a seat/car clash. */
+export const BOOKING_MAX_ATTEMPTS = 5;
+/** Extra attempts when only the generated `appointmentCode` collided with another request. */
+export const CODE_COLLISION_MAX = 10;
 
 /** Cancelling less than this many hours before the visit is flagged "late" (soft rule). */
 export const LATE_CANCEL_HOURS = 12;
@@ -28,7 +33,6 @@ export const SLOT_QUERY_MAX_DAYS = 14;
 export const NOTES_MAX_LENGTH = 500;
 export const REASON_MAX_LENGTH = 500;
 export const OUTCOME_MAX_LENGTH = 1000;
-export const CODE_RETRY_LIMIT = 3;
 export const MAX_PAGE_SIZE = 50;
 export const DEFAULT_PAGE_SIZE = 10;
 
@@ -76,9 +80,14 @@ export const OPEN_STATUSES = Object.freeze([
 
 /** `cancellationReason` prefix written when a car stops being sellable (auto-cancel). */
 export const AUTO_CANCEL_PREFIX = 'AUTO_CAR_UNAVAILABLE:';
-/** `cancellationReason` of a booking that lost a concurrent race (soft-hidden). */
+/**
+ * LEGACY markers. The booking flow no longer writes hidden rows (a failed booking rolls back), but
+ * rows hidden by the previous flow may still exist in the database; these two values only let
+ * `appointmentCancelReason.js` keep recognising them as system markers.
+ */
+/** `cancellationReason` of a booking that lost a concurrent race (soft-hidden). Legacy. */
 export const RACE_LOST_REASON = 'RACE_LOST';
-/** `cancellationReason` of rows hidden because writing the rest of the visit failed. */
+/** `cancellationReason` of rows hidden because writing the rest of the visit failed. Legacy. */
 export const ABORTED_REASON = 'BOOKING_ABORTED';
 
 export const CancellationType = Object.freeze({

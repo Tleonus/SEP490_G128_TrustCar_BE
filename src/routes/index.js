@@ -32,7 +32,6 @@ import baseSettingsRoutes   from './baseSettingsRoutes.js';
 import publicSettingsRoutes from './publicSettingsRoutes.js';
 import wishlistRoutes       from './wishlistRoutes.js';
 import publicWishlistRoutes from './publicWishlistRoutes.js';
-import testDriveRoutes      from './testDriveRoutes.js';
 import leadPublicRoutes     from './leadPublicRoutes.js';
 import leadRoutes           from './leadRoutes.js';
 import emailLogRoutes       from './emailLogRoutes.js';
@@ -73,7 +72,6 @@ router.use('/admin', baseSettingsRoutes);
 router.use('/admin', emailLogRoutes);
 
 // ── Test-Drive Booking (Customer, Staff & Admin) ───────────────────────────
-router.use('/test-drives', testDriveRoutes);
 
 // ── Lead Pipeline ─────────────────────────────────────────────────────────// Public intake first: it only owns POST /, so it must not shadow the
 // authenticated router's GET /:id. See leadPublicRoutes.js.

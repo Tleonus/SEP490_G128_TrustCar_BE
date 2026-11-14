@@ -3,9 +3,9 @@
  * @description The query engine behind `fakeAppointmentModels.js`: filter matching and a
  * chainable query object that behaves like a Mongoose query for what the booking services use.
  *
- * Supported filters: equality, $in, $gt, $gte, $lt, $lte, $ne, $regex (+$options), $or
- * (ObjectId/Date aware). Query chain: select (top-level names), sort, skip, limit, lean,
- * populate (ignored).
+ * Supported filters: equality, $in, $gt, $gte, $lt, $lte, $ne, $regex (+$options), $or,
+ * $exists, $type ('number'), $nin (ObjectId/Date aware). Query chain: select (top-level names),
+ * sort, skip, limit, lean, populate and session (the last two are accepted and ignored).
  */
 
 import mongoose from 'mongoose';
@@ -27,6 +27,9 @@ const OPS = {
   $lt: (v, arg) => norm(v) < norm(arg),
   $lte: (v, arg) => norm(v) <= norm(arg),
   $ne: (v, arg) => norm(v) !== norm(arg),
+  $nin: (v, arg) => !arg.map(norm).includes(norm(v)),
+  $exists: (v, arg) => (v !== undefined) === Boolean(arg),
+  $type: (v, arg) => (arg === 'number' ? typeof v === 'number' : typeof v === arg),
   $regex: (v, arg, cond) => new RegExp(arg, cond.$options ?? '').test(String(v ?? '')),
 };
 
@@ -61,6 +64,7 @@ export class FakeQuery {
   limit(n) { this.limitN = n; return this; }
   lean() { return this; }
   populate() { return this; }
+  session() { return this; }
 
   async exec() {
     let rows = await this.run();

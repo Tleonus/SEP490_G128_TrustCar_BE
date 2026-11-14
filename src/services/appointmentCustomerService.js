@@ -11,6 +11,7 @@ import { AppointmentStatus } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
 import { OPEN_STATUSES } from '../constants/appointmentRules.js';
 import { fail } from './appointmentErrors.js';
+import { RELEASE_HOLDS } from './appointmentHolds.js';
 import { normalizeReason, paginateVisits } from './appointmentInput.js';
 import { findCustomerRows, findVisitRowsByAnyId, loadVisitContext } from './appointmentQueries.js';
 import { groupIntoVisits, deriveVisitStatus, isOpenRow, customerExtras } from './appointmentVisitRules.js';
@@ -81,7 +82,7 @@ export const cancelMyVisit = async ({ customerId, userId, id, reason, ipAddress,
   const open = visit.rows.filter(isOpenRow);
   const result = await Appointment.updateMany(
     { _id: { $in: open.map((row) => row._id) }, status: { $in: OPEN_STATUSES }, isActive: true },
-    { $set: { status: AppointmentStatus.CANCELLED, cancellationReason: note, updatedBy: userId } },
+    { $set: { status: AppointmentStatus.CANCELLED, cancellationReason: note, updatedBy: userId }, $unset: RELEASE_HOLDS },
   );
 
   const fresh = await loadOwnVisit(customerId, id);

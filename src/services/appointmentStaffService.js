@@ -12,6 +12,7 @@ import { AppointmentStatus } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
 import { OPEN_STATUSES, NEEDS_OUTCOME_LOOKBACK_DAYS } from '../constants/appointmentRules.js';
 import { fail } from './appointmentErrors.js';
+import { RELEASE_HOLDS } from './appointmentHolds.js';
 import { invalid, normalizeOutcome, normalizeStaffCancel, paginateVisits } from './appointmentInput.js';
 import { parseDateKey, startOfVnDay, vnInstant } from './appointmentSlotRules.js';
 import {
@@ -153,7 +154,11 @@ export const changeVisitStatus = async ({
 
   const update = await Appointment.updateMany(
     { _id: { $in: open.map((row) => row._id) }, status: { $in: OPEN_STATUSES }, isActive: true },
-    { $set: fieldsFor(status, { userId, now, note, outcome: result }) },
+    {
+      $set: fieldsFor(status, { userId, now, note, outcome: result }),
+      // Leaving the open states releases the holds in the same update; CONFIRMED is still open.
+      ...(status === AppointmentStatus.CONFIRMED ? {} : { $unset: RELEASE_HOLDS }),
+    },
   );
   if (update.modifiedCount === 0) throw fail(MSG.MSG81); // changed by somebody else meanwhile
 

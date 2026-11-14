@@ -20,7 +20,7 @@ let seq = 0;
 const row = (customer, car, scheduledAt, extra = {}) => ({
   _id: `row-${++seq}`, customer, car, scheduledAt, status: 'PENDING', isActive: true, ...extra,
 });
-const check = (args) => evaluateBooking({ scheduledAt: SLOT, now: NOW, mine: [], slotRows: [], customerRows: [], ...args });
+const check = (args) => evaluateBooking({ scheduledAt: SLOT, now: NOW, mine: [], slotRows: [], customerRows: [], capacity: 2, ...args });
 
 describe('evaluateBooking', () => {
   it('allows a clean booking', () => {

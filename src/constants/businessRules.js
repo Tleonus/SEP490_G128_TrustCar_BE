@@ -275,7 +275,7 @@ export const BusinessRules = Object.freeze({
       'A vehicle cannot have two CONFIRMED or PENDING appointments whose time ' +
       'ranges overlap. Bookings use fixed time slots, so overlap replaces the ' +
       'former ±30 minute buffer.',
-    layer: 'Service – testDriveBookingService.js',
+    layer: 'Service – appointmentBookingService.js',
     messages: ['MSG37'],
   },
 

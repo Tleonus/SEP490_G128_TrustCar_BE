@@ -15,7 +15,7 @@ import { CarStatus } from '../constants/appConstants.js';
 import { OPEN_STATUSES } from '../constants/appointmentRules.js';
 
 const OPEN_FILTER = { status: { $in: OPEN_STATUSES }, isActive: true };
-const LIGHT_FIELDS = 'customer car scheduledAt status isActive';
+const LIGHT_FIELDS = 'customer car scheduledAt status isActive visitSeat slotSeat';
 const CAR_FIELDS = 'vehicleCode make model variant year status isActive images';
 const CUSTOMER_FIELDS = 'fullName phone email';
 const USER_FIELDS = 'fullName';
@@ -23,14 +23,14 @@ const USER_FIELDS = 'fullName';
 /** Plain object whether the input is a Mongoose document or already plain. */
 export const plain = (doc) => (doc && typeof doc.toObject === 'function' ? doc.toObject() : doc);
 
-/** Open rows (any customer) at exactly `scheduledAt`. */
-export const findOpenAtSlot = (scheduledAt) =>
-  Appointment.find({ ...OPEN_FILTER, scheduledAt }).select(LIGHT_FIELDS).lean();
+/** Open rows (any customer) at exactly `scheduledAt`. Inside a transaction pass its `session`. */
+export const findOpenAtSlot = (scheduledAt, { session = null } = {}) =>
+  Appointment.find({ ...OPEN_FILTER, scheduledAt }).select(LIGHT_FIELDS).session(session).lean();
 
-/** Open future rows of one customer, any slot. */
-export const findCustomerOpen = (customerId, now) =>
+/** Open future rows of one customer, any slot. Inside a transaction pass its `session`. */
+export const findCustomerOpen = (customerId, now, { session = null } = {}) =>
   Appointment.find({ ...OPEN_FILTER, customer: customerId, scheduledAt: { $gt: now } })
-    .select(LIGHT_FIELDS).lean();
+    .select(LIGHT_FIELDS).session(session).lean();
 
 /** Open rows of every customer with `from <= scheduledAt < toExclusive` (one query for /slots). */
 export const findOpenInRange = (from, toExclusive) =>
@@ -41,6 +41,10 @@ export const findOpenInRange = (from, toExclusive) =>
 export const findOpenInRangeWithCode = (from, toExclusive) =>
   Appointment.find({ ...OPEN_FILTER, scheduledAt: { $gte: from, $lt: toExclusive } })
     .select(`${LIGHT_FIELDS} appointmentCode`).lean();
+
+/** All visible rows of ONE visit `(customer, scheduledAt)`. Inside a transaction pass its `session`. */
+export const findVisitRows = (customerId, scheduledAt, { session = null } = {}) =>
+  Appointment.find({ customer: customerId, scheduledAt, isActive: true }).session(session).lean();
 
 /** Every open row of one car (used when the car stops being sellable). */
 export const findOpenByCar = (carId) => Appointment.find({ ...OPEN_FILTER, car: carId }).lean();
