@@ -51,8 +51,6 @@ const PUBLIC_LIST_PROJECTION = {
   'specifications.features': 1,
 };
 
-// Fields a public caller must never see, whatever projection is in use.
-const PUBLIC_HIDDEN_FIELDS = ['floorPrice', 'originalPrice', 'vin', 'licensePlate', 'internalNotes', 'priceHistory'];
 
 // Fields a public caller must never see, whatever projection is in use: cost and
 // floor prices, inventory metrics, vehicle identity and audit data stay staff-only.
