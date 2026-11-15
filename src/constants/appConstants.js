@@ -251,6 +251,7 @@ export const ActivityEventType = Object.freeze({
   // Inspection (CPO checklist)
   INSPECTION_DRAFT_CREATED: 'INSPECTION_DRAFT_CREATED',
   INSPECTION_SUBMITTED:     'INSPECTION_SUBMITTED',
+  INSPECTION_REJECTED:      'INSPECTION_REJECTED',
 
   // Wishlist & Price Drop Alerts
   CAR_SAVED_WISHLIST:       'CAR_SAVED_WISHLIST',
