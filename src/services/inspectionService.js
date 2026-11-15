@@ -169,6 +169,74 @@ export const createCarUploadSignature = async (carId) => {
 };
 
 /**
+ * Admin rejects a submitted inspection and sends it back to the sale staff
+ * for revision (KAN-53).
+ *
+ * Preconditions:
+ * - Record must exist and be in SUBMITTED status.
+ * - `reason` is required and must be 10-1000 characters.
+ *
+ * Effects (all inside one transaction):
+ * - Record status flips from SUBMITTED back to DRAFT so the sale staff can
+ *   reopen and edit it, together with `rejectedReason`, `rejectedByUserId`
+ *   and `rejectedAt` set to trace who rejected it and why.
+ * - Car status is intentionally NOT touched: the vehicle stays wherever it
+ *   is (typically UNDER_INSPECTION) — the car lifecycle is unaffected by
+ *   the rejection of a single biên bản.
+ * - An `INSPECTION_REJECTED` audit entry is written.
+ *
+ * @param {string} id - Inspection record id
+ * @param {string} userId - Admin performing the rejection
+ * @param {string} reason - Rejection reason (10-1000 chars, trimmed)
+ * @returns {Promise<object>} The updated record (DRAFT, with rejection fields)
+ */
+export const rejectInspection = (id, userId, reason) => withTransaction(async (session) => {
+  const trimmed = typeof reason === 'string' ? reason.trim() : '';
+  if (trimmed.length < 10 || trimmed.length > 1000) {
+    throw new AppError('Request validation failed.', 400, 'VALIDATION_ERROR', [{
+      field: 'reason', message: 'reason must be between 10 and 1000 characters.',
+    }]);
+  }
+
+  const record = await InspectionRecord.findById(id).session(session).lean();
+  if (!record) throw notFound();
+  if (record.status !== InspectionStatus.SUBMITTED) {
+    throw new AppError(
+      'Only a submitted inspection can be rejected.',
+      409,
+      'INSPECTION_NOT_SUBMITTED',
+    );
+  }
+
+  const rejectedAt = new Date();
+  const updated = await InspectionRecord.findOneAndUpdate(
+    { _id: id, status: InspectionStatus.SUBMITTED },
+    {
+      $set: {
+        status: InspectionStatus.DRAFT,
+        rejectedReason: trimmed,
+        rejectedByUserId: userId,
+        rejectedAt,
+        updatedBy: userId,
+      },
+    },
+    { new: true, session, runValidators: true },
+  ).lean();
+  if (!updated) throw lockedError(); // state changed between our read and write
+
+  await logEvents(session, [{
+    eventType: ActivityEventType.INSPECTION_REJECTED,
+    performedBy: userId,
+    targetModel: 'InspectionRecord',
+    targetId: updated._id,
+    summary: 'Inspection rejected and returned to sale staff for revision',
+    metadata: { carId: String(updated.carId), reason: trimmed },
+  }]);
+
+  return withLifecycleDefaults(updated);
+});
+
+/**
  * Approves an inspected CPO car for sale.
  * - Car must exist and be in APPROVED_CPO status.
  * - Updates status to AVAILABLE.

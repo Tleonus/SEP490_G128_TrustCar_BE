@@ -77,6 +77,24 @@ export const updateDraftSchema = Joi.object({
 
 const strictBool = Joi.boolean().strict().required();
 
+/**
+ * PUT /inspections/:id/reject — admin rejects a submitted biên bản (KAN-53).
+ * Reason is required and must be between 10 and 1000 characters after trimming.
+ */
+export const rejectInspectionSchema = Joi.object({
+  reason: Joi.string()
+    .trim()
+    .min(10)
+    .max(1000)
+    .required()
+    .messages({
+      'string.empty':   'reason is required.',
+      'string.min':     'reason must be at least 10 characters.',
+      'string.max':     'reason must be at most 1000 characters.',
+      'any.required':   'reason is required.',
+    }),
+});
+
 /** POST /inspections/cars/:id/inspect — admin quick inspection with the 5 KAN-14 booleans. */
 export const quickInspectSchema = Joi.object({
   criteria: Joi.object({
@@ -92,4 +110,4 @@ export const quickInspectSchema = Joi.object({
   evidenceImages: Joi.array().items(photoUrl).max(20).default([]),
 });
 
-export default { updateDraftSchema, quickInspectSchema };
+export default { updateDraftSchema, quickInspectSchema, rejectInspectionSchema };

@@ -93,6 +93,17 @@ export const approveSale = handle(async (req, res) => {
   return sendSuccess(res, 200, 'Car approved for sale successfully.', car);
 });
 
+/**
+ * @route   PUT /api/v1/inspections/:id/reject
+ * @access  ADMIN only
+ * @desc    Rejects a submitted biên bản and returns it to the sale staff for
+ *          revision (status back to DRAFT). Car status stays untouched.
+ */
+export const rejectInspection = handle(async (req, res) => {
+  const record = await inspectionService.rejectInspection(req.params.id, req.userId, req.body.reason);
+  return sendSuccess(res, 200, 'Inspection rejected and returned to sale staff.', record);
+});
+
 export default {
   createDraft,
   updateDraft,
@@ -102,4 +113,5 @@ export default {
   submitInspection,
   inspectCar,
   approveSale,
+  rejectInspection,
 };

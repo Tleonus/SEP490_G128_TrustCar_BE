@@ -11,7 +11,7 @@ import { verifyToken } from '../middlewares/authMiddleware.js';
 import { restrictTo } from '../middlewares/roleMiddleware.js';
 import { validate, validateParams, objectIdParamSchema } from '../middlewares/validateMiddleware.js';
 import { Roles } from '../constants/appConstants.js';
-import { quickInspectSchema, updateDraftSchema } from './inspectionSchemas.js';
+import { quickInspectSchema, rejectInspectionSchema, updateDraftSchema } from './inspectionSchemas.js';
 
 const router = Router();
 
@@ -58,5 +58,15 @@ router.post('/:id/upload-signature', restrictTo(...INSPECTION_WRITERS), byId, in
 
 // POST /api/v1/inspections/:id/submit — validate, decide the CPO verdict and lock
 router.post('/:id/submit', restrictTo(...INSPECTION_WRITERS), byId, inspectionController.submitInspection);
+
+// PUT /api/v1/inspections/:id/reject — ADMIN sends a submitted biên bản back
+// to the sale staff for revision (KAN-53). Car status stays untouched.
+router.put(
+  '/:id/reject',
+  restrictTo(Roles.ADMIN),
+  byId,
+  validate(rejectInspectionSchema),
+  inspectionController.rejectInspection,
+);
 
 export default router;
