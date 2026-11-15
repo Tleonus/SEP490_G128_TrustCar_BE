@@ -10,6 +10,7 @@
  *   /api/v1/public/cars     → Public vehicle catalog (unauthenticated)
  *   /api/v1/customer/appointments → Customer test-drive booking (CUSTOMER)
  *   /api/v1/appointments    → Test-drive appointment handling (Staff & Admin)
+ *   /api/v1/profile         → Own profile and settings (any signed-in account; settings: CUSTOMER)
  *
  * Adding new feature routes:
  * 1. Create src/routes/featureRoutes.js
@@ -38,6 +39,7 @@ import emailLogRoutes       from './emailLogRoutes.js';
 import marketingRoutes      from './marketingRoutes.js';
 import loanSettingsRoutes   from './loanSettingsRoutes.js';
 import publicChatRoutes     from './publicChatRoutes.js';
+import profileRoutes        from './profileRoutes.js';
 
 const router = Router();
 
@@ -86,5 +88,8 @@ router.use('/marketing', marketingRoutes);
 // ── Test-drive Booking: customer side (CUSTOMER) and staff side (Staff & Admin) ──
 router.use('/customer/appointments', customerAppointmentRoutes);
 router.use('/appointments', appointmentRoutes);
+
+// ── Own profile & settings (signed-in account) ─────────────────────────────
+router.use('/profile', profileRoutes);
 
 export default router;
