@@ -153,3 +153,13 @@ test('keeps the legacy param names the current front-end sends', async () => {
     mileage: { $lte: 80000 },
   });
 });
+
+test('multi-token search matches each token across fields and recognizes Vietnamese specs & model aliases', async () => {
+  await getAvailableCars({ search: 'Mazda CX5 2022 số tự động' });
+
+  const f = filterOf();
+  expect(f.transmission).toBe('AUTOMATIC');
+  expect(f.$and).toHaveLength(3);
+  expect(f.$and[1].$or[1].model.$regex).toBe('cx[-\\s]?5');
+  expect(f.$and[2].$or).toContainEqual({ year: 2022 });
+});
