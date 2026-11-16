@@ -19,7 +19,7 @@ import {
   findRowsInRange, findVisitRowsByAnyId, loadVisitContext,
 } from './appointmentQueries.js';
 import {
-  canTransition, cancellationOf, deriveVisitStatus, groupIntoVisits, isOpenRow, needsReminderCall, needsOutcome,
+  canTransition, cancellationOf, deriveVisitStatus, groupIntoVisits, isOpenRow, needsReminderCall, needsOutcome, visitContaining,
 } from './appointmentVisitRules.js';
 import { countReschedules } from './appointmentRescheduleChain.js';
 import { toStaffVisit } from './appointmentVisitMapper.js';
@@ -98,7 +98,7 @@ export const listVisits = async ({ query = {}, userId = null, ipAddress, now = n
 const loadVisit = async (id) => {
   const rows = await findVisitRowsByAnyId(id);
   if (rows.length === 0) throw fail(MSG.MSG38);
-  return groupIntoVisits(rows)[0];
+  return visitContaining(groupIntoVisits(rows), id);
 };
 
 /** @ears .sdd/features/test-drive-booking/SPEC.md#REQ-018 */

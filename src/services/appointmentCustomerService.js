@@ -14,7 +14,7 @@ import { fail } from './appointmentErrors.js';
 import { RELEASE_HOLDS } from './appointmentHolds.js';
 import { normalizeReason, paginateVisits } from './appointmentInput.js';
 import { findCustomerRows, findVisitRowsByAnyId, loadVisitContext } from './appointmentQueries.js';
-import { groupIntoVisits, deriveVisitStatus, isOpenRow, customerExtras } from './appointmentVisitRules.js';
+import { groupIntoVisits, deriveVisitStatus, isOpenRow, customerExtras, visitContaining } from './appointmentVisitRules.js';
 import { countReschedules } from './appointmentRescheduleChain.js';
 import { toCustomerVisit } from './appointmentVisitMapper.js';
 import { logStatusChanges } from './appointmentAudit.js';
@@ -49,7 +49,7 @@ export const listMyVisits = async ({ customerId, query = {}, now = new Date() })
 const loadOwnVisit = async (customerId, id) => {
   const rows = await findVisitRowsByAnyId(id, { customerId });
   if (rows.length === 0) throw fail(MSG.MSG38);
-  return groupIntoVisits(rows)[0];
+  return visitContaining(groupIntoVisits(rows), id);
 };
 
 /** @ears .sdd/features/test-drive-booking/SPEC.md#REQ-015 */

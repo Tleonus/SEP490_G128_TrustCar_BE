@@ -8,7 +8,7 @@
 
 import {
   groupIntoVisits, deriveVisitStatus, visitCodeOf, cancellationOf, isLateCancellation, canTransition,
-  rescheduleBlock, canSelfReschedule, needsReminderCall, needsOutcome, customerExtras,
+  rescheduleBlock, canSelfReschedule, needsReminderCall, needsOutcome, customerExtras, visitContaining,
 } from '../src/services/appointmentVisitRules.js';
 import { toCustomerVisit, toStaffVisit } from '../src/services/appointmentVisitMapper.js';
 
@@ -36,6 +36,50 @@ describe('groupIntoVisits', () => {
     const first = visits.find((v) => v.rows.length === 2);
     expect(first.visitId).toBe(hex(10));
     expect(first.rows.map((r) => r._id)).toEqual([hex(10), hex(12)]);
+  });
+
+  describe('cancel then book the same slot again', () => {
+    const FIRST = T('2026-11-08T03:00:00.000Z');
+    const SECOND = T('2026-11-08T03:02:00.000Z');
+    const cancelled = (n, created) => mkRow(n, { status: 'CANCELLED', createdAt: created, cancellationReason: null });
+    const open = (n, created) => mkRow(n, { createdAt: created });
+
+    it('keeps the old cancelled booking apart from the new open one, newest first', () => {
+      const visits = groupIntoVisits([cancelled(25, FIRST), open(26, SECOND)]);
+      expect(visits).toHaveLength(2);
+      expect(visits.map((v) => v.visitId)).toEqual([hex(26), hex(25)]);
+      expect(deriveVisitStatus(visits[0].rows)).toBe('PENDING');
+      expect(deriveVisitStatus(visits[1].rows)).toBe('CANCELLED');
+      expect(visits[0].rows).toHaveLength(1);
+    });
+
+    it('does not split the rows of ONE booking (created milliseconds apart)', () => {
+      const t = (ms) => new Date(SECOND.getTime() + ms);
+      const visits = groupIntoVisits([open(30, t(0)), open(31, t(40)), open(32, t(95))]);
+      expect(visits).toHaveLength(1);
+      expect(visits[0].rows).toHaveLength(3);
+    });
+
+    it('keeps an auto-cancelled car inside the booking it belongs to', () => {
+      const auto = mkRow(41, { status: 'CANCELLED', createdAt: SECOND, cancellationReason: 'AUTO_CAR_UNAVAILABLE:SOLD' });
+      const visits = groupIntoVisits([cancelled(40, FIRST), auto, open(42, new Date(SECOND.getTime() + 30))]);
+      expect(visits).toHaveLength(2);
+      expect(visits[0].rows.map((r) => r._id)).toEqual([hex(41), hex(42)]);
+    });
+
+    it('splits two cancelled bookings of the same slot and rows without createdAt stay with the oldest', () => {
+      const legacy = { ...mkRow(50), createdAt: undefined };
+      const visits = groupIntoVisits([cancelled(51, SECOND), cancelled(52, FIRST), legacy]);
+      expect(visits).toHaveLength(2);
+      expect(visits[1].rows.map((r) => r._id)).toEqual([hex(50), hex(52)]);
+    });
+
+    it('visitContaining picks the booking that holds the id, else the first', () => {
+      const visits = groupIntoVisits([cancelled(25, FIRST), open(26, SECOND)]);
+      expect(visitContaining(visits, hex(25)).visitId).toBe(hex(25));
+      expect(visitContaining(visits, hex(26)).visitId).toBe(hex(26));
+      expect(visitContaining(visits, hex(99)).visitId).toBe(hex(26));
+    });
   });
 });
 
