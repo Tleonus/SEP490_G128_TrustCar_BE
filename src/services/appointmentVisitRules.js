@@ -37,9 +37,36 @@ const STATUS_PRIORITY = [
   AppointmentStatus.CANCELLED,
 ];
 
+/** Rows written by ONE booking are created within a few milliseconds of each other (one transaction). */
+const BOOKING_BATCH_GAP_MS = 10 * 1000;
+const createdOf = (row) => (row.createdAt ? timeOf(row.createdAt) : null);
+
 /**
- * Groups active rows into visits (key: customer + scheduledAt). `visitId` is the
- * smallest row `_id`. Visits keep the order in which they first appear in `rows`.
+ * Splits the rows of one (customer, scheduledAt) into the bookings that created them, newest booking
+ * first. Without this, a customer who cancels a visit and books the same slot again would see the old
+ * cancelled row glued to the new visit (shown as a "cancelled car"). Rows without `createdAt` stay with
+ * the oldest booking.
+ */
+const splitBookings = (rows) => {
+  const timed = rows.filter((row) => createdOf(row) !== null).sort((a, b) => createdOf(a) - createdOf(b) || byId(a, b));
+  const untimed = rows.filter((row) => createdOf(row) === null);
+  const batches = [];
+  timed.forEach((row) => {
+    const last = batches[batches.length - 1];
+    if (last && createdOf(row) - createdOf(last[last.length - 1]) <= BOOKING_BATCH_GAP_MS) last.push(row);
+    else batches.push([row]);
+  });
+  if (untimed.length > 0) {
+    if (batches.length > 0) batches[0].push(...untimed);
+    else batches.push(untimed);
+  }
+  return batches.reverse();
+};
+
+/**
+ * Groups active rows into visits (key: customer + scheduledAt + booking). `visitId` is the
+ * smallest row `_id`. Visits keep the order in which they first appear in `rows`; several
+ * bookings of the same customer and slot come out newest first.
  *
  * @param {object[]} rows
  * @returns {Array<{ visitId: string, customer: *, scheduledAt: Date, rows: object[] }>}
@@ -51,11 +78,15 @@ export const groupIntoVisits = (rows) => {
     if (!groups.has(key)) groups.set(key, { customer: row.customer, scheduledAt: new Date(row.scheduledAt), rows: [] });
     groups.get(key).rows.push(row);
   });
-  return [...groups.values()].map((visit) => {
-    const sorted = [...visit.rows].sort(byId);
-    return { ...visit, rows: sorted, visitId: idOf(sorted[0]._id) };
-  });
+  return [...groups.values()].flatMap((group) => splitBookings(group.rows).map((batch) => {
+    const sorted = [...batch].sort(byId);
+    return { customer: group.customer, scheduledAt: group.scheduledAt, rows: sorted, visitId: idOf(sorted[0]._id) };
+  }));
 };
+
+/** The visit (from `groupIntoVisits`) that contains appointment `id`; the first visit when none does. */
+export const visitContaining = (visits, id) =>
+  visits.find((visit) => visit.rows.some((row) => idOf(row._id) === idOf(id))) ?? visits[0];
 
 /** Derived status of a visit (Spec "Trạng thái lượt"). */
 export const deriveVisitStatus = (rows) =>

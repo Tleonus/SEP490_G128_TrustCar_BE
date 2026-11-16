@@ -28,8 +28,6 @@ import { groupIntoVisits, isOpenRow } from './appointmentVisitRules.js';
 import { MailEvent } from './appointmentMailTemplates.js';
 import { dispatchMail, describeVisit, carTitle } from './appointmentMailService.js';
 
-const visitKey = (row) => `${String(row.customer)}|${new Date(row.scheduledAt).getTime()}`;
-
 /**
  * Cancels one row if it is still open, releasing its holds (and passing the visit's seat to a
  * remaining car, see appointmentRelease.js). Returns the row, or null when somebody else got there first.
@@ -41,11 +39,12 @@ const cancelRow = (row, reason, userId) =>
 const notifyCustomers = async (cancelledRows, carStatus) => {
   const pairs = cancelledRows.map((row) => ({ customer: row.customer, scheduledAt: row.scheduledAt }));
   const visits = groupIntoVisits(await findRowsOfVisits(pairs));
-  const touched = new Set(cancelledRows.map(visitKey));
-  const wanted = visits.filter((visit) => touched.has(`${String(visit.customer)}|${visit.scheduledAt.getTime()}`));
+  const idsOf = (visit) => new Set(visit.rows.map((row) => String(row._id)));
+  // A customer can have several bookings at the same slot (cancel then book again): match by row id.
+  const wanted = visits.filter((visit) => cancelledRows.some((row) => idsOf(visit).has(String(row._id))));
   const { carsById } = await loadVisitContext(wanted);
   wanted.forEach((visit) => {
-    const cancelled = cancelledRows.filter((row) => visitKey(row) === `${String(visit.customer)}|${visit.scheduledAt.getTime()}`);
+    const cancelled = cancelledRows.filter((row) => idsOf(visit).has(String(row._id)));
     const remaining = visit.rows.filter(isOpenRow);
     dispatchMail({
       event: MailEvent.CAR_UNAVAILABLE,

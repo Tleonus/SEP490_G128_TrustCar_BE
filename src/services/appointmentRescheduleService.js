@@ -36,7 +36,7 @@ import { getSlotCapacity } from './appointmentCapacity.js';
 import { RELEASE_HOLDS, holdFields, pickVisitSeat } from './appointmentHolds.js';
 import { runWithRetry } from './appointmentTransaction.js';
 import {
-  groupIntoVisits, isOpenRow, rescheduleBlock, visitCodeOf, customerExtras, needsReminderCall, needsOutcome,
+  groupIntoVisits, isOpenRow, rescheduleBlock, visitCodeOf, customerExtras, needsReminderCall, needsOutcome, visitContaining,
 } from './appointmentVisitRules.js';
 import { countReschedules } from './appointmentRescheduleChain.js';
 import { assertCarsSellable } from './appointmentReconcileService.js';
@@ -50,7 +50,7 @@ import { isNewRequest } from './appointmentStaffOrder.js';
 const loadVisit = async (id, customerId = null) => {
   const rows = await findVisitRowsByAnyId(id, { customerId });
   if (rows.length === 0) throw fail(MSG.MSG38);
-  return groupIntoVisits(rows)[0];
+  return visitContaining(groupIntoVisits(rows), id);
 };
 
 const sameIds = (rows, ids) => rows.length === ids.length && rows.every((row) => ids.includes(String(row._id)));
