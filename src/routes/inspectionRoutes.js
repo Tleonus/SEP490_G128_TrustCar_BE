@@ -11,16 +11,17 @@ import { verifyToken } from '../middlewares/authMiddleware.js';
 import { restrictTo } from '../middlewares/roleMiddleware.js';
 import { validate, validateParams, objectIdParamSchema } from '../middlewares/validateMiddleware.js';
 import { Roles } from '../constants/appConstants.js';
-import { quickInspectSchema, updateDraftSchema } from './inspectionSchemas.js';
+import { quickInspectSchema, rejectInspectionSchema, updateDraftSchema } from './inspectionSchemas.js';
 
 const router = Router();
 
 // All inspection routes require valid authentication
 router.use(verifyToken);
 
-// Inspectors (and admins) fill in, submit and quick-inspect; sales staff may only read reports.
-const INSPECTION_WRITERS = [Roles.INSPECTOR, Roles.ADMIN];
-const INSPECTION_READERS = [Roles.INSPECTOR, Roles.ADMIN, Roles.SALES_STAFF];
+// Sales staff (and admins) fill in, submit and quick-inspect.
+// KAN-54: INSPECTOR role merged into SALES_STAFF.
+const INSPECTION_WRITERS = [Roles.SALES_STAFF, Roles.ADMIN];
+const INSPECTION_READERS = [Roles.SALES_STAFF, Roles.ADMIN];
 const byId = validateParams(objectIdParamSchema);
 
 // POST /api/v1/inspections/cars/:id/draft — start a draft for a car
@@ -57,5 +58,15 @@ router.post('/:id/upload-signature', restrictTo(...INSPECTION_WRITERS), byId, in
 
 // POST /api/v1/inspections/:id/submit — validate, decide the CPO verdict and lock
 router.post('/:id/submit', restrictTo(...INSPECTION_WRITERS), byId, inspectionController.submitInspection);
+
+// PUT /api/v1/inspections/:id/reject — ADMIN sends a submitted biên bản back
+// to the sale staff for revision (KAN-53). Car status stays untouched.
+router.put(
+  '/:id/reject',
+  restrictTo(Roles.ADMIN),
+  byId,
+  validate(rejectInspectionSchema),
+  inspectionController.rejectInspection,
+);
 
 export default router;

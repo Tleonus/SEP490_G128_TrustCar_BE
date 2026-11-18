@@ -18,7 +18,7 @@ const photo = (inspectionId, name = 'p') =>
 let staff;
 beforeEach(async () => {
   h.reset();
-  staff = await h.loginAs('INSPECTOR');
+  staff = await h.loginAs('SALES_STAFF');
 });
 
 const createDraft = async (carId, who = staff) =>
@@ -231,16 +231,22 @@ describe('authorization', () => {
     expect((await createDraft(h.createCar(), await h.loginAs('ADMIN'))).status).toBe(201);
   });
 
-  test('SALES_STAFF can read a report but cannot create, edit, sign or submit', async () => {
+  // KAN-54: SALES_STAFF is now an inspection writer (INSPECTOR merged into SALES_STAFF)
+  test('SALES_STAFF can create, edit, sign and submit (KAN-54)', async () => {
+    const sales = await h.loginAs('SALES_STAFF');
+    expect((await createDraft(h.createCar(), sales)).status).toBe(201);
+  });
+
+  test('CUSTOMER cannot create, edit, sign or submit', async () => {
     const carId = h.createCar();
     const id = (await createDraft(carId)).body.data._id;
-    const sales = await h.loginAs('SALES_STAFF');
+    const cust = await h.loginAs('CUSTOMER');
 
-    expect((await api().get(`${BASE}/${id}`).set('Authorization', sales.auth)).status).toBe(200);
-    expect((await createDraft(h.createCar(), sales)).status).toBe(403);
-    expect((await api().patch(`${BASE}/${id}`).set('Authorization', sales.auth)
+    expect((await createDraft(h.createCar(), cust)).status).toBe(403);
+    expect((await api().get(`${BASE}/${id}`).set('Authorization', cust.auth)).status).toBe(403);
+    expect((await api().patch(`${BASE}/${id}`).set('Authorization', cust.auth)
       .send({ vehicleInfo: { confirmed: { make: 'X' } } })).status).toBe(403);
-    expect((await api().post(`${BASE}/${id}/upload-signature`).set('Authorization', sales.auth)).status).toBe(403);
-    expect((await api().post(`${BASE}/${id}/submit`).set('Authorization', sales.auth)).status).toBe(403);
+    expect((await api().post(`${BASE}/${id}/upload-signature`).set('Authorization', cust.auth)).status).toBe(403);
+    expect((await api().post(`${BASE}/${id}/submit`).set('Authorization', cust.auth)).status).toBe(403);
   });
 });

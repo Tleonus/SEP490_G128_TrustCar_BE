@@ -28,6 +28,7 @@ import {
   UPLOAD,
 } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
+import { releaseAppointmentsForCar } from './appointmentAutoCancelService.js';
 import { dispatchPriceDropAlertsSafely } from './wishlistService.js';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -264,6 +265,8 @@ export const updateCar = async ({ carId, updates, userId, ipAddress }) => {
     'transmission', 'driveType', 'mileage', 'description',
     'conditionGrade', 'registrationExpiry', 'specifications',
     'internalNotes', 'carModelRef',
+    'inventoryType', 'ownerType',
+    'internalNotes', 'carModelRef', 'marketPrice',
   ];
   allowedFields.forEach((field) => {
     if (updates[field] !== undefined) car[field] = updates[field];
@@ -336,6 +339,11 @@ export const updateCarStatus = async ({ carId, targetStatus, userId, reason, ipA
     metadata: { reason },
     ipAddress,
   });
+
+  // Test-drive bookings: a car that stops being sellable cancels its open appointments (never throws).
+  if (previousStatus === CarStatus.AVAILABLE) {
+    await releaseAppointmentsForCar({ carId: car._id, carStatus: targetStatus, userId, ipAddress });
+  }
 
   return car;
 };
@@ -475,6 +483,9 @@ export const softDeleteCar = async ({ carId, userId, ipAddress }) => {
     summary: `Vehicle ${car.vehicleCode} soft-deleted`,
     ipAddress,
   });
+
+  // Test-drive bookings: a removed car cancels its open appointments (never throws).
+  await releaseAppointmentsForCar({ carId: car._id, carStatus: 'REMOVED', userId, ipAddress });
 };
 
 export default {

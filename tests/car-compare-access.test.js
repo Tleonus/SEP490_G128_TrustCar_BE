@@ -84,12 +84,19 @@ describe('authentication and authorization (REQ-002, 003, 004)', () => {
     expect(findCalls).toHaveLength(0);
   });
 
-  test.each(['ADMIN', 'SALES_STAFF'])('AC-10: %s → 403 ROLE_INSUFFICIENT', async (roleName) => {
-    const res = await call(`?ids=${twoIds()}`, await tokenFor({ roleName }));
+  test.each(['ADMIN', 'SALES_STAFF'])('KAN-57: %s may compare → 200', async (roleName) => {
+    const [first, second] = [oid(), oid()];
+    Car.find.mockImplementationOnce((filter, projection) => {
+      findCalls.push(filter);
+      return { lean: async () => [first, second].map((id) => ({ _id: id, price: 500_000_000, floorPrice: 9, originalPrice: 9 })) };
+    });
 
-    expect(res.status).toBe(403);
-    expect(res.body.code).toBe('ROLE_INSUFFICIENT');
-    expect(findCalls).toHaveLength(0);
+    const res = await call(`?ids=${first},${second}`, await tokenFor({ roleName }));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.cars).toHaveLength(2);
+    // The allow-list mapping must drop internal pricing even if the query returned it.
+    expect(JSON.stringify(res.body)).not.toMatch(/floorPrice|originalPrice/);
   });
 
   test('AC-11: customer with an incomplete profile → 403 PROFILE_INCOMPLETE', async () => {

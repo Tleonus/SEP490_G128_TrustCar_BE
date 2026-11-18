@@ -27,7 +27,7 @@ beforeEach(() => {
   records = [];
   carUpdates = [];
   jest.spyOn(User, 'findOne').mockImplementation((filter) =>
-    lean(filter.email === 'inspector@trustcar.vn' && filter.roleName === 'INSPECTOR' && filter.isActive ? INSPECTOR : null));
+    lean(filter.email === 'inspector@trustcar.vn' && filter.roleName === 'SALES_STAFF' && filter.isActive ? INSPECTOR : null));
   jest.spyOn(Car, 'find').mockImplementation(() => lean([carA, carB]));
   jest.spyOn(Car, 'exists').mockResolvedValue(null);
   jest.spyOn(Car, 'updateOne').mockImplementation(async (filter, update) => {
@@ -42,9 +42,9 @@ beforeEach(() => {
 });
 
 describe('backfillCpoCertificates', () => {
-  test('rejects a missing or non-INSPECTOR account before touching cars', async () => {
+  test('rejects a missing or non-SALES_STAFF account before touching cars', async () => {
     await expect(backfillCpoCertificates({ inspectorEmail: '', log: quiet })).rejects.toThrow('--inspector');
-    await expect(backfillCpoCertificates({ inspectorEmail: 'admin@trustcar.vn', log: quiet })).rejects.toThrow('INSPECTOR');
+    await expect(backfillCpoCertificates({ inspectorEmail: 'admin@trustcar.vn', log: quiet })).rejects.toThrow('SALES_STAFF');
     expect(Car.find).not.toHaveBeenCalled();
   });
 

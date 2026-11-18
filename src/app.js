@@ -15,9 +15,10 @@
  *   5. Rate limiter (global request throttle)
  *   6. JSON body parser
  *   7. URL-encoded parser
- *   8. API Routes (/api/v1/*)
- *   9. 404 Not Found handler
- *  10. Global Error handler
+ *   8. Share pages (/share/car/:code) — HTML for crawlers, mounted before the API
+ *   9. API Routes (/api/v1/*)
+ *  10. 404 Not Found handler
+ *  11. Global Error handler
  */
 
 import express from 'express';
@@ -28,6 +29,7 @@ import morgan from 'morgan';
 // Route aggregator
 import apiRouter from './routes/index.js';
 import inventoryRoutes from './routes/inventoryRoutes.js';
+import shareCarRoutes from './routes/shareCarRoutes.js';
 
 // Error handlers (MUST be last in the chain)
 import { notFoundHandler, errorHandler } from './middlewares/errorMiddleware.js';
@@ -102,6 +104,11 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
  * All API routes are mounted under /api/v1 via the master router.
  * See src/routes/index.js for the full route map.
  */
+// KAN-64: crawler share pages return text/html, so they live outside /api/v1
+// and ahead of the JSON 404 handler. Helmet's CSP stays permissive enough for
+// the inline redirect script (script-src 'self' is not set by default).
+app.use(shareCarRoutes);
+
 app.use('/api/v1/inventory', inventoryRoutes);
 app.use('/api/v1', apiRouter);
 

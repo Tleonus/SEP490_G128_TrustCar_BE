@@ -317,7 +317,7 @@ describe('GET /api/v1/leads — staff pipeline', () => {
     expect(res.body.meta.total).toBe(1);
   });
 
-  test.each(['CUSTOMER', 'INSPECTOR'])('%s gets 403', async (roleName) => {
+  test.each(['CUSTOMER'])('%s gets 403', async (roleName) => {
     const res = await request(h.app)
       .get(URL)
       .set('X-Forwarded-For', h.nextIp())

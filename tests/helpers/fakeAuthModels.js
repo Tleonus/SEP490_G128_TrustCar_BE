@@ -330,7 +330,7 @@ export const setupAuthHarness = async () => {
 
   // ── Roles (fixed ids so tests can compare) ────────────────────────────────
   const roleIds = Object.fromEntries(
-    ['ADMIN', 'SALES_STAFF', 'INSPECTOR', 'CUSTOMER'].map((name) => [name, new mongoose.Types.ObjectId()])
+    ['ADMIN', 'SALES_STAFF', 'CUSTOMER'].map((name) => [name, new mongoose.Types.ObjectId()])
   );
   jest.spyOn(Role, 'findOne').mockImplementation((filter = {}) => listQuery(() => {
     const name = filter.name;

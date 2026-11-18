@@ -89,7 +89,7 @@ describe('quota per account', () => {
     expect(await statuses(() => get(CARS, { token }), LIMITS.customer + 1)).toEqual([200, 200, 429]);
   });
 
-  test.each(['SALES_STAFF', 'INSPECTOR', 'ADMIN'])('%s stops exactly at the staff limit', async (role) => {
+  test.each(['SALES_STAFF', 'ADMIN'])('%s stops exactly at the staff limit', async (role) => {
     const token = tokenFor(role);
     expect(await statuses(() => get(CARS, { token }), LIMITS.staff + 1)).toEqual([200, 200, 200, 200, 429]);
   });

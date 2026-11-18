@@ -56,7 +56,7 @@ const certifiedCar = (carOverrides = {}, recordOverrides = {}) => {
 
 beforeEach(async () => {
   h.reset();
-  const { id } = await h.createUser({ roleName: 'INSPECTOR', fullName: 'Nguyễn Văn An' });
+  const { id } = await h.createUser({ roleName: 'SALES_STAFF', fullName: 'Nguyễn Văn An' });
   inspector = { id };
 });
 

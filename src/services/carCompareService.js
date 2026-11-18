@@ -1,6 +1,6 @@
 /**
  * @file carCompareService.js
- * @description Side-by-side vehicle comparison for logged-in customers.
+ * @description Side-by-side vehicle comparison for any logged-in user (KAN-57).
  *
  * Read-only: nothing is written and no activity log is created.
  *
@@ -26,7 +26,7 @@ export const MIN_COMPARE_CARS = 2;
 /** Top-level fields exposed for comparison. */
 const BASIC_FIELDS = [
   'vehicleCode', 'make', 'model', 'variant', 'year', 'bodyType', 'fuelType',
-  'transmission', 'driveType', 'mileage', 'price', 'ownerType', 'conditionGrade',
+  'transmission', 'driveType', 'mileage', 'price', 'marketPrice', 'ownerType', 'conditionGrade',
 ];
 
 /** `specifications.*` scalar fields exposed for comparison (`features` is handled separately). */

@@ -27,7 +27,7 @@ const oid = () => new mongoose.Types.ObjectId().toString();
 
 const ALLOWED_TOP = [
   '_id', 'vehicleCode', 'make', 'model', 'variant', 'year', 'bodyType', 'fuelType', 'transmission',
-  'driveType', 'mileage', 'price', 'ownerType', 'conditionGrade', 'primaryImageUrl', 'specifications',
+  'driveType', 'mileage', 'price', 'marketPrice', 'ownerType', 'conditionGrade', 'primaryImageUrl', 'specifications',
 ];
 const ALLOWED_SPECS = [
   'color', 'interiorColor', 'numberOfSeats', 'numberOfDoors', 'engineDisplacementCC', 'horsePower',
@@ -38,7 +38,7 @@ const ALLOWED_SPECS = [
 const makeCar = (overrides = {}) => ({
   _id: oid(), vehicleCode: 'TC-2026-0001', make: 'KIA', model: 'Sonet', variant: 'Premium', year: 2022,
   bodyType: 'SUV', fuelType: 'PETROL', transmission: 'AUTOMATIC', driveType: 'FWD', mileage: 21000,
-  price: 555000000, ownerType: 'INDIVIDUAL', conditionGrade: 'B', status: 'AVAILABLE', isActive: true,
+  price: 555000000, marketPrice: 580000000, ownerType: 'INDIVIDUAL', conditionGrade: 'B', status: 'AVAILABLE', isActive: true,
   vin: 'SENTINEL-VIN', licensePlate: 'SENTINEL-PLATE', floorPrice: 111, originalPrice: 222, listedPrice: 333,
   priceDropCount: 7, daysInStock: 99, agingCategory: 'SLOW', inventoryType: 'OWNED', listedDate: new Date(),
   soldAt: new Date(), registrationExpiry: new Date(), internalNotes: 'SENTINEL-NOTE',
@@ -105,6 +105,18 @@ describe('success path (REQ-001, 006, 009, 012)', () => {
       expect(body).not.toContain(`"${key}"`);
     });
     expect(Object.keys(COMPARE_PROJECTION).filter((p) => /vin|floor|history|notes|publicId/i.test(p))).toEqual([]);
+  });
+
+  test('AC-13 (KAN-47 REQ-015): marketPrice is returned, null when the car has none', async () => {
+    const withoutMarket = makeCar();
+    delete withoutMarket.marketPrice;
+    store = [makeCar(), withoutMarket];
+    const res = await compare(store.map((x) => x._id).join(','), await customerToken());
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.cars[0].marketPrice).toBe(580000000);
+    expect(res.body.data.cars[1].marketPrice).toBeNull();
+    expect(COMPARE_PROJECTION).toMatchObject({ marketPrice: 1 });
   });
 
   test('primary image wins, then first image, then null; missing data becomes null / []', async () => {

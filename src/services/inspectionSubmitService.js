@@ -110,12 +110,12 @@ export const submitInspection = (id, userId) => withTransaction(async (session) 
  * least one (an admin may record the verdict without photos).
  *
  * @param {string} carId
- * @param {string} userId - inspector or admin performing the inspection
- * @param {string} role - role of the caller (INSPECTOR or ADMIN)
+ * @param {string} userId - staff or admin performing the inspection
+ * @param {string} role - role of the caller (SALES_STAFF or ADMIN)
  * @param {{ criteria: object, odo: number, notes?: string, evidenceImages?: string[] }} payload - Joi-validated
  * @returns {Promise<{ car: object, inspectionRecord: object }>}
  */
-export const inspectCar = async (carId, userId, role, payload) => {
+export const inspectCar = async (carId, userId, _role, payload) => {
   const images = payload.evidenceImages || [];
   const folder = quickInspectionFolder(String(carId));
   const badImages = images
@@ -126,17 +126,19 @@ export const inspectCar = async (carId, userId, role, payload) => {
       field, message: 'Image must be uploaded to this car\'s quick-inspection folder.',
     })));
   }
-  if (role === Roles.INSPECTOR && images.length === 0) {
-    throw new AppError('An inspector must attach at least one evidence photo.', 400, 'EVIDENCE_REQUIRED');
-  }
   return recordQuickInspection(carId, userId, { ...payload, evidenceImages: images });
 };
 
 /** Transactional part of the quick inspection (inputs already checked). */
+const QUICK_INSPECTABLE_CAR_STATUSES = Object.freeze([
+  ...INSPECTABLE_CAR_STATUSES,
+  CarStatus.APPROVED_CPO,
+]);
+
 const recordQuickInspection = (carId, userId, payload) => withTransaction(async (session) => {
   const car = await Car.findById(carId).session(session);
   if (!car) throw notFound('Car');
-  if (!INSPECTABLE_CAR_STATUSES.includes(car.status)) {
+  if (!QUICK_INSPECTABLE_CAR_STATUSES.includes(car.status)) {
     throw new AppError(`Car cannot be inspected in status ${car.status}.`, 400, 'INVALID_CAR_STATUS');
   }
   const draft = await InspectionRecord.findOne({ carId: car._id, status: InspectionStatus.DRAFT })

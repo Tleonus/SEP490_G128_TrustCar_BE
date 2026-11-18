@@ -12,7 +12,7 @@ import { sendSuccess } from '../utils/apiResponse.js';
 
 /**
  * @route   GET /api/v1/customer/cars/compare?ids=a,b,c
- * @access  Customer only (verifyToken + requireRole CUSTOMER)
+ * @access  Any logged-in role (KAN-57). Anonymous callers get 401.
  * @query   ids – 2 to 3 distinct vehicle _id values (already normalised to an array by validateQuery)
  * @desc    Returns the allow-listed public attributes of the selected AVAILABLE vehicles
  *          side by side, plus the ids that are no longer available.

@@ -152,6 +152,13 @@ const InspectionRecordSchema = new mongoose.Schema(
     updatedBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     submittedAt: { type: Date },
+
+    // ── Rejection trace (KAN-53) ────────────────────────────────────────────
+    // Admin may reject a SUBMITTED record back to DRAFT; the three fields
+    // below record who rejected it, when, and why (validated 10-1000 chars).
+    rejectedReason:   { type: String, trim: true, minlength: 10, maxlength: 1000 },
+    rejectedByUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectedAt:       { type: Date },
     vehicleInfo: {
       type: new mongoose.Schema(
         { original: VehicleInfoSchema, confirmed: VehicleInfoSchema },
