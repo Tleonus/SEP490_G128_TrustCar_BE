@@ -37,6 +37,13 @@ export const Lengths = Object.freeze({ SHORT: 'short', MEDIUM: 'medium' });
 export const CAPTION_TYPE = 'FB_CAPTION';
 export const OPTION_COUNT = 3;
 
+/**
+ * Bumped whenever the caption shape changes. It is part of the cache key, so a
+ * deploy that changes the wording (v2 = the bulleted "form mới") regenerates
+ * instead of serving copy written in the old format forever.
+ */
+export const CAPTION_TEMPLATE_VERSION = 'v2';
+
 /** The car has to exist and be sellable before anyone writes a post about it. */
 const SELLABLE = [CarStatus.AVAILABLE, CarStatus.APPROVED_CPO, CarStatus.RESERVED];
 
@@ -51,8 +58,13 @@ const factsFingerprint = (facts) => crypto
   .digest('hex')
   .slice(0, 16);
 
+<<<<<<< Updated upstream
 const cacheTitle = (carId, facts, { tone, platform, length }) =>
   `${carId}|${tone}|${platform}|${length}|${factsFingerprint(facts)}`;
+=======
+const cacheTitle = (facts, { tone, platform, length }) =>
+  `${CAPTION_TEMPLATE_VERSION}|${tone}|${platform}|${length}|${factsFingerprint(facts)}`;
+>>>>>>> Stashed changes
 
 const SYSTEM_PROMPT = [
   'Bạn là nhân viên marketing của TrustCar, showroom xe đã qua sử dụng có kiểm định (CPO).',
@@ -62,10 +74,26 @@ const SYSTEM_PROMPT = [
   '1. Chỉ được dùng đúng các thông tin trong phần THÔNG TIN XE bên dưới.',
   '2. KHÔNG được viết bất kỳ con số nào không có trong THÔNG TIN XE — không đoán dung tích',
   '   động cơ, số chỗ, số túi khí, mức tiêu hao nhiên liệu, năm sản xuất khác, mức giảm giá,',
-  '   số lượng xe còn lại, hay thời hạn khuyến mãi.',
-  '3. Không hứa hẹn bảo hành, không cam kết pháp lý, không nói xe "mới 100%".',
-  '4. Trả về JSON đúng một object, không kèm chữ nào khác, dạng:',
-  '   {"captions": ["...", "...", "..."], "hashtags": ["#..."], "imageSuggestion": "..."}',
+  '   số lượng xe còn lại, hay thời hạn khuyến mãi. Không tự chế giá dạng "tầm", "chỉ từ"',
+  '   nếu con số đó không xuất hiện trong THÔNG TIN XE.',
+  '3. Không hứa hẹn bảo hành, không cam kết pháp lý, không nói xe "mới 100%", không dùng từ',
+  '   "xe mới" cho xe đã qua sử dụng. Không bịa lịch sử bảo dưỡng hay tình trạng pháp lý.',
+  '',
+  'ĐỊNH DẠNG BẮT BUỘC cho mỗi caption (xuống dòng thật, không dùng markdown, không dùng emoji):',
+  '   Dòng 1: tiêu đề IN HOA, dạng "HÃNG DÒNG XE PHIÊN BẢN NĂM — CÂU MÓC NGẮN".',
+  '   (tuỳ chọn) 1 câu dẫn ngắn.',
+  '   Dòng trống.',
+  '   Các dòng gạch đầu dòng bằng "•": phiên bản/năm, số km đã đi, hộp số và nhiên liệu,',
+  '   tình trạng thẩm định. Bỏ dòng nào không có dữ liệu, tuyệt đối không bịa để đủ dòng.',
+  '   Dòng trống.',
+  '   "Giá: <giá kèm đơn vị>".',
+  '   Câu kêu gọi hành động (inbox/đặt lịch xem xe).',
+  '',
+  'Ba phương án phải khác nhau về hướng tiếp cận (lợi ích, độ tin cậy thẩm định, sự minh bạch),',
+  'không chỉ đổi câu đầu.',
+  '',
+  'Trả về JSON đúng một object, không kèm chữ nào khác, dạng:',
+  '{"captions": ["...", "...", "..."], "hashtags": ["#..."], "imageSuggestion": "..."}',
 ].join('\n');
 
 const userPrompt = (facts, { tone, platform, length }) => {
@@ -79,11 +107,12 @@ const userPrompt = (facts, { tone, platform, length }) => {
     facts.transmission ? `- Hộp số: ${facts.transmission}` : null,
     facts.fuelType ? `- Nhiên liệu: ${facts.fuelType}` : null,
     facts.bodyType ? `- Kiểu dáng: ${facts.bodyType}` : null,
-    `- Giá: ${facts.priceLabel}`,
+    `- Giá: ${facts.priceLabel}${facts.priceBandLabel ? ` (có thể viết "${facts.priceBandLabel}")` : ''}`,
     facts.cpoCode ? `- Mã chứng nhận CPO: ${facts.cpoCode}` : null,
-    facts.criteriaCount ? `- Đã đạt ${facts.criteriaCount}/${facts.criteriaCount} nhóm tiêu chí kiểm định` : null,
+    facts.criteriaCount ? `- Đã qua thẩm định đủ ${facts.criteriaCount} nhóm tiêu chí kiểm định: ${facts.criteriaLabels.join('; ')}` : null,
+    facts.conditionGrade ? `- Xếp hạng tình trạng: ${facts.conditionGrade}` : null,
     '',
-    `Giọng điệu: ${tone}. Nền tảng: ${platform}. Độ dài: ${length === 'short' ? 'ngắn (1-2 câu)' : 'trung bình (3-5 câu)'}.`,
+    `Giọng điệu: ${tone}. Nền tảng: ${platform}. Độ dài: ${length === 'short' ? 'ngắn (1-2 câu, dạng một khối gọn)' : 'trung bình, theo đúng định dạng gạch đầu dòng đã quy định'}.`,
     `Viết ${OPTION_COUNT} phương án khác nhau, mỗi phương án một hướng tiếp cận.`,
   ];
   return lines.filter((l) => l !== null).join('\n');

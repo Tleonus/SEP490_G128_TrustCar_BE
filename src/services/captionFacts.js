@@ -11,7 +11,7 @@
  * fuel type, price, CPO certificate code, number of passed criteria groups.
  */
 
-import { formatSharePrice, resolveShareImage } from '../utils/shareFormat.js';
+import { formatSharePrice, formatSharePriceBand, resolveShareImage } from '../utils/shareFormat.js';
 import { Transmission, FuelType, BodyType } from '../constants/appConstants.js';
 import { getChecklist } from '../config/inspectionChecklist.js';
 
@@ -46,12 +46,14 @@ const BODY_LABEL = {
  * @property {string}  make, model, variant
  * @property {number}  year, mileage, price
  * @property {string}  priceLabel          e.g. "520 triệu"
+ * @property {string}  priceBandLabel      e.g. "tầm 500 triệu" — a bound on priceLabel, not a second price
  * @property {?string} transmission        Vietnamese label
  * @property {?string} fuelType            Vietnamese label
  * @property {?string} bodyType            Vietnamese label
  * @property {?string} conditionGrade      A/B/C/D
  * @property {?string} cpoCode             CPO-YYYYMMDD-XXXX
  * @property {number}  criteriaCount       passed criteria groups (0 when not certified)
+ * @property {string[]} criteriaLabels     the labels of those groups, in checklist order
  * @property {?string} imageUrl            social image first, then the primary image
  */
 
@@ -59,23 +61,29 @@ const BODY_LABEL = {
  * @param {object} car - a Car document or lean object
  * @returns {CaptionFacts}
  */
-export const buildCaptionFacts = (car) => ({
-  make: car.make,
-  model: car.model,
-  variant: car.variant || null,
-  year: car.year,
-  mileage: car.mileage ?? 0,
-  price: car.price,
-  priceLabel: formatSharePrice(car.price),
-  transmission: TRANSMISSION_LABEL[car.transmission] || null,
-  fuelType: FUEL_LABEL[car.fuelType] || null,
-  bodyType: BODY_LABEL[car.bodyType] || null,
-  conditionGrade: car.conditionGrade || null,
-  cpoCode: car.cpoCertificateId || null,
+export const buildCaptionFacts = (car) => {
   // A certified car passes all five groups; an uncertified one is not advertised as CPO.
-  criteriaCount: car.cpoCertificateId ? (getChecklist() || []).length : 0,
-  imageUrl: resolveShareImage(car) || null,
-});
+  const groups = car.cpoCertificateId ? (getChecklist() || []) : [];
+
+  return {
+    make: car.make,
+    model: car.model,
+    variant: car.variant || null,
+    year: car.year,
+    mileage: car.mileage ?? 0,
+    price: car.price,
+    priceLabel: formatSharePrice(car.price),
+    priceBandLabel: formatSharePriceBand(car.price),
+    transmission: TRANSMISSION_LABEL[car.transmission] || null,
+    fuelType: FUEL_LABEL[car.fuelType] || null,
+    bodyType: BODY_LABEL[car.bodyType] || null,
+    conditionGrade: car.conditionGrade || null,
+    cpoCode: car.cpoCertificateId || null,
+    criteriaCount: groups.length,
+    criteriaLabels: groups.map((group) => group.label),
+    imageUrl: resolveShareImage(car) || null,
+  };
+};
 
 /** "TOYOTA Vios 1.5G 2020" — the title every caption is built around. */
 export const factsTitle = (facts) =>
