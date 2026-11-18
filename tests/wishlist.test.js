@@ -15,9 +15,16 @@ const { jest } = await import('@jest/globals');
 const { signAccessToken } = await import('../src/utils/authTokens.js');
 const { default: Car } = await import('../src/models/Car.js');
 const { default: SavedCar } = await import('../src/models/SavedCar.js');
+const { default: ActivityLog } = await import('../src/models/ActivityLog.js');
 const { default: PriceHistory } = await import('../src/models/PriceHistory.js');
-const { notifyPriceDropForCar, MAX_WISHLIST_ITEMS } = await import('../src/services/wishlistService.js');
+const {
+  notifyPriceDropForCar,
+  dispatchPriceDropAlertsSafely,
+  MAX_WISHLIST_ITEMS,
+} = await import('../src/services/wishlistService.js');
 const { WISHLIST_CAR_PROJECTION } = await import('../src/repositories/wishlistRepository.js');
+const { ActivityEventType } = await import('../src/constants/appConstants.js');
+const activityLogSpy = jest.spyOn(ActivityLog, 'log').mockResolvedValue(undefined);
 
 const oid = () => new mongoose.Types.ObjectId().toString();
 
@@ -371,6 +378,7 @@ const authHeaders = (token) => ({
 
 beforeEach(() => {
   h.reset();
+  activityLogSpy.mockClear();
   carStore.clear();
   savedStore.clear();
   priceHistoryStore.clear();
@@ -478,6 +486,61 @@ describe('GET /api/v1/public/wishlist/preview (Guest localStorage mode)', () => 
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('VALIDATION_ERROR');
     expect(carQueryCalls).toBe(0);
+  });
+
+  test('deduplicates guest IDs case-insensitively and accepts exactly 50 unique IDs', async () => {
+    const car = putCar();
+    const duplicateRes = await request(h.app)
+      .get(PREVIEW_URL)
+      .query({ ids: `${String(car._id).toUpperCase()},${car._id}` })
+      .set('X-Forwarded-For', h.nextIp());
+
+    expect(duplicateRes.status).toBe(200);
+    expect(duplicateRes.body.data.cars.map((item) => item._id)).toEqual([String(car._id)]);
+    expect(duplicateRes.body.data.unavailableIds).toEqual([]);
+
+    const fiftyIds = Array.from({ length: 50 }, () => oid());
+    const atLimit = await request(h.app)
+      .get(PREVIEW_URL)
+      .query({ ids: fiftyIds.join(',') })
+      .set('X-Forwarded-For', h.nextIp());
+
+    expect(atLimit.status).toBe(200);
+    expect(atLimit.body.data.unavailableIds).toHaveLength(50);
+  });
+
+  test('rejects guest preview over 50 unique IDs or over the query length limit', async () => {
+    const fiftyOneIds = Array.from({ length: 51 }, () => oid());
+    const tooMany = await request(h.app)
+      .get(PREVIEW_URL)
+      .query({ ids: fiftyOneIds.join(',') })
+      .set('X-Forwarded-For', h.nextIp());
+    expect(tooMany.status).toBe(422);
+    expect(tooMany.body.code).toBe('VALIDATION_ERROR');
+
+    const repeatedId = oid();
+    const tooLongIds = Array.from({ length: 61 }, () => repeatedId).join(',');
+    expect(tooLongIds.length).toBeGreaterThan(1500);
+    expect(new Set(tooLongIds.split(',')).size).toBe(1);
+    const tooLong = await request(h.app)
+      .get(PREVIEW_URL)
+      .query({ ids: tooLongIds })
+      .set('X-Forwarded-For', h.nextIp());
+    expect(tooLong.status).toBe(422);
+    expect(tooLong.body.code).toBe('VALIDATION_ERROR');
+    expect(carQueryCalls).toBe(0);
+  });
+
+  test('treats inactive vehicles as unavailable in guest preview', async () => {
+    const inactive = putCar({ isActive: false });
+    const res = await request(h.app)
+      .get(PREVIEW_URL)
+      .query({ ids: String(inactive._id) })
+      .set('X-Forwarded-For', h.nextIp());
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.cars).toEqual([]);
+    expect(res.body.data.unavailableIds).toEqual([String(inactive._id)]);
   });
 });
 
@@ -611,8 +674,9 @@ describe('Customer Saved Cars Wishlist CRUD & Price Comparison', () => {
     const { token } = await createCustomerAuth();
     const sold = putCar({ status: 'SOLD' });
     const incoming = putCar({ status: 'INCOMING' });
+    const inactive = putCar({ isActive: false });
 
-    for (const targetId of [sold._id, incoming._id, oid()]) {
+    for (const targetId of [sold._id, incoming._id, inactive._id, oid()]) {
       const res = await request(h.app)
         .post(BASE)
         .set(authHeaders(token))
@@ -621,6 +685,49 @@ describe('Customer Saved Cars Wishlist CRUD & Price Comparison', () => {
       expect(res.body.code).toBe('NOT_FOUND');
     }
     expect(savedStore.size).toBe(0);
+  });
+
+  test('uses stable newest-first pagination defaults and rejects invalid page/limit values', async () => {
+    const { userId, token } = await createCustomerAuth();
+    const createdAt = new Date('2026-01-01T00:00:00.000Z');
+    const savedIds = [
+      new mongoose.Types.ObjectId('000000000000000000000001'),
+      new mongoose.Types.ObjectId('000000000000000000000002'),
+      new mongoose.Types.ObjectId('000000000000000000000003'),
+    ];
+
+    for (let index = 0; index < savedIds.length; index += 1) {
+      const car = putCar();
+      await SavedCar.create({
+        _id: savedIds[index],
+        user: userId,
+        car: car._id,
+        priceAtSave: car.price,
+        createdAt,
+      });
+    }
+
+    const defaultPage = await request(h.app).get(BASE).set(authHeaders(token));
+    expect(defaultPage.status).toBe(200);
+    expect(defaultPage.body.meta).toMatchObject({ page: 1, limit: 20, total: 3, totalPages: 1 });
+    expect(defaultPage.body.data.map((item) => item._id)).toEqual(
+      savedIds.map(String).reverse()
+    );
+
+    const secondPage = await request(h.app)
+      .get(BASE)
+      .query({ page: 2, limit: 1 })
+      .set(authHeaders(token));
+    expect(secondPage.status).toBe(200);
+    expect(secondPage.body.data.map((item) => item._id)).toEqual([String(savedIds[1])]);
+    expect(secondPage.body.meta).toMatchObject({ page: 2, limit: 1, total: 3, totalPages: 3, hasPrev: true });
+
+    for (const query of [{ page: 0 }, { page: 1.5 }, { limit: 0 }, { limit: 101 }]) {
+      const invalid = await request(h.app).get(BASE).query(query).set(authHeaders(token));
+      expect(invalid.status).toBe(422);
+      expect(invalid.body.code).toBe('VALIDATION_ERROR');
+    }
+    expect(savedStore.size).toBe(3);
   });
 
   test('enforces MAX_WISHLIST_ITEMS (100) per user with 422 WISHLIST_LIMIT_EXCEEDED', async () => {
@@ -697,6 +804,63 @@ describe('Customer Saved Cars Wishlist CRUD & Price Comparison', () => {
     expect(deleteOwn.status).toBe(200);
     expect(deleteOwn.body.data).toEqual({ carId: String(car1._id), removed: true });
     expect(savedStore.size).toBe(1); // Customer B's item remains untouched
+
+    const deleteMissing = await request(h.app)
+      .delete(`${BASE}/${car1._id}`)
+      .set(authHeaders(customerA.token));
+    expect(deleteMissing.status).toBe(404);
+    expect(deleteMissing.body.code).toBe('WISHLIST_ITEM_NOT_FOUND');
+    expect(savedStore.size).toBe(1);
+  });
+
+  test('writes the existing audit events for successful save, sync, and delete operations', async () => {
+    const { token, userId } = await createCustomerAuth();
+    activityLogSpy.mockClear();
+    const savedCar = putCar();
+    const syncCar = putCar();
+
+    const saved = await request(h.app)
+      .post(BASE)
+      .set(authHeaders(token))
+      .send({ carId: savedCar._id });
+    expect(saved.status).toBe(201);
+
+    const synced = await request(h.app)
+      .post(`${BASE}/sync`)
+      .set(authHeaders(token))
+      .send({ carIds: [syncCar._id] });
+    expect(synced.status).toBe(200);
+
+    const deleted = await request(h.app)
+      .delete(`${BASE}/${savedCar._id}`)
+      .set(authHeaders(token));
+    expect(deleted.status).toBe(200);
+
+    const auditEntries = activityLogSpy.mock.calls.map(([entry]) => entry);
+    expect(auditEntries.map((entry) => entry.eventType)).toEqual([
+      ActivityEventType.CAR_SAVED_WISHLIST,
+      ActivityEventType.WISHLIST_SYNCED,
+      ActivityEventType.CAR_REMOVED_WISHLIST,
+    ]);
+    expect(auditEntries.map((entry) => String(entry.performedBy))).toEqual([
+      userId,
+      userId,
+      userId,
+    ]);
+    expect(auditEntries.map(({ targetModel, targetId }) => [targetModel, String(targetId)])).toEqual([
+      ['Car', String(savedCar._id)],
+      ['User', String(userId)],
+      ['Car', String(savedCar._id)],
+    ]);
+    expect(auditEntries.map((entry) => entry.summary)).toEqual([
+      `Customer saved vehicle ${savedCar.vehicleCode} to wishlist`,
+      'Synced 1 guest localStorage vehicle(s) to customer wishlist',
+      `Customer removed vehicle ${savedCar._id} from wishlist`,
+    ]);
+    auditEntries.forEach((entry) => {
+      expect(entry).not.toHaveProperty('ipAddress');
+      expect(entry).not.toHaveProperty('userAgent');
+    });
   });
 });
 
@@ -706,6 +870,26 @@ describe('Customer Saved Cars Wishlist CRUD & Price Comparison', () => {
 
 describe('POST /api/v1/customer/wishlist/sync (Guest localStorage -> Account DB)', () => {
   const SYNC_URL = '/api/v1/customer/wishlist/sync';
+
+  test('reports an inactive vehicle as unavailable during sync', async () => {
+    const { token } = await createCustomerAuth();
+    const inactiveCar = putCar({ isActive: false });
+
+    const res = await request(h.app)
+      .post(SYNC_URL)
+      .set(authHeaders(token))
+      .send({ carIds: [inactiveCar._id] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      syncedCount: 0,
+      alreadySavedCount: 0,
+      unavailableIds: [String(inactiveCar._id)],
+      clearLocalStorage: true,
+      items: [],
+    });
+    expect(savedStore.size).toBe(0);
+  });
 
   test('syncs available localStorage cars, preserves already-saved priceAtSave, lists unavailableIds, and instructs client to clear localStorage', async () => {
     const { userId, token } = await createCustomerAuth();
@@ -721,7 +905,7 @@ describe('POST /api/v1/customer/wishlist/sync (Guest localStorage -> Account DB)
       .post(SYNC_URL)
       .set(authHeaders(token))
       .send({
-        carIds: [newCar1._id, alreadyCar._id, soldCar._id, newCar2._id, newCar1._id],
+        carIds: [String(newCar1._id).toUpperCase(), alreadyCar._id, soldCar._id, newCar2._id, newCar1._id],
         priceAlertEnabled: true,
       });
 
@@ -741,6 +925,114 @@ describe('POST /api/v1/customer/wishlist/sync (Guest localStorage -> Account DB)
     const preserved = res.body.data.items.find((i) => i.carId === String(alreadyCar._id));
     expect(preserved.priceAtSave).toBe(640000000);
     expect(preserved.priceDropped).toBe(true);
+    expect(res.body.data.items.find((i) => i.carId === String(newCar1._id)).priceAtSave).toBe(520000000);
+    expect(res.body.data.items.find((i) => i.carId === String(newCar2._id)).priceAtSave).toBe(810000000);
+  });
+
+  test('succeeds with an empty ID list and clears guest storage', async () => {
+    const { token } = await createCustomerAuth();
+    const res = await request(h.app)
+      .post(SYNC_URL)
+      .set(authHeaders(token))
+      .send({ carIds: [] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      syncedCount: 0,
+      alreadySavedCount: 0,
+      unavailableIds: [],
+      clearLocalStorage: true,
+      items: [],
+    });
+    expect(savedStore.size).toBe(0);
+  });
+
+  test('accepts 50 IDs and rejects malformed or 51 IDs before writing', async () => {
+    const { token } = await createCustomerAuth();
+    const fiftyIds = Array.from({ length: 50 }, () => oid());
+    const atLimit = await request(h.app)
+      .post(SYNC_URL)
+      .set(authHeaders(token))
+      .send({ carIds: fiftyIds });
+    expect(atLimit.status).toBe(200);
+    expect(atLimit.body.data.unavailableIds).toHaveLength(50);
+    expect(atLimit.body.data.clearLocalStorage).toBe(true);
+
+    const malformed = await request(h.app)
+      .post(SYNC_URL)
+      .set(authHeaders(token))
+      .send({ carIds: [oid(), 'invalid-id'] });
+    expect(malformed.status).toBe(422);
+    expect(malformed.body.code).toBe('VALIDATION_ERROR');
+
+    const tooMany = await request(h.app)
+      .post(SYNC_URL)
+      .set(authHeaders(token))
+      .send({ carIds: Array.from({ length: 51 }, () => oid()) });
+    expect(tooMany.status).toBe(422);
+    expect(tooMany.body.code).toBe('VALIDATION_ERROR');
+    expect(savedStore.size).toBe(0);
+  });
+
+  test('rejects a sync that exceeds the account quota without saving any item from the request', async () => {
+    const { userId, token } = await createCustomerAuth();
+    for (let index = 0; index < MAX_WISHLIST_ITEMS - 1; index += 1) {
+      const car = putCar();
+      await SavedCar.create({ user: userId, car: car._id, priceAtSave: car.price });
+    }
+    const newCars = [putCar(), putCar()];
+
+    const res = await request(h.app)
+      .post(SYNC_URL)
+      .set(authHeaders(token))
+      .send({ carIds: newCars.map((car) => car._id) });
+
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('WISHLIST_LIMIT_EXCEEDED');
+    expect(res.body.data).toBeUndefined();
+    expect(savedStore.size).toBe(MAX_WISHLIST_ITEMS - 1);
+    expect([...savedStore.values()].some((saved) => newCars.some((car) => String(car._id) === String(saved.car)))).toBe(false);
+  });
+
+  test('keeps earlier writes on a storage failure and makes a same-ID retry idempotent', async () => {
+    const { userId, token } = await createCustomerAuth();
+    const cars = [putCar(), putCar(), putCar()];
+    const createSpy = SavedCar.create;
+    const originalCreate = createSpy.getMockImplementation();
+    let calls = 0;
+    createSpy.mockImplementation(async (...args) => {
+      calls += 1;
+      if (calls === 2) throw new Error('simulated storage failure');
+      return originalCreate(...args);
+    });
+
+    let failedSync;
+    try {
+      failedSync = await request(h.app)
+        .post(SYNC_URL)
+        .set(authHeaders(token))
+        .send({ carIds: cars.map((car) => car._id) });
+    } finally {
+      createSpy.mockImplementation(originalCreate);
+    }
+
+    expect(failedSync.status).toBe(500);
+    expect(failedSync.body.data).toBeUndefined();
+    expect(failedSync.body).not.toHaveProperty('clearLocalStorage');
+    expect(savedStore.size).toBe(1);
+
+    const firstSaved = [...savedStore.values()][0];
+    const firstPriceAtSave = firstSaved.priceAtSave;
+    const retry = await request(h.app)
+      .post(SYNC_URL)
+      .set(authHeaders(token))
+      .send({ carIds: cars.map((car) => car._id) });
+
+    expect(retry.status).toBe(200);
+    expect(retry.body.data).toMatchObject({ syncedCount: 2, alreadySavedCount: 1, clearLocalStorage: true });
+    expect(retry.body.data.items).toHaveLength(3);
+    expect(savedStore.size).toBe(3);
+    expect(savedStore.get(String(firstSaved._id)).priceAtSave).toBe(firstPriceAtSave);
   });
 });
 
@@ -835,6 +1127,10 @@ describe('Price Drop Alerts engine & customer alert endpoints', () => {
       carStore.get(String(car._id)).price = 660000000;
       const r2 = await notifyPriceDropForCar({ carId: car._id, oldPrice: 680000000, newPrice: 660000000 });
       expect(r2).toEqual({ notifiedCount: 1, emailedCount: 0 });
+      expect(errorSpy.mock.calls).toEqual([
+        ['[ERROR]', 'Price drop alert email delivery failed'],
+        ['[ERROR]', 'Price drop alert email delivery failed'],
+      ]);
     } finally {
       errorSpy.mockRestore();
     }
@@ -844,6 +1140,30 @@ describe('Price Drop Alerts engine & customer alert endpoints', () => {
       .set(authHeaders(customer.token));
     expect(markAll.status).toBe(200);
     expect(markAll.body.data).toEqual({ markedCount: 2 });
+  });
+
+  test('does not log raw errors when price-drop alert dispatch fails', async () => {
+    const sensitiveError = 'SMTP credential and provider response must not be logged';
+    jest.spyOn(Car, 'findById').mockImplementationOnce(() => {
+      throw new Error(sensitiveError);
+    });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const result = await dispatchPriceDropAlertsSafely({
+        carId: oid(),
+        oldPrice: 700000000,
+        newPrice: 680000000,
+      });
+
+      expect(result).toEqual({ notifiedCount: 0, emailedCount: 0 });
+      expect(errorSpy.mock.calls).toEqual([
+        ['[ERROR]', 'Price drop alert dispatch failed'],
+      ]);
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(sensitiveError);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   test('does not send alerts on price increase or when car is not AVAILABLE', async () => {

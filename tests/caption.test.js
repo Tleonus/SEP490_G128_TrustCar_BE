@@ -282,6 +282,35 @@ describe('generateCaptions', () => {
     expect(llm.complete).toHaveBeenCalledTimes(2);
   });
 
+  test('changing the image invalidates the cache', async () => {
+    llm.configured = true;
+    llm.reply = llmReply(['Vios 2020, giĂ¡ 520 triá»‡u.']);
+    await generate();
+
+    putCar({ images: [{ url: 'https://res.cloudinary.com/demo/image/upload/v1/trustcar/cars/vios-new.jpg', isPrimary: true }] });
+    const result = await generate();
+
+    expect(result.cached).toBe(false);
+    expect(result.imageSuggestion.url).toContain('vios-new.jpg');
+    expect(llm.complete).toHaveBeenCalledTimes(2);
+  });
+
+  test('cars with identical facts do not share cached captions or images', async () => {
+    llm.configured = true;
+    llm.reply = llmReply(['Vios 2020, giĂ¡ 520 triá»‡u.']);
+    const first = await generate();
+    const otherCarId = '65f000000000000000000043';
+    carStore.set(otherCarId, { ...baseCar, _id: otherCarId });
+
+    const second = await generate({ carId: otherCarId });
+
+    expect(first.carId).toBe(CAR_ID);
+    expect(second.cached).toBe(false);
+    expect(second.carId).toBe(otherCarId);
+    expect(contentStore).toHaveLength(2);
+    expect(llm.complete).toHaveBeenCalledTimes(2);
+  });
+
   test('different tone/platform/length are cached separately', async () => {
     await generate({ tone: 'friendly' });
     await generate({ tone: 'urgent' });
@@ -313,5 +342,16 @@ describe('generateCaptions', () => {
 
     expect(result.hashtags.join(' ')).not.toContain('Giam30Trieu');
     expect(result.hashtags.some((t) => t.includes('Vios'))).toBe(true);
+  });
+
+  test('hashtags with invented numbers are removed even when enough safe tags remain', async () => {
+    llm.configured = true;
+    llm.reply = llmReply(['Vios 2020, 50.000 km, giĂ¡ 520 triá»‡u.'], {
+      hashtags: ['#Vios', '#Giam30Trieu', '#TrustCar'],
+    });
+
+    const result = await generate();
+
+    expect(result.hashtags).toEqual(['#Vios', '#TrustCar']);
   });
 });

@@ -76,6 +76,13 @@ test('matches comma-separated lists with $in', async () => {
   });
 });
 
+test('filters and summarizes drive type and condition grade', async () => {
+  const result = await getAvailableCars({ driveType: 'AWD', conditionGrade: 'A' });
+
+  expect(filterOf()).toMatchObject({ driveType: 'AWD', conditionGrade: 'A' });
+  expect(result.filterSummary).toMatchObject({ driveType: ['AWD'], conditionGrade: ['A'] });
+});
+
 test('filters colour, year and mileage', async () => {
   await getAvailableCars({ color: 'Đỏ', minYear: '2020', maxYear: '2024', maxMileage: '50000' });
 

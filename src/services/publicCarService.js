@@ -324,6 +324,8 @@ const buildPublicFilter = (query) => {
   if (query.bodyType) filter.bodyType = matchOneOrMany(query.bodyType, { uppercase: true });
   if (query.fuelType) filter.fuelType = matchOneOrMany(query.fuelType, { uppercase: true });
   if (query.transmission) filter.transmission = matchOneOrMany(query.transmission, { uppercase: true });
+  if (query.driveType) filter.driveType = matchOneOrMany(query.driveType, { uppercase: true });
+  if (query.conditionGrade) filter.conditionGrade = matchOneOrMany(query.conditionGrade, { uppercase: true });
 
   // ── Colour lives inside specifications ───────────────────────────────
   if (query.color) {
@@ -426,6 +428,8 @@ export const getAvailableCars = async (query) => {
   if (query.bodyType) filterSummary.bodyType = splitList(query.bodyType);
   if (query.fuelType) filterSummary.fuelType = splitList(query.fuelType);
   if (query.transmission) filterSummary.transmission = splitList(query.transmission);
+  if (query.driveType) filterSummary.driveType = splitList(query.driveType);
+  if (query.conditionGrade) filterSummary.conditionGrade = splitList(query.conditionGrade);
   if (query.color) filterSummary.color = query.color;
   const minPrice = firstParam(query, 'minPrice', 'priceMin');
   const maxPrice = firstParam(query, 'maxPrice', 'priceMax');

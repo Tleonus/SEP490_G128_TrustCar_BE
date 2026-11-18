@@ -22,11 +22,19 @@ import rateLimit from 'express-rate-limit';
 import { Roles } from '../constants/appConstants.js';
 import { TokenType, verifyTokenOfType } from '../utils/authTokens.js';
 import { extractToken } from './authMiddleware.js';
+import { sendError, WISHLIST_ERROR_CONTRACT } from '../utils/apiResponse.js';
 
 const WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX = 30;
 const LOGOUT_PATH = '/api/v1/auth/logout';
 const PROFILE_PATH = '/api/v1/auth/me';
+const WISHLIST_PATH = /^\/api\/v1\/(?:customer|public)\/wishlist(?:\/|$)/i;
+
+/** Mark Wishlist paths before app-level middleware can return an error. */
+export const markWishlistErrorContract = (req, res, next) => {
+  if (WISHLIST_PATH.test(req.path)) res.locals.errorContract = WISHLIST_ERROR_CONTRACT;
+  next();
+};
 
 /**
  * @param {string|undefined} value - Raw environment value.
@@ -80,6 +88,12 @@ export const createGlobalLimiter = (limits = limitsFromEnv()) => rateLimit({
   skip: isLogout,
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res, _next, options) => {
+    if (res.locals?.errorContract === WISHLIST_ERROR_CONTRACT) {
+      return sendError(res, options.statusCode, options.message.message, options.message.code);
+    }
+    return res.status(options.statusCode).send(options.message);
+  },
   message: {
     success: false,
     message: 'Too many requests. Please try again later.',

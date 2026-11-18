@@ -40,19 +40,19 @@ export const OPTION_COUNT = 3;
 /** The car has to exist and be sellable before anyone writes a post about it. */
 const SELLABLE = [CarStatus.AVAILABLE, CarStatus.APPROVED_CPO, CarStatus.RESERVED];
 
-/** Fingerprint of everything the prompt can see (imageUrl excluded: it is cosmetic). */
+/** Fingerprint of every fact that affects the generated caption or returned image. */
 const factsFingerprint = (facts) => crypto
   .createHash('sha256')
   .update(JSON.stringify([
     facts.make, facts.model, facts.variant, facts.year, facts.mileage, facts.price,
     facts.transmission, facts.fuelType, facts.bodyType, facts.conditionGrade,
-    facts.cpoCode, facts.criteriaCount,
+    facts.cpoCode, facts.criteriaCount, facts.imageUrl,
   ]))
   .digest('hex')
   .slice(0, 16);
 
-const cacheTitle = (facts, { tone, platform, length }) =>
-  `${tone}|${platform}|${length}|${factsFingerprint(facts)}`;
+const cacheTitle = (carId, facts, { tone, platform, length }) =>
+  `${carId}|${tone}|${platform}|${length}|${factsFingerprint(facts)}`;
 
 const SYSTEM_PROMPT = [
   'Bạn là nhân viên marketing của TrustCar, showroom xe đã qua sử dụng có kiểm định (CPO).',
@@ -152,7 +152,7 @@ export const generateCaptions = async ({ carId, tone = Tones.PROFESSIONAL, platf
 
   const facts = buildCaptionFacts(car);
   const options = { tone, platform, length };
-  const title = cacheTitle(facts, options);
+  const title = cacheTitle(carId, facts, options);
 
   const cached = await readCache(title);
   if (cached) {
@@ -192,9 +192,7 @@ export const generateCaptions = async ({ carId, tone = Tones.PROFESSIONAL, platf
 
   // Hashtags are also model output, so the same rule applies: no invented digits.
   const safeTags = hashtags.filter((tag) => !/\d/.test(tag) || allowed.has(tag.replace(/\D/g, '')));
-  if (safeTags.length < 2) {
-    hashtags = templateHashtags(facts, platform);
-  }
+  hashtags = safeTags.length >= 2 ? safeTags : templateHashtags(facts, platform);
 
   const payload = {
     captions,

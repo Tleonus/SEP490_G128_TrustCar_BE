@@ -16,11 +16,17 @@ import { verifyToken } from '../middlewares/authMiddleware.js';
 import { requireRole } from '../middlewares/roleMiddleware.js';
 import { validate, validateQuery, validateParams } from '../middlewares/validateMiddleware.js';
 import { Roles, PAGINATION } from '../constants/appConstants.js';
+import { WISHLIST_ERROR_CONTRACT } from '../utils/apiResponse.js';
 
 const router = Router();
 
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 const MAX_SYNC_IDS = 50;
+
+router.use((_req, res, next) => {
+  res.locals.errorContract = WISHLIST_ERROR_CONTRACT;
+  next();
+});
 
 // All wishlist persistence & price-alert routes require a logged-in CUSTOMER
 router.use(verifyToken, requireRole(Roles.CUSTOMER));
