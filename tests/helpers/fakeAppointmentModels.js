@@ -197,8 +197,9 @@ export const setupAppointmentFakes = async () => {
       throw duplicateKey('appointmentCode_1', { appointmentCode: 1 });
     }
     const raw = doc.toObject();
-    raw.createdAt = state.now();
-    raw.updatedAt = raw.createdAt;
+    // Like Mongoose timestamps: an explicit `createdAt` on a new document is kept.
+    raw.createdAt = data.createdAt ? new Date(data.createdAt) : state.now();
+    raw.updatedAt = state.now();
     state.appointments.push(raw);
     try { assertUnique(raw); } catch (clash) { state.appointments.pop(); throw clash; }
     track(session, keyOf('Appointment', raw), () => {

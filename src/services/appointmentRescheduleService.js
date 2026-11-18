@@ -118,7 +118,8 @@ const moveVisit = async ({ visit, scheduledAt, actor, userId, ipAddress, now }) 
   const previousVisitCode = visitCodeOf(visit.rows);
   await logRescheduled({ newRows: written, previousCode: previousVisitCode, newCode, fromAt: visit.scheduledAt, toAt: scheduledAt, userId, ipAddress });
   const carsById = new Map(cars.map((car) => [String(car._id), car]));
-  dispatchMail({
+  // Only a move made by staff is e-mailed; a customer moving their own visit sees it on screen.
+  if (actor === Actor.STAFF) dispatchMail({
     event: MailEvent.RESCHEDULED,
     customerId: visit.customer,
     data: {
@@ -148,6 +149,7 @@ export const rescheduleMyVisit = async ({ customerId, userId, id, scheduledAt, i
   if (!customerId) throw fail(MSG.MSG31);
   const visit = await loadVisit(id, customerId);
   if (rescheduleBlock(visit, 0, now) === 'NOT_ALLOWED') throw fail(MSG.MSG85);
+  if (rescheduleBlock(visit, 0, now) === 'CONFIRMED') throw fail(MSG.MSG89);
   const count = (await countReschedules([visit])).get(visit.visitId);
   if (rescheduleBlock(visit, count, now) === 'LIMIT') throw fail(MSG.MSG86);
   assertBookableTime(scheduledAt, now);

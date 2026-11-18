@@ -15,6 +15,7 @@ import { validateParams, objectIdParamSchema } from '../middlewares/validateMidd
 import { Roles } from '../constants/appConstants.js';
 import {
   validateBodyStrict, validateQueryStrict, createSchema, slotsQuery, customerListQuery, cancelSchema, rescheduleSchema,
+  addCarsSchema,
 } from './appointmentSchemas.js';
 
 const router = Router();
@@ -47,6 +48,14 @@ router.patch(
   validateParams(objectIdParamSchema),
   validateBodyStrict(rescheduleSchema),
   controller.rescheduleMine,
+);
+
+/** @route POST /customer/appointments/:id/cars  { carIds[1–3] } — only while the visit is PENDING */
+router.post(
+  '/:id/cars',
+  validateParams(objectIdParamSchema),
+  validateBodyStrict(addCarsSchema),
+  controller.addCarsMine,
 );
 
 export default router;

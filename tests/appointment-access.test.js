@@ -123,10 +123,9 @@ describe('end-to-end flow', () => {
     const confirmed = await send('patch', `/appointments/${visit.visitId}/status`, staff, { status: 'CONFIRMED' });
     expect([confirmed.status, confirmed.body.data.visit.status]).toEqual([200, 'CONFIRMED']);
 
+    // Confirmed: the customer must call the showroom; cancelling online is refused.
     const cancelled = await send('patch', `/customer/appointments/${visit.visitId}/cancel`, token, { reason: 'Bận' });
-    expect(cancelled.status).toBe(200);
-    expect(cancelled.body.data.visit).toMatchObject({ status: 'CANCELLED', cancellationType: 'CUSTOMER', isLateCancellation: false });
-    expect((await send('patch', `/customer/appointments/${visit.visitId}/cancel`, token, {})).body.code).toBe('APPOINTMENT_CANCELLED_ALREADY');
+    expect([cancelled.status, cancelled.body.code]).toEqual([409, 'APPOINTMENT_CONFIRMED_CALL_SHOWROOM']);
   });
 
   test('another customer cannot read or cancel my visit (404)', async () => {
@@ -203,7 +202,7 @@ describe('1.1.0 end-to-end: reschedule, staff grid, book on behalf', () => {
     // The reminder filter accepts a boolean and answers (nothing is within 30 minutes of now).
     const reminders = await send('get', '/appointments?needsReminderCall=true', staff);
     expect([reminders.status, reminders.body.data]).toEqual([200, []]);
-    expect(await fakes.flushMail()).toHaveLength(4); // booked, moved, booked for, moved by staff
+    expect(await fakes.flushMail()).toHaveLength(2); // booked for, moved by staff (the customer's own booking and move send nothing)
   });
 
   test('a CUSTOMER cannot use the new staff endpoints', async () => {
