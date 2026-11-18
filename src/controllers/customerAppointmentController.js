@@ -10,12 +10,14 @@
  * - GET   /:id         → getMine
  * - PATCH /:id/cancel  → cancelMine
  * - PATCH /:id/reschedule → rescheduleMine
+ * - POST  /:id/cars    → addCarsMine (visit still PENDING)
  *
  * Ref: .sdd/features/test-drive-booking/SPEC.md (REQ-003, 013…017)
  */
 
 import { createVisit } from '../services/appointmentBookingService.js';
 import { rescheduleMyVisit } from '../services/appointmentRescheduleService.js';
+import { addCarsToMyVisit } from '../services/appointmentAddCarService.js';
 import { getSlots as loadSlots } from '../services/appointmentSlotService.js';
 import { listMyVisits, getMyVisit, cancelMyVisit } from '../services/appointmentCustomerService.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
@@ -81,4 +83,13 @@ export const rescheduleMine = async (req, res, next) => {
   }
 };
 
-export default { getSlots, createVisitHandler, listMine, getMine, cancelMine, rescheduleMine };
+export const addCarsMine = async (req, res, next) => {
+  try {
+    const visit = await addCarsToMyVisit({ ...who(req), id: req.params.id, carIds: req.body.carIds, ipAddress: req.ip });
+    return sendSuccess(res, 200, 'Vehicles added to the visit.', { visit });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export default { getSlots, createVisitHandler, listMine, getMine, cancelMine, rescheduleMine, addCarsMine };

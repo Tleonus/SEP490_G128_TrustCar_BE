@@ -18,8 +18,6 @@ import { groupIntoVisits, deriveVisitStatus, isOpenRow, customerExtras, visitCon
 import { countReschedules } from './appointmentRescheduleChain.js';
 import { toCustomerVisit } from './appointmentVisitMapper.js';
 import { logStatusChanges } from './appointmentAudit.js';
-import { MailEvent } from './appointmentMailTemplates.js';
-import { dispatchMail, describeVisit } from './appointmentMailService.js';
 
 const requireCustomer = (customerId) => {
   if (!customerId) throw fail(MSG.MSG31); // C13
@@ -64,6 +62,8 @@ const assertCancellable = (visit, now) => {
   if (status === AppointmentStatus.CANCELLED) throw fail(MSG.MSG39);
   const stillOpen = visit.rows.some(isOpenRow);
   if (!stillOpen || visit.scheduledAt.getTime() <= now.getTime()) throw fail(MSG.MSG81);
+  // Once staff have confirmed the visit, the customer calls the showroom instead of cancelling online.
+  if (status === AppointmentStatus.CONFIRMED) throw fail(MSG.MSG89);
 };
 
 /**
@@ -95,9 +95,7 @@ export const cancelMyVisit = async ({ customerId, userId, id, reason, ipAddress,
     .map((row) => ({ appointment: row, from: row.status }));
   await logStatusChanges(changes, { status: AppointmentStatus.CANCELLED, userId, ipAddress, metadata: { reason: note } });
   const { carsById } = await loadVisitContext([fresh]);
-  dispatchMail({
-    event: MailEvent.CANCELLED_BY_CUSTOMER, customerId, data: describeVisit(open, carsById, fresh.rows),
-  });
+  // No e-mail when the customer cancels their own visit (they just did it on screen).
   const counts = await countReschedules([fresh]);
   return toCustomerVisit(fresh, carsById, customerExtras(fresh, counts.get(fresh.visitId), now));
 };

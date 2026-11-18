@@ -59,6 +59,11 @@ export const rescheduleSchema = Joi.object({
   scheduledAt: Joi.string().pattern(ISO_WITH_OFFSET).custom(toDate).required(),
 });
 
+/** Add cars to an own visit that is still waiting for confirmation (same slot). */
+export const addCarsSchema = Joi.object({
+  carIds: Joi.array().items(objectId).min(1).max(MAX_CARS_PER_VISIT).unique().required(),
+});
+
 /** 1.1.0: staff slot grid; `carIds` optional (no cars → only capacity is judged). */
 export const staffSlotsQuery = Joi.object({
   from: dateKey.required(),

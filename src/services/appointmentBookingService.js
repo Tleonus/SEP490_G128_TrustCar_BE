@@ -32,8 +32,6 @@ import { runWithRetry } from './appointmentTransaction.js';
 import { groupIntoVisits, customerExtras } from './appointmentVisitRules.js';
 import { toCustomerVisit } from './appointmentVisitMapper.js';
 import { logAppointmentEvents } from './appointmentAudit.js';
-import { MailEvent } from './appointmentMailTemplates.js';
-import { dispatchMail, describeVisit } from './appointmentMailService.js';
 
 /**
  * One try of the booking transaction. Throws a business error (nothing is written) or returns
@@ -120,7 +118,7 @@ export const createVisit = async (p) => {
     console.error('Appointment audit log failed:', error.message);
   }
   const carsById = new Map(cars.map((car) => [String(car._id), car]));
-  dispatchMail({ event: MailEvent.CREATED, customerId, data: describeVisit(written, carsById) });
+  // No e-mail for a customer's own booking: the screen already shows it; mail goes out once staff confirm.
   const visit = groupIntoVisits(written)[0];
   return toCustomerVisit(visit, carsById, customerExtras(visit, 0, now)); // brand new: never moved
 };
