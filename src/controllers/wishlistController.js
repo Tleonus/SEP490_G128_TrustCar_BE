@@ -57,8 +57,6 @@ export const saveCar = async (req, res, next) => {
       userId: req.userId,
       carId: req.body.carId,
       priceAlertEnabled: req.body.priceAlertEnabled,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
     });
 
     const statusCode = result.created ? 201 : 200;
@@ -85,8 +83,6 @@ export const syncGuestWishlist = async (req, res, next) => {
       userId: req.userId,
       carIds: req.body.carIds,
       priceAlertEnabled: req.body.priceAlertEnabled,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
     });
     return sendSuccess(res, 200, 'Guest wishlist synced to your account successfully.', data);
   } catch (error) {
@@ -120,8 +116,6 @@ export const removeCar = async (req, res, next) => {
     const data = await wishlistService.removeCarFromWishlist({
       userId: req.userId,
       carId: req.params.carId,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
     });
     return sendSuccess(res, 200, 'Vehicle removed from wishlist successfully.', data);
   } catch (error) {

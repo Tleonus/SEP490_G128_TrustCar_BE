@@ -9,8 +9,14 @@ import { Router } from 'express';
 import Joi from 'joi';
 import * as wishlistController from '../controllers/wishlistController.js';
 import { validateQuery } from '../middlewares/validateMiddleware.js';
+import { WISHLIST_ERROR_CONTRACT } from '../utils/apiResponse.js';
 
 const router = Router();
+
+router.use((_req, res, next) => {
+  res.locals.errorContract = WISHLIST_ERROR_CONTRACT;
+  next();
+});
 
 const MAX_GUEST_PREVIEW_IDS = 50;
 const MAX_IDS_QUERY_LENGTH = 1500;
