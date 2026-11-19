@@ -26,6 +26,7 @@ import User from '../models/User.js';
 import { seedAdminAccount } from './adminSeeder.js';
 import { Roles, CarStatus } from '../constants/appConstants.js';
 import { generateVehicleCode } from '../utils/codeGenerator.js';
+import { resolveNewCarPrice } from '../utils/newCarPriceEstimator.js';
 
 const MILLION = 1_000_000;
 
@@ -121,6 +122,7 @@ const buildCarData = (row, index, adminId, now) => {
     listedPrice:   listPriceVnd,
     originalPrice: buyPriceVnd,
     floorPrice:    buildFloorPrice(buyPriceVnd, listPriceVnd, seq),
+    marketPrice:   resolveNewCarPrice({ make, model, variant, fuelType, year, mileage, price: listPriceVnd }),
     priceDropCount: markdown ? 1 : 0,
     listedDate,
     daysInStock,
@@ -206,6 +208,25 @@ const run = async () => {
       }
     }
     console.log(`Inserted ${toInsert.length} cars.`);
+
+    // Backfill marketPrice for any existing cars in DB that still have marketPrice = null
+    const missingMarketCars = await Car.find({
+      $or: [{ marketPrice: null }, { marketPrice: { $exists: false } }],
+    }).lean();
+    let backfilledCount = 0;
+    for (const existingCar of missingMarketCars) {
+      const estimatedMarketPrice = resolveNewCarPrice(existingCar);
+      if (estimatedMarketPrice && estimatedMarketPrice > existingCar.price) {
+        await Car.updateOne(
+          { _id: existingCar._id },
+          { $set: { marketPrice: estimatedMarketPrice } }
+        );
+        backfilledCount += 1;
+      }
+    }
+    if (backfilledCount > 0) {
+      console.log(`Backfilled marketPrice in MongoDB for ${backfilledCount} existing cars.`);
+    }
   } finally {
     await mongoose.disconnect();
   }
