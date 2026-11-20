@@ -6,7 +6,11 @@
  *   POST   /                          CUSTOMER               – place a deposit / hold
  *   GET    /me                        CUSTOMER               – my deposit history
  *   GET    /                          ADMIN, SALES_STAFF     – list deposits (filter by car/user/status…)
+ *   GET    /vnpay-ipn                 public (VNPay server)  – IPN webhook from VNPay (KAN-99)
+ *   GET    /vnpay-return              public (browser)       – browser redirect back from VNPay (KAN-99)
+ *   GET    /vnpay-policy              public                 – FE-safe VNPay policy summary (KAN-99)
  *   GET    /:id                       owner or staff         – deposit detail
+ *   POST   /:id/vnpay-url             owner or staff         – build signed VNPay payment URL (KAN-99)
  *   PATCH  /:id/cancel                owner (unpaid) / staff – cancel the hold, car → AVAILABLE
  *   PATCH  /:id/confirm-payment       ADMIN, SALES_STAFF     – deposit money received
  *   PATCH  /:id/complete              ADMIN, SALES_STAFF     – full payment received, car → SOLD
@@ -20,11 +24,12 @@ import { Router } from 'express';
 import Joi from 'joi';
 import rateLimit from 'express-rate-limit';
 import * as depositController from '../controllers/depositController.js';
+import * as vnpayController from '../controllers/vnpayController.js';
 import { verifyToken, optionalAuth } from '../middlewares/authMiddleware.js';
 import { requireRole } from '../middlewares/roleMiddleware.js';
 import { validate, validateQuery, validateParams } from '../middlewares/validateMiddleware.js';
 import { Roles } from '../constants/appConstants.js';
-import { DepositStatus, DepositPaymentStatus } from '../constants/depositConstants.js';
+import { DepositStatus, DepositPaymentStatus, PaymentProvider } from '../constants/depositConstants.js';
 
 const router = Router();
 
@@ -52,6 +57,8 @@ const createDepositSchema = Joi.object({
   userId: Joi.string().pattern(OBJECT_ID).messages({
     'string.pattern.base': 'userId must be a valid 24-character MongoDB ObjectId.',
   }),
+  // KAN-99: choose gateway at deposit creation time; default MANUAL keeps legacy flow.
+  paymentProvider: Joi.string().valid(...Object.values(PaymentProvider)).default(PaymentProvider.MANUAL),
 });
 
 const cancelSchema = Joi.object({
@@ -108,9 +115,29 @@ const createDepositLimiter = rateLimit({
   message: { success: false, code: 'RATE_LIMIT_EXCEEDED', message: 'Bạn thao tác đặt cọc quá nhiều lần. Vui lòng thử lại sau.' },
 });
 
+// KAN-99: throttle VNPay URL generation per user (5/min). Sandbox regenerates the
+// URL quickly on each retry, but anything higher than 5/min is abuse.
+const vnpayUrlLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `vnpay-url:${req.userId}`,
+  message: {
+    success: false,
+    code: 'RATE_LIMIT_EXCEEDED',
+    message: 'Bạn tạo liên kết thanh toán quá nhiều lần trong 1 phút. Vui lòng thử lại.',
+  },
+});
+
 // ── Routes ────────────────────────────────────────────────────────────────
 
 router.get('/cars/:carKey/hold-status', optionalAuth, validateParams(carKeyParamSchema), depositController.getCarHoldStatus);
+
+// ── KAN-99 VNPay endpoints (static paths BEFORE /:id to avoid shadowing) ──
+router.get('/vnpay-ipn', vnpayController.vnpayIpn);
+router.get('/vnpay-return', vnpayController.vnpayReturn);
+router.get('/vnpay-policy', vnpayController.getVnpayPolicy);
 
 router.post(
   '/',
@@ -126,6 +153,15 @@ router.get('/me', verifyToken, requireRole(Roles.CUSTOMER), validateQuery(myList
 router.get('/', verifyToken, requireRole(...STAFF), validateQuery(staffListQuerySchema), depositController.listDeposits);
 
 router.get('/:id', verifyToken, requireRole(Roles.CUSTOMER, ...STAFF), validateParams(idParamSchema), depositController.getDeposit);
+
+router.post(
+  '/:id/vnpay-url',
+  verifyToken,
+  requireRole(Roles.CUSTOMER, ...STAFF),
+  vnpayUrlLimiter,
+  validateParams(idParamSchema),
+  vnpayController.createVnpayUrl,
+);
 
 router.patch(
   '/:id/cancel',

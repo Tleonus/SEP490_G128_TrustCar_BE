@@ -26,7 +26,7 @@
  */
 
 import mongoose from 'mongoose';
-import { DepositStatus, DepositPaymentStatus, DepositAction } from '../constants/depositConstants.js';
+import { DepositStatus, DepositPaymentStatus, DepositAction, PaymentProvider } from '../constants/depositConstants.js';
 
 const { Schema } = mongoose;
 
@@ -94,6 +94,22 @@ const DepositSchema = new Schema(
     refundReference: { type: String, trim: true, maxlength: 100, default: null },
     refundNote:      { type: String, trim: true, maxlength: 500, default: null },
 
+    // ── VNPay integration (KAN-99) ──────────────────────────────────────
+    // paymentProvider is the gateway the customer PICKED (not necessarily paid through).
+    // A MANUAL deposit left unpaid stays MANUAL; upgrading to VNPAY on retry re-writes it.
+    paymentProvider:    { type: String, enum: Object.values(PaymentProvider), default: PaymentProvider.MANUAL },
+    // vnp_TxnRef sent to VNPay. Shape `DEP-{depositCode}-{timestampMs}`. Unique sparse —
+    // a MANUAL deposit never sets it, so the index does not conflict.
+    vnpayTxnRef:        { type: String, trim: true, maxlength: 100, default: null },
+    // vnp_TransactionNo — VNPay's own transaction id, only known after a successful payment.
+    vnpayTransactionNo: { type: String, trim: true, maxlength: 50, default: null },
+    // vnp_BankCode — the bank the customer actually used (NCB, VCB, …). Used for display only.
+    vnpayBankCode:      { type: String, trim: true, maxlength: 20, default: null },
+    // vnp_PayDate parsed from yyyyMMddHHmmss (Asia/Ho_Chi_Minh in the sandbox).
+    vnpayPayDate:       { type: Date, default: null },
+    // vnp_ResponseCode kept verbatim so support can look up VNPay failure codes later.
+    vnpayResponseCode:  { type: String, trim: true, maxlength: 10, default: null },
+
     // true/false once the hold is closed: whether the car went back to AVAILABLE.
     // null while open, or while the release is still pending (picked up by the job).
     carReleasedOnClose: { type: Boolean, default: null },
@@ -119,6 +135,9 @@ export const DEPOSIT_INDEXES = [
   [{ status: 1, expiresAt: 1 }, { name: 'expiry_scan' }],
   [{ paymentStatus: 1, createdAt: -1 }, { name: 'payment_status_list' }],
   [{ holdActive: 1, reservedAt: 1 }, { name: 'active_holds_reconcile' }],
+  // KAN-99: unique sparse — two VNPay URL requests for the SAME deposit reuse the field,
+  // the unique constraint only triggers across different deposits.
+  [{ vnpayTxnRef: 1 }, { unique: true, sparse: true, name: 'uniq_vnpayTxnRef' }],
 ];
 
 DEPOSIT_INDEXES.forEach(([keys, options]) => DepositSchema.index(keys, options));
