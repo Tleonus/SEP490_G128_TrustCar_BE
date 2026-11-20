@@ -60,7 +60,8 @@ const escapeHtml = (value = '') =>
 export const login = async ({ email, password, ipAddress, userAgent }) => {
   const user = await User.findOne({ email: email.toLowerCase() })
     .select('+password +tokenVersion')
-    .populate('role');
+    .populate('role')
+    .populate('roles');   // KAN-93: full role set for the JWT + profile
 
   // ── Unknown email → generic error, nothing to audit against
   if (!user) throw invalidCredentials();
@@ -131,7 +132,7 @@ export const refreshAccessToken = async (refreshToken) => {
     throw invalidRefresh();
   }
 
-  const user = await User.findById(decoded.userId).select('+tokenVersion');
+  const user = await User.findById(decoded.userId).select('+tokenVersion').lean();
   if (!user || !user.isActive || !isTokenCurrent(decoded, user)) {
     throw invalidRefresh();
   }
@@ -315,6 +316,7 @@ export const getMyProfile = async (userId) => {
   const user = await User.findById(userId)
     .select('+password') // only to compute profile status; never returned
     .populate('role', 'name permissions')
+    .populate('roles', 'name description permissions')  // KAN-93
     .lean();
 
   if (!user) throw new AppError(MSG.MSG17.message, 404, MSG.MSG17.code);

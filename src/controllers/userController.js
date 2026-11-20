@@ -82,6 +82,44 @@ export const updateUser = async (req, res, next) => {
 };
 
 /**
+ * @route   GET /api/v1/users/roles
+ * @access  Admin only
+ * @desc    Roles assignable to staff accounts (KAN-93).
+ */
+export const listAssignableRoles = async (_req, res, next) => {
+  try {
+    const roles = await userService.getAssignableRoles();
+    return sendSuccess(res, 200, 'Roles retrieved successfully.', roles);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @route   PUT /api/v1/users/:id/roles
+ * @access  Admin only
+ * @body    { roleIds: string[] }  (KAN-93)
+ */
+export const updateUserRoles = async (req, res, next) => {
+  try {
+    const user = await userService.updateUserRoles({
+      userId: req.params.id,
+      roleIds: req.body.roleIds,
+      updatedByUserId: req.userId,
+      ipAddress: req.ip,
+    });
+    return sendSuccess(res, 200, 'Roles updated.', {
+      _id:       user._id,
+      roleNames: user.roleNames,
+      roleName:  user.roleName,
+      roles:     user.roles,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * @route   PATCH /api/v1/users/:id/deactivate
  * @access  Admin only
  */
@@ -118,8 +156,10 @@ export const activateUser = async (req, res, next) => {
 export default {
   createUser,
   listUsers,
+  listAssignableRoles,
   getUserById,
   updateUser,
+  updateUserRoles,
   deactivateUser,
   activateUser,
 };

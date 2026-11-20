@@ -30,11 +30,12 @@ const AUDIENCE = 'TrustCar-Client';
 export const signAccessToken = (user) =>
   jwt.sign(
     {
-      userId:   user._id.toString(),
-      email:    user.email,
-      roleName: user.roleName,
-      type:     TokenType.ACCESS,
-      tv:       user.tokenVersion ?? 0,
+      userId:    user._id.toString(),
+      email:     user.email,
+      roleName:  user.roleName,  // primary role (legacy consumers)
+      roleNames: user.roleNames?.length ? user.roleNames : (user.roleName ? [user.roleName] : []), // KAN-93
+      type:      TokenType.ACCESS,
+      tv:        user.tokenVersion ?? 0,
     },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m', issuer: ISSUER, audience: AUDIENCE }

@@ -18,7 +18,7 @@ import Role from '../models/Role.js';
 import ActivityLog from '../models/ActivityLog.js';
 import { AppError } from '../utils/apiResponse.js';
 import { parsePagination, buildPaginationMeta } from '../utils/apiResponse.js';
-import { ActivityEventType, Roles } from '../constants/appConstants.js';
+import { ActivityEventType, Roles, StaffRoles } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -78,6 +78,8 @@ export const createUser = async ({
     phone,
     role: role._id,
     roleName: role.name,
+    roles: [role._id],      // KAN-93
+    roleNames: [role.name], // KAN-93
     createdBy: createdByUserId,
   });
 
@@ -105,6 +107,11 @@ export const getUsers = async (query) => {
 
   const filter = {};
   if (query.roleName) filter.roleName = query.roleName.toUpperCase();
+  // KAN-94: `roles` (comma-separated) matches ANY of the user's roles.
+  if (query.roles) {
+    const roleList = String(query.roles).split(',').map((r) => r.trim().toUpperCase()).filter(Boolean);
+    if (roleList.length) filter.roleNames = { $in: roleList };
+  }
   if (query.isActive !== undefined) {
     filter.isActive = query.isActive === 'true' || query.isActive === true;
   }
@@ -118,6 +125,7 @@ export const getUsers = async (query) => {
   const [items, total] = await Promise.all([
     User.find(filter)
       .populate('role', 'name')
+      .populate('roles', 'name description permissions')   // KAN-93
       .select('-password -passwordResetToken -failedLoginAttempts -lockedUntil')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -137,11 +145,106 @@ export const getUsers = async (query) => {
 export const getUserById = async (userId) => {
   const user = await User.findById(userId)
     .populate('role', 'name permissions')
+    .populate('roles', 'name description permissions')   // KAN-93
     .select('-password -passwordResetToken -failedLoginAttempts -lockedUntil')
     .lean();
 
   if (!user) throw new AppError(MSG.MSG17.message, 404, MSG.MSG17.code);
   return user;
+};
+
+/**
+ * Lists the roles an Admin can assign to a staff account (KAN-93).
+ * CUSTOMER is excluded — customer accounts are self-registered and are never
+ * managed through the staff management screens.
+ *
+ * @returns {Promise<Array<{_id, name, description, permissions}>>}
+ */
+export const getAssignableRoles = async () => {
+  const roles = await Role.find({ name: { $in: StaffRoles }, isActive: true })
+    .select('name description permissions')
+    .sort({ name: 1 })
+    .lean();
+  return roles;
+};
+
+/**
+ * Replaces the full set of roles of a staff user (KAN-93).
+ *
+ * Rules enforced here:
+ * - At least one role is required.
+ * - Every role id must exist and be active.
+ * - CUSTOMER cannot be mixed with staff roles, and cannot be assigned to a
+ *   staff account (customers are self-registered, never managed here).
+ *
+ * The first role of the input array becomes the primary role
+ * (mirrored into `role` / `roleName` for backward compatibility), and the
+ * user's tokenVersion is bumped so older JWTs carrying the previous role
+ * set are revoked immediately.
+ *
+ * @param {object} params
+ * @param {string} params.userId           - Target user.
+ * @param {string[]} params.roleIds        - Array of Role ObjectId strings.
+ * @param {string} params.updatedByUserId  - Admin performing the change.
+ * @param {string} [params.ipAddress]
+ * @returns {Promise<object>} Updated user (safe, no password).
+ */
+export const updateUserRoles = async ({ userId, roleIds, updatedByUserId, ipAddress }) => {
+  const user = await User.findById(userId).select('+tokenVersion');
+  if (!user) throw new AppError(MSG.MSG17.message, 404, MSG.MSG17.code);
+
+  if (!Array.isArray(roleIds) || roleIds.length === 0) {
+    throw new AppError('At least one role is required.', 400, 'VALIDATION_ERROR');
+  }
+
+  // De-duplicate while preserving the caller's order (first = primary).
+  const uniqueIds = [...new Set(roleIds.map(String))];
+
+  const roles = await Role.find({ _id: { $in: uniqueIds }, isActive: true });
+  if (roles.length !== uniqueIds.length) {
+    throw new AppError('One or more role IDs are invalid or inactive.', 400, 'VALIDATION_ERROR');
+  }
+  // Keep the original request order (find() does not preserve $in order).
+  const byId = new Map(roles.map((r) => [r._id.toString(), r]));
+  const orderedRoles = uniqueIds.map((id) => byId.get(id));
+  const roleNames = orderedRoles.map((r) => r.name);
+
+  const hasCustomer = roleNames.includes(Roles.CUSTOMER);
+  const hasStaff    = roleNames.some((n) => n !== Roles.CUSTOMER);
+
+  if (hasCustomer && hasStaff) {
+    throw new AppError('Cannot mix CUSTOMER with staff roles.', 409, 'CONFLICT');
+  }
+  if (hasCustomer && user.roleName !== Roles.CUSTOMER) {
+    throw new AppError('Cannot assign CUSTOMER role to a staff account.', 409, 'CONFLICT');
+  }
+  if (!hasCustomer && user.roleName === Roles.CUSTOMER) {
+    throw new AppError('The role of a customer account cannot be changed.', MSG.MSG42.httpStatus, MSG.MSG42.code);
+  }
+
+  const beforeRoles = user.roleNames?.length ? [...user.roleNames] : (user.roleName ? [user.roleName] : []);
+
+  user.roles     = orderedRoles.map((r) => r._id);
+  user.roleNames = roleNames;
+  user.role      = orderedRoles[0]._id;
+  user.roleName  = roleNames[0];
+  user.updatedBy = updatedByUserId;
+  // Revoke every session so the new role set applies immediately.
+  user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+
+  await user.save();
+
+  await ActivityLog.log({
+    eventType: ActivityEventType.USER_UPDATED,
+    performedBy: updatedByUserId,
+    targetModel: 'User',
+    targetId: user._id,
+    changes: { before: { roleNames: beforeRoles }, after: { roleNames } },
+    summary: `Roles updated for ${user.email}: [${roleNames.join(', ')}]`,
+    ipAddress,
+  });
+
+  return user.toSafeObject();
 };
 
 /**
@@ -180,6 +283,10 @@ export const updateUser = async ({ userId, updates, newRoleName, updatedByUserId
     const newRole = await resolveRole(newRoleName);
     user.role = newRole._id;
     user.roleName = newRole.name;
+    // KAN-93: keep the multi-role fields in sync — a legacy single-role change
+    // replaces the whole set with just the new role.
+    user.roles = [newRole._id];
+    user.roleNames = [newRole.name];
     // The current token still carries the old permissions until it expires.
     // Bumping tokenVersion revokes every session so the new role applies now.
     user.tokenVersion = (user.tokenVersion ?? 0) + 1;
@@ -275,7 +382,9 @@ export default {
   createUser,
   getUsers,
   getUserById,
+  getAssignableRoles,
   updateUser,
+  updateUserRoles,   // KAN-93
   deactivateUser,
   activateUser,
 };
