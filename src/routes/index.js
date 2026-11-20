@@ -41,6 +41,7 @@ import marketingRoutes      from './marketingRoutes.js';
 import loanSettingsRoutes   from './loanSettingsRoutes.js';
 import publicChatRoutes     from './publicChatRoutes.js';
 import profileRoutes        from './profileRoutes.js';
+import depositRoutes        from './depositRoutes.js';
 
 const router = Router();
 
@@ -93,5 +94,8 @@ router.use('/appointments', appointmentRoutes);
 
 // ── Own profile & settings (signed-in account) ─────────────────────────────
 router.use('/profile', profileRoutes);
+
+// ── Deposit & Online Hold (KAN-22) + VNPay payment (KAN-99) ────────────────
+router.use('/deposits', depositRoutes);
 
 export default router;

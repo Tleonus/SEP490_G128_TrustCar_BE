@@ -12,6 +12,8 @@ import Appointment from './Appointment.js';
 import Car from './Car.js';
 import CarModel from './CarModel.js';
 import Customer from './Customer.js';
+import Deposit from './Deposit.js';
+import VnpayIpnLog from './VnpayIpnLog.js';
 import InspectionRecord from './InspectionRecord.js';
 import Lead from './Lead.js';
 import PriceHistory from './PriceHistory.js';
@@ -46,6 +48,7 @@ export {
   ChatMessage,
   ContentItem,
   Customer,
+  Deposit,
   EmailLog,
   Feedback,
   InspectionRecord,
@@ -65,4 +68,5 @@ export {
   User,
   ValuationRule,
   VisitorSession,
+  VnpayIpnLog,
 };

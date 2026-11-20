@@ -64,6 +64,11 @@ export const DepositAction = Object.freeze({
   EXPIRED:           'DEPOSIT_EXPIRED',
   REFUNDED:          'DEPOSIT_REFUNDED',
   HOLD_RELEASED:     'DEPOSIT_HOLD_RELEASED', // car status changed outside this flow (e.g. sold via another flow)
+  // VNPay (KAN-99) — separate actions so audit log distinguishes system-triggered vs staff-triggered changes.
+  VNPAY_URL_ISSUED:    'DEPOSIT_VNPAY_URL_ISSUED',    // POST /deposits/:id/vnpay-url succeeded
+  VNPAY_IPN_APPLIED:   'DEPOSIT_VNPAY_IPN_APPLIED',   // IPN webhook promoted status PENDING → DEPOSIT_PAID
+  VNPAY_RETURN_SEEN:   'DEPOSIT_VNPAY_RETURN_SEEN',   // Customer landed on returnUrl (informational only)
+  VNPAY_IPN_REJECTED:  'DEPOSIT_VNPAY_IPN_REJECTED',  // IPN signature or amount failed — flagged for review
 });
 
 /** Public view of a car's sellability for the hold-status endpoint. */
@@ -72,6 +77,43 @@ export const PublicCarState = Object.freeze({
   RESERVED:    'RESERVED',
   SOLD:        'SOLD',
   UNAVAILABLE: 'UNAVAILABLE', // any internal status (DRAFT, MAINTENANCE, DELISTED…)
+});
+
+/**
+ * Payment provider the customer picked when placing a deposit (KAN-99).
+ * MANUAL is the original bank-transfer / cash-at-showroom flow confirmed by staff;
+ * VNPAY routes the customer through the VNPay sandbox so the state transition is
+ * done automatically by the IPN webhook. Flows co-exist so a wallet outage falls
+ * back to MANUAL without data-model changes.
+ */
+export const PaymentProvider = Object.freeze({
+  MANUAL: 'MANUAL',
+  VNPAY:  'VNPAY',
+});
+
+/**
+ * Outcome written to `vnpay_ipn_logs.outcome` for every IPN we ever receive.
+ * Kept here so the test suites can `import { IpnOutcome } from constants/...`
+ * instead of hard-coding string literals.
+ */
+export const IpnOutcome = Object.freeze({
+  APPLIED:               'APPLIED',               // State transition PENDING → DEPOSIT_PAID succeeded
+  DUPLICATE:             'DUPLICATE',             // Same (txnRef, transactionNo) already processed
+  INVALID_SIGNATURE:     'INVALID_SIGNATURE',     // HMAC mismatch
+  DEPOSIT_NOT_FOUND:     'DEPOSIT_NOT_FOUND',     // vnp_TxnRef points to no deposit
+  DEPOSIT_INVALID_STATE: 'DEPOSIT_INVALID_STATE', // Deposit was cancelled / expired before IPN arrived
+  AMOUNT_MISMATCH:       'AMOUNT_MISMATCH',       // vnp_Amount / 100 != deposit.depositAmount
+  PROVIDER_FAILURE:      'PROVIDER_FAILURE',      // vnp_ResponseCode or vnp_TransactionStatus != '00'
+});
+
+/** Response codes we send back to VNPay in the IPN body. */
+export const VnpayRspCode = Object.freeze({
+  SUCCESS:            '00', // Confirm Success — deposit updated
+  ORDER_NOT_FOUND:    '01', // vnp_TxnRef unknown on our side
+  ORDER_ALREADY_CFM:  '02', // Deposit no longer in a state we can confirm
+  INVALID_AMOUNT:     '04',
+  INVALID_SIGNATURE:  '97',
+  UNKNOWN_ERROR:      '99',
 });
 
 /** Stable machine-readable error codes (the FE maps them to Vietnamese text). */
@@ -89,6 +131,11 @@ export const DepositErrorCode = Object.freeze({
   NOT_FOUND:            'DEPOSIT_NOT_FOUND',
   INVALID_STATE:        'DEPOSIT_INVALID_STATE',
   EXPIRED:              'DEPOSIT_EXPIRED',
+  // VNPay integration (KAN-99)
+  VNPAY_NOT_CONFIGURED: 'DEPOSIT_VNPAY_NOT_CONFIGURED', // env missing — fall back to MANUAL
+  VNPAY_ALREADY_PAID:   'DEPOSIT_VNPAY_ALREADY_PAID',   // paymentStatus != UNPAID when (re-)creating URL
+  VNPAY_AMOUNT_MISMATCH:'DEPOSIT_VNPAY_AMOUNT_MISMATCH',
+  VNPAY_INVALID_PROVIDER:'DEPOSIT_VNPAY_INVALID_PROVIDER', // paymentProvider != VNPAY
 });
 
 const numberFromEnv = (name, fallback, { min = 0 } = {}) => {
@@ -149,5 +196,6 @@ export const computeDepositPolicy = (carPrice) => {
 
 export default {
   DepositStatus, DepositPaymentStatus, ACTIVE_HOLD_STATUSES, DepositAction, PublicCarState, DepositErrorCode,
+  PaymentProvider, IpnOutcome, VnpayRspCode,
   getDepositSettings, computeDepositPolicy,
 };
