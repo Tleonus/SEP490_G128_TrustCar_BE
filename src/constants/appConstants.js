@@ -96,15 +96,16 @@ export const AppointmentStatus = Object.freeze({
 });
 
 // ── User Roles ────────────────────────────────────────────────────────────────
-// Ref: FE-12, FE-13, GBR-02, GBR-03
+// Ref: FE-12, FE-13, GBR-02, GBR-03, KAN-93, KAN-94
 export const Roles = Object.freeze({
   ADMIN:       'ADMIN',
   SALES_STAFF: 'SALES_STAFF',
-  CUSTOMER:    'CUSTOMER', // self-registered website customer – no internal permissions
+  CUSTOMER:    'CUSTOMER',   // self-registered website customer – no internal permissions
+  INSPECTOR:   'INSPECTOR',  // CPO vehicle inspector – KAN-94
 });
 
 // Internal (staff) roles – the only roles Admin can assign via user management.
-export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
+export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF, Roles.INSPECTOR]);
 
 // ── Granular Permissions ───────────────────────────────────────────────────────
 // Ref: FE-13
@@ -138,6 +139,11 @@ export const Permissions = Object.freeze({
   // ── Reporting / Analytics ──
   REPORT_VIEW:       'report:view',
   REPORT_EXPORT:     'report:export',
+
+  // ── Inspection (CPO checklist) — KAN-94 ──
+  INSPECTION_READ:   'inspection:read',
+  INSPECTION_WRITE:  'inspection:write',  // create draft, update, submit
+  INSPECTION_ADMIN:  'inspection:admin',  // reject, approve-sale (ADMIN only)
 });
 
 // ── Role → Permission Matrix ───────────────────────────────────────────────────
@@ -160,6 +166,14 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.APPOINTMENT_CREATE,
     Permissions.APPOINTMENT_UPDATE,
     Permissions.REPORT_VIEW,
+    Permissions.INSPECTION_READ,   // KAN-94
+    Permissions.INSPECTION_WRITE,  // KAN-94
+  ],
+
+  [Roles.INSPECTOR]: [             // KAN-94
+    Permissions.CAR_READ,
+    Permissions.INSPECTION_READ,
+    Permissions.INSPECTION_WRITE,
   ],
 
   [Roles.CUSTOMER]: [],

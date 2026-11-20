@@ -88,23 +88,29 @@ describe('AC-18 / REQ-027: user management cannot create or convert customers', 
 describe('Role.seedDefaultRoles (idempotent, fills missing roles)', () => {
   const stubRoles = (existingNames) => {
     const inserted = [];
-    const original = { find: Role.find, insertMany: Role.insertMany };
-    Role.find = () => ({ lean: async () => existingNames.map((name) => ({ name })) });
+    const updated = [];
+    const original = { find: Role.find, insertMany: Role.insertMany, updateOne: Role.updateOne };
+    Role.find = () => ({
+      lean: async () => existingNames.map((name) => ({
+        _id: `${name}-id`, name, permissions: [], isActive: true,
+      })),
+    });
     Role.insertMany = async (docs) => { inserted.push(...docs); return docs; };
-    return { inserted, restore: () => Object.assign(Role, original) };
+    Role.updateOne = async (filter, update) => { updated.push({ filter, update }); return { modifiedCount: 1 }; };
+    return { inserted, updated, restore: () => Object.assign(Role, original) };
   };
 
-  test('adds only CUSTOMER to a database already seeded with every other role', async () => {
+  test('adds only the missing roles to a partially seeded database', async () => {
     const stub = stubRoles(['ADMIN', 'SALES_STAFF']);
     try {
       await Role.seedDefaultRoles();
-      expect(stub.inserted.map((r) => r.name)).toEqual(['CUSTOMER']);
-      expect(stub.inserted[0].permissions).toEqual([]);
+      expect(stub.inserted.map((r) => r.name).sort()).toEqual(['CUSTOMER', 'INSPECTOR']);
+      expect(stub.inserted.find((r) => r.name === 'CUSTOMER').permissions).toEqual([]);
     } finally { stub.restore(); }
   });
 
   test('inserts nothing when every default role exists', async () => {
-    const stub = stubRoles(['ADMIN', 'SALES_STAFF', 'CUSTOMER']);
+    const stub = stubRoles(['ADMIN', 'SALES_STAFF', 'CUSTOMER', 'INSPECTOR']);
     try {
       await Role.seedDefaultRoles();
       expect(stub.inserted).toHaveLength(0);
@@ -115,7 +121,7 @@ describe('Role.seedDefaultRoles (idempotent, fills missing roles)', () => {
     const stub = stubRoles([]);
     try {
       await Role.seedDefaultRoles();
-      expect(stub.inserted.map((r) => r.name).sort()).toEqual(['ADMIN', 'CUSTOMER', 'SALES_STAFF']);
+      expect(stub.inserted.map((r) => r.name).sort()).toEqual(['ADMIN', 'CUSTOMER', 'INSPECTOR', 'SALES_STAFF']);
       expect(stub.inserted.every((r) => typeof r.description === 'string' && r.description.length > 0)).toBe(true);
     } finally { stub.restore(); }
   });

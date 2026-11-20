@@ -248,9 +248,10 @@ export const setupInspectionHarness = async () => {
     },
 
     /** Creates a user with the given role and returns { id, token }. */
-    async loginAs(roleName = 'SALES_STAFF') {
-      const { id, email } = await auth.createUser({ roleName });
-      const token = signAccessToken({ _id: id, email, roleName, tokenVersion: 0 });
+    async loginAs(roleName = 'SALES_STAFF', roleNames = null) {
+      const names = roleNames || [roleName];
+      const { id, email } = await auth.createUser({ roleName, roleNames: names });
+      const token = signAccessToken({ _id: id, email, roleName, roleNames: names, tokenVersion: 0 });
       return { id, token, auth: `Bearer ${token}` };
     },
 

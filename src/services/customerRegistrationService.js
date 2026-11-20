@@ -112,6 +112,8 @@ export const register = async ({ email, password, fullName, phone, ipAddress, us
       phone,
       role:     role._id,
       roleName: Roles.CUSTOMER,
+      roles:     [role._id],        // KAN-93
+      roleNames: [Roles.CUSTOMER],  // KAN-93
       customer: link.customerId,
     });
   } catch (error) {
