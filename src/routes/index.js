@@ -28,6 +28,7 @@ import inventoryRoutes   from './inventoryRoutes.js';
 import inspectionRoutes  from './inspectionRoutes.js';
 import customerCarRoutes from './customerCarRoutes.js';
 import customerAppointmentRoutes from './customerAppointmentRoutes.js';
+import serviceAppointmentRoutes from './serviceAppointmentRoutes.js';
 import appointmentRoutes from './appointmentRoutes.js';
 import baseSettingsRoutes   from './baseSettingsRoutes.js';
 import publicSettingsRoutes from './publicSettingsRoutes.js';
@@ -42,6 +43,7 @@ import loanSettingsRoutes   from './loanSettingsRoutes.js';
 import publicChatRoutes     from './publicChatRoutes.js';
 import profileRoutes        from './profileRoutes.js';
 import depositRoutes        from './depositRoutes.js';
+import { publicRouter as publicServiceRoutes, manageRouter as manageServiceRoutes } from './serviceRoutes.js';
 
 const router = Router();
 
@@ -89,6 +91,9 @@ router.use('/leads', leadRoutes);
 router.use('/marketing', marketingRoutes);
 
 // ── Test-drive Booking: customer side (CUSTOMER) and staff side (Staff & Admin) ──
+// KAN-96 service routes mount first so "/service" is not swallowed by the
+// test-drive router's "/:id" catch-all.
+router.use('/customer/appointments/service', serviceAppointmentRoutes);
 router.use('/customer/appointments', customerAppointmentRoutes);
 router.use('/appointments', appointmentRoutes);
 
@@ -97,5 +102,9 @@ router.use('/profile', profileRoutes);
 
 // ── Deposit & Online Hold (KAN-22) + VNPay payment (KAN-99) ────────────────
 router.use('/deposits', depositRoutes);
+
+// ── Showroom Services (KAN-96) ─────────────────────────────────────────────
+router.use('/public/services', publicServiceRoutes);
+router.use('/manage/services', manageServiceRoutes);
 
 export default router;

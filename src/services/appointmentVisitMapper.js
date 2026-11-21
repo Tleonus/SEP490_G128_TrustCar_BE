@@ -87,6 +87,7 @@ const person = (user) => (user ? { _id: idOf(user._id), fullName: user.fullName 
  */
 export const toStaffVisit = (visit, carsById, customersById, usersById, extras = {}) => {
   const rows = visit.rows;
+  const first = rows[0];
   const customer = customersById.get(idOf(visit.customer));
   const assigned = rows.find((row) => row.assignedTo)?.assignedTo;
   const confirmed = rows.find((row) => row.confirmedBy);
@@ -105,6 +106,16 @@ export const toStaffVisit = (visit, carsById, customersById, usersById, extras =
     isNewRequest: extras.isNewRequest ?? false,
     completedAt: iso(rows.find((row) => row.completedAt)?.completedAt),
     outcome: rows.find((row) => row.outcome)?.outcome ?? null,
+    // KAN-96: present on SERVICE visits, null otherwise. The snapshot is frozen
+    // at booking time, so staff see the package the customer actually booked.
+    service: first.serviceSnapshot ? {
+      id: first.service ? idOf(first.service) : null,
+      code: first.serviceSnapshot.code ?? null,
+      serviceName: first.serviceSnapshot.serviceName ?? null,
+      referencePrice: first.serviceSnapshot.referencePrice ?? null,
+      estimatedMinutes: first.serviceSnapshot.estimatedMinutes ?? null,
+    } : null,
+    vehiclePlate: first.serviceVehiclePlate ?? null,
     appointments: rows.map((row) => appointmentItem(row, carsById, true)),
   };
 };
