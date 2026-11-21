@@ -11,7 +11,7 @@
 import Joi from 'joi';
 import { sendError } from '../utils/apiResponse.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
-import { AppointmentStatus } from '../constants/appConstants.js';
+import { AppointmentStatus, AppointmentType } from '../constants/appConstants.js';
 import {
   MAX_CARS_PER_VISIT, NOTES_MAX_LENGTH, REASON_MAX_LENGTH, OUTCOME_MAX_LENGTH, CancellationType, CancelReasonCode,
   STAFF_CUSTOMER_SEARCH_MIN_CHARS,

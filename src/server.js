@@ -19,6 +19,7 @@ import { configureCloudinary } from './config/cloudinary.js';
 import Role from './models/Role.js';
 import { seedAdminAccount } from './seeders/adminSeeder.js';
 import { seedShowroomServices } from './seeders/showroomServiceSeeder.js';
+import { startLeadScoringJob, stopLeadScoringJob } from './jobs/leadScoringJob.js';
 import './models/index.js'; // Register the complete ERD model set before startup.
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -49,7 +50,10 @@ const startServer = async () => {
     // 5. Seed default showroom service packages (KAN-96)
     await seedShowroomServices();
 
-    // 6. Start HTTP server
+    // 6. Start background jobs (KAN-97 lead scoring)
+    startLeadScoringJob();
+
+    // 7. Start HTTP server
     const server = app.listen(PORT, () => {
       console.log('════════════════════════════════════════════════════');
       console.log(`🚀  TrustCar API Server running on port ${PORT}`);
@@ -63,6 +67,9 @@ const startServer = async () => {
     // ── Graceful Shutdown ─────────────────────────────────────────────────
     const shutdown = async (signal) => {
       console.log(`\n⏳  ${signal} received. Graceful shutdown initiated...`);
+
+      // Stop background jobs (KAN-97)
+      stopLeadScoringJob();
 
       // Stop accepting new connections
       server.close(async () => {

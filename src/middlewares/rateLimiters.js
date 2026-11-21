@@ -142,7 +142,26 @@ export const createDailyCaptionLimiter = (max = resolveLimit(process.env.CAPTION
   },
 });
 
+/**
+ * KAN-97 — /api/v1/track là endpoint public. Khoá theo IP (120 request / 5 phút
+ * mặc định) để chặn script spam mà vẫn đủ cho một phiên duyệt bình thường.
+ * @param {number} [max=120]
+ */
+export const createTrackLimiter = (max = resolveLimit(process.env.TRACK_RATE_LIMIT, 120)) => rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max,
+  keyGenerator: (req) => `track:${req.ip}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many tracking events. Slow down.',
+    code: 'TRACK_RATE_LIMIT',
+  },
+});
+
 export default {
-  identifyCaller, createGlobalLimiter, createAuthLimiter, createDailyCaptionLimiter, limitsFromEnv, resolveLimit,
+  identifyCaller, createGlobalLimiter, createAuthLimiter, createDailyCaptionLimiter,
+  createTrackLimiter, limitsFromEnv, resolveLimit,
 };
 

@@ -44,6 +44,7 @@ import publicChatRoutes     from './publicChatRoutes.js';
 import profileRoutes        from './profileRoutes.js';
 import depositRoutes        from './depositRoutes.js';
 import { publicRouter as publicServiceRoutes, manageRouter as manageServiceRoutes } from './serviceRoutes.js';
+import trackRoutes          from './trackRoutes.js';
 
 const router = Router();
 
@@ -86,6 +87,8 @@ router.use('/admin', activityLogRoutes);
 // authenticated router's GET /:id. See leadPublicRoutes.js.
 router.use('/leads', leadPublicRoutes);
 router.use('/leads', leadRoutes);
+// KAN-97: alias để FE /admin/sales (gọi /manage/leads) hết rơi về demo fallback.
+router.use('/manage/leads', leadRoutes);
 
 // ── Marketing Tooling (Admin & Sales staff) ────────────────────────────────
 router.use('/marketing', marketingRoutes);
@@ -106,5 +109,8 @@ router.use('/deposits', depositRoutes);
 // ── Showroom Services (KAN-96) ─────────────────────────────────────────────
 router.use('/public/services', publicServiceRoutes);
 router.use('/manage/services', manageServiceRoutes);
+
+// ── Interaction Tracking (KAN-97) ──────────────────────────────────────────
+router.use('/track', trackRoutes);
 
 export default router;
