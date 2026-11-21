@@ -85,6 +85,7 @@ export const AppointmentType = Object.freeze({
   TEST_DRIVE:  'TEST_DRIVE',
   VIEWING:     'VIEWING',
   MAINTENANCE: 'MAINTENANCE', // Intake scheduling ONLY – NO garage execution (LI-05)
+  SERVICE:     'SERVICE',     // KAN-96: showroom service appointment (wash, polish, …)
 });
 
 export const AppointmentStatus = Object.freeze({
@@ -144,6 +145,10 @@ export const Permissions = Object.freeze({
   INSPECTION_READ:   'inspection:read',
   INSPECTION_WRITE:  'inspection:write',  // create draft, update, submit
   INSPECTION_ADMIN:  'inspection:admin',  // reject, approve-sale (ADMIN only)
+
+  // ── Showroom Service (KAN-96) ──
+  SERVICE_READ:      'service:read',
+  SERVICE_WRITE:     'service:write',     // create/update/deactivate service packages
 });
 
 // ── Role → Permission Matrix ───────────────────────────────────────────────────
@@ -168,6 +173,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.REPORT_VIEW,
     Permissions.INSPECTION_READ,   // KAN-94
     Permissions.INSPECTION_WRITE,  // KAN-94
+    Permissions.SERVICE_READ,      // KAN-96: read service packages while consulting
   ],
 
   [Roles.INSPECTOR]: [             // KAN-94
@@ -261,6 +267,13 @@ export const ActivityEventType = Object.freeze({
   APPOINTMENT_RESCHEDULED: 'APPOINTMENT_RESCHEDULED',
   APPOINTMENT_REASSIGNED: 'APPOINTMENT_REASSIGNED',
   APPOINTMENT_NO_SHOW_CORRECTED: 'APPOINTMENT_NO_SHOW_CORRECTED',
+
+  // Showroom Service (KAN-96)
+  SERVICE_CREATED:        'SERVICE_CREATED',
+  SERVICE_UPDATED:        'SERVICE_UPDATED',
+  SERVICE_DEACTIVATED:    'SERVICE_DEACTIVATED',
+  SERVICE_APPOINTMENT_CREATED:   'SERVICE_APPOINTMENT_CREATED',
+  SERVICE_APPOINTMENT_CANCELLED: 'SERVICE_APPOINTMENT_CANCELLED',
 
   // Inspection (CPO checklist)
   INSPECTION_DRAFT_CREATED: 'INSPECTION_DRAFT_CREATED',

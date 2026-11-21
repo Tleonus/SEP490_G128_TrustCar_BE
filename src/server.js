@@ -18,6 +18,7 @@ import { connectDB, disconnectDB } from './config/db.js';
 import { configureCloudinary } from './config/cloudinary.js';
 import Role from './models/Role.js';
 import { seedAdminAccount } from './seeders/adminSeeder.js';
+import { seedShowroomServices } from './seeders/showroomServiceSeeder.js';
 import './models/index.js'; // Register the complete ERD model set before startup.
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -45,7 +46,10 @@ const startServer = async () => {
     // 4. Seed initial admin account if no admin exists
     await seedAdminAccount();
 
-    // 5. Start HTTP server
+    // 5. Seed default showroom service packages (KAN-96)
+    await seedShowroomServices();
+
+    // 6. Start HTTP server
     const server = app.listen(PORT, () => {
       console.log('════════════════════════════════════════════════════');
       console.log(`🚀  TrustCar API Server running on port ${PORT}`);
