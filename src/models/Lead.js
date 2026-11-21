@@ -13,6 +13,7 @@
 
 import mongoose from 'mongoose';
 import { LeadStage } from '../constants/appConstants.js';
+import { SCORE_BAND, SCORE_MAX } from '../constants/leadScoringConstants.js';
 
 // ── Subdocument: Lead Activity Entry (Append-Only) ─────────────────────────
 // Ref: GBR-18
@@ -171,6 +172,35 @@ const LeadSchema = new mongoose.Schema(
       default: true,
     },
 
+    // ── Lead Scoring (KAN-97) ─────────────────────────────────────────
+    // `score` là điểm ý định 0-100 tính từ InteractionEvent. Độc lập với
+    // `priority` (LOW/MEDIUM/HIGH/URGENT) do sale đặt tay — hai field khác nghĩa.
+    score: {
+      type: Number, default: 0, min: 0, max: SCORE_MAX, index: true,
+    },
+    scoreBand: {
+      type:    String,
+      enum:    Object.values(SCORE_BAND),
+      default: SCORE_BAND.COLD,
+      index:   true,
+    },
+    /** Tương tác mới nhất được tính vào điểm. */
+    lastInteractionAt: { type: Date, default: null },
+    /** Lần cuối cron chấm lại lead này. */
+    lastScoredAt:      { type: Date, default: null },
+    /** Số đếm event theo loại tại lần chấm gần nhất — dùng cho tooltip badge. */
+    scoreFactors: {
+      type: new mongoose.Schema({
+        VIEW_CAR:       { type: Number, default: 0 },
+        WISHLIST_ADD:   { type: Number, default: 0 },
+        COMPARE_ADD:    { type: Number, default: 0 },
+        CALCULATOR_USE: { type: Number, default: 0 },
+        FILTER_APPLY:   { type: Number, default: 0 },
+        CONTACT_CLICK:  { type: Number, default: 0 },
+      }, { _id: false }),
+      default: undefined,
+    },
+
     // ── Audit ─────────────────────────────────────────────────────────
     // Null for enquiries submitted from the public website (no account).
     createdBy: {
@@ -199,6 +229,12 @@ LeadSchema.index({ car: 1 });
 LeadSchema.index({ assignedTo: 1, stage: 1 });
 LeadSchema.index({ stage: 1, isActive: 1 });
 LeadSchema.index({ createdAt: -1 });
+
+// KAN-97: tối ưu GET /manage/leads/hot (sort score desc, lọc stage + active).
+LeadSchema.index(
+  { scoreBand: 1, stage: 1, isActive: 1, score: -1 },
+  { name: 'hot_leads' },
+);
 
 const Lead = mongoose.model('Lead', LeadSchema);
 export default Lead;
