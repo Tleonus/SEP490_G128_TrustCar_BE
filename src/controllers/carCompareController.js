@@ -4,15 +4,16 @@
  * Contains ZERO business logic; delegates to carCompareService.js.
  *
  * Routes handled:
- * - GET /api/v1/customer/cars/compare → compareCars
+ * - GET /api/v1/public/cars/compare   → compareCars (anyone, including guests)
+ * - GET /api/v1/customer/cars/compare → compareCars (logged-in; kept for older clients)
  */
 
 import * as carCompareService from '../services/carCompareService.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 
 /**
- * @route   GET /api/v1/customer/cars/compare?ids=a,b,c
- * @access  Any logged-in role (KAN-57). Anonymous callers get 401.
+ * @route   GET /api/v1/public/cars/compare?ids=a,b,c  (and /api/v1/customer/cars/compare)
+ * @access  Public route: anyone. Customer route: any logged-in role (KAN-57); anonymous gets 401 there.
  * @query   ids – 2 to 3 distinct vehicle _id values (already normalised to an array by validateQuery)
  * @desc    Returns the allow-listed public attributes of the selected AVAILABLE vehicles
  *          side by side, plus the ids that are no longer available.

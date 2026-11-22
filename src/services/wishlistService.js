@@ -246,16 +246,12 @@ export const getWishlist = async (userId, query = {}) => {
  * @param {string} params.userId
  * @param {string} params.carId
  * @param {boolean} [params.priceAlertEnabled]
- * @param {string} [params.ipAddress]
- * @param {string} [params.userAgent]
  * @returns {Promise<{ created: boolean, alreadySaved: boolean, item: object }>}
  */
 export const saveCarToWishlist = async ({
   userId,
   carId,
   priceAlertEnabled,
-  ipAddress,
-  userAgent,
 }) => {
   const existing = await wishlistRepo.findSavedByUserAndCar(userId, carId);
   if (existing) {
@@ -317,8 +313,6 @@ export const saveCarToWishlist = async ({
     targetId: car._id,
     targetCode: car.vehicleCode,
     summary: `Customer saved vehicle ${car.vehicleCode} to wishlist`,
-    ipAddress,
-    userAgent,
   });
 
   return {
@@ -336,16 +330,12 @@ export const saveCarToWishlist = async ({
  * @param {string} params.userId
  * @param {string[]} params.carIds - Validated 24-hex ObjectId strings (0–50 items).
  * @param {boolean} [params.priceAlertEnabled=true]
- * @param {string} [params.ipAddress]
- * @param {string} [params.userAgent]
  * @returns {Promise<object>}
  */
 export const syncGuestWishlist = async ({
   userId,
   carIds = [],
   priceAlertEnabled = true,
-  ipAddress,
-  userAgent,
 }) => {
   const uniqueIds = [...new Set(carIds.map((id) => id.trim().toLowerCase()))];
 
@@ -417,8 +407,6 @@ export const syncGuestWishlist = async ({
       targetModel: 'User',
       targetId: userId,
       summary: `Synced ${syncedCount} guest localStorage vehicle(s) to customer wishlist`,
-      ipAddress,
-      userAgent,
     });
   }
 
@@ -464,11 +452,9 @@ export const togglePriceAlert = async ({ userId, carId, priceAlertEnabled }) => 
  * @param {object} params
  * @param {string} params.userId
  * @param {string} params.carId
- * @param {string} [params.ipAddress]
- * @param {string} [params.userAgent]
  * @returns {Promise<{ carId: string, removed: boolean }>}
  */
-export const removeCarFromWishlist = async ({ userId, carId, ipAddress, userAgent }) => {
+export const removeCarFromWishlist = async ({ userId, carId }) => {
   const deleted = await wishlistRepo.deleteSavedCar(userId, carId);
   if (!deleted) {
     throw new AppError(MSG.MSG76.message, MSG.MSG76.httpStatus, MSG.MSG76.code);
@@ -480,8 +466,6 @@ export const removeCarFromWishlist = async ({ userId, carId, ipAddress, userAgen
     targetModel: 'Car',
     targetId: deleted.car,
     summary: `Customer removed vehicle ${carId} from wishlist`,
-    ipAddress,
-    userAgent,
   });
 
   return { carId: String(carId), removed: true };
@@ -692,7 +676,7 @@ export const notifyPriceDropForCar = async ({
         emailSent = true;
         emailedCount += 1;
       } catch (mailErr) {
-        logger.error(`Price drop alert email failed for user ${user._id} on car ${car._id}: ${mailErr.message}`);
+        logger.error('Price drop alert email delivery failed');
       }
     }
 
@@ -733,7 +717,7 @@ export const dispatchPriceDropAlertsSafely = async (params) => {
   try {
     return await notifyPriceDropForCar(params);
   } catch (err) {
-    logger.error(`Failed to dispatch price drop alerts for car ${params?.carId}: ${err.message}`);
+    logger.error('Price drop alert dispatch failed');
     return { notifiedCount: 0, emailedCount: 0 };
   }
 };

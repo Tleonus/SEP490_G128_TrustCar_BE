@@ -15,6 +15,7 @@ import { verifyToken } from '../middlewares/authMiddleware.js';
 import { requireRole } from '../middlewares/roleMiddleware.js';
 import { validate, validateQuery } from '../middlewares/validateMiddleware.js';
 import { LeadStage, Roles, PAGINATION } from '../constants/appConstants.js';
+import { HOT_LEADS_MAX_LIMIT } from '../constants/leadScoringConstants.js';
 
 const router = Router();
 
@@ -39,6 +40,16 @@ const addNoteSchema = Joi.object({
     'any.required':  'Vui lòng nhập nội dung ghi chú.',
   }),
 });
+
+const hotLeadsQuerySchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(HOT_LEADS_MAX_LIMIT).default(20),
+});
+
+/**
+ * @route   GET /api/v1/leads/hot (KAN-97) — MUST be declared before `/:id`
+ * @access  ADMIN, SALES_STAFF
+ */
+router.get('/hot', validateQuery(hotLeadsQuerySchema), leadController.listHotLeads);
 
 /**
  * @route   GET /api/v1/leads

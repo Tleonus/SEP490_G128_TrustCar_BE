@@ -95,14 +95,18 @@ describe('buildCaptionFacts', () => {
 
     expect(f).toMatchObject({
       make: 'TOYOTA', model: 'Vios', year: 2020, mileage: 50000, price: 520000000,
-      priceLabel: '520 triệu', transmission: 'số tự động', fuelType: 'xăng',
-      bodyType: 'sedan', cpoCode: 'CPO-20261102-3F9A', criteriaCount: 5,
+      priceLabel: '520 triệu', priceBandLabel: 'tầm 500 triệu', transmission: 'số tự động',
+      fuelType: 'xăng', bodyType: 'sedan', cpoCode: 'CPO-20261102-3F9A', criteriaCount: 5,
     });
     expect(f.imageUrl).toContain('vios.jpg');
-    // No field that is not in the car document.
+    // The bullets quote the real checklist groups, not a generic "5 tiêu chí".
+    expect(f.criteriaLabels).toHaveLength(5);
+    expect(f.criteriaLabels[0]).toContain('Khung gầm');
+    // No field that is not in the car document (criteriaLabels is derived from the checklist).
     expect(Object.keys(f).sort()).toEqual([
-      'bodyType', 'conditionGrade', 'cpoCode', 'criteriaCount', 'fuelType', 'imageUrl',
-      'make', 'mileage', 'model', 'price', 'priceLabel', 'transmission', 'variant', 'year',
+      'bodyType', 'conditionGrade', 'cpoCode', 'criteriaCount', 'criteriaLabels', 'fuelType',
+      'imageUrl', 'make', 'mileage', 'model', 'price', 'priceBandLabel', 'priceLabel',
+      'transmission', 'variant', 'year',
     ]);
   });
 
@@ -111,6 +115,18 @@ describe('buildCaptionFacts', () => {
 
     expect(f.cpoCode).toBeNull();
     expect(f.criteriaCount).toBe(0);
+    expect(f.criteriaLabels).toEqual([]);
+  });
+
+  test('price band rounds down, so the phrase can never overstate the price', () => {
+    const band = (price) => buildCaptionFacts({ ...baseCar, price }).priceBandLabel;
+
+    expect(band(520000000)).toBe('tầm 500 triệu');
+    expect(band(615000000)).toBe('tầm 600 triệu');
+    expect(band(660000000)).toBe('tầm 650 triệu');
+    // Below 50 triệu a downward band would be 0, so it rounds up as a ceiling.
+    expect(band(35000000)).toBe('dưới 50 triệu');
+    expect(band(null)).toBe('');
   });
 
   test('social image wins over the primary image, and publicId is never exposed', () => {
@@ -154,6 +170,13 @@ describe('captionGuard', () => {
   test('a caption with no numbers always passes', () => {
     expect(isGrounded('Xe gia đình đã kiểm định, mời anh chị ghé xem.', allowedNumbers(facts()))).toBe(true);
   });
+
+  test('the price band is allowed, a different band is not', () => {
+    const allowed = allowedNumbers(facts()); // 520 triệu → band 500
+
+    expect(isGrounded('Giá: 520 triệu (tầm 500 triệu)', allowed)).toBe(true);
+    expect(isGrounded('Giá chỉ tầm 450 triệu', allowed)).toBe(false);
+  });
 });
 
 // ── Templates ────────────────────────────────────────────────────────────────
@@ -171,11 +194,75 @@ describe('buildTemplateCaptions', () => {
     }
   });
 
-  test('short captions omit the detail and closer lines', () => {
+  test('medium captions follow the agreed form: caps title, bullets, price, CTA', () => {
+    const [first] = buildTemplateCaptions(facts(), { tone: 'professional', length: 'medium' }).captions;
+    const lines = first.split('\n');
+
+    // Title carries the car (make upper-cased, model casing kept as stored).
+    expect(lines[0]).toBe('TOYOTA Vios 1.5G 2020 — XE ĐÃ QUA THẨM ĐỊNH TẠI TRUSTCAR');
+    expect(first).toContain('• Phiên bản: 1.5G 2020');
+    expect(first).toContain('• Số km đã đi: 50,000 km');
+    expect(first).toContain('• số tự động · máy xăng · sedan');
+    expect(first).toContain('• Đã qua thẩm định 5 nhóm tiêu chí tại TrustCar, có chứng nhận CPO');
+    expect(first).toContain('Giá: 520 triệu (tầm 500 triệu)');
+    expect(first).toContain('Inbox TrustCar');
+    // Used-car showroom: never sold as new, never with an invented warranty.
+    expect(first).not.toMatch(/mới 100%|bảo hành/i);
+    expect(first).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  test('every option has a different approach, not just a different first line', () => {
+    const captions = buildTemplateCaptions(facts(), { tone: 'professional', length: 'medium' }).captions;
+    const titles = new Set(captions.map((c) => c.split('\n')[0]));
+
+    expect(titles.size).toBe(3);
+    expect(captions[1]).not.toBe(captions[0]);
+  });
+
+  test('an uncertified car is not sold as CPO and falls back to its graded condition', () => {
+    const certified = { ...baseCar };
+    const uncertified = { ...baseCar, cpoCertificateId: null };
+    const [first] = buildTemplateCaptions(buildCaptionFacts(uncertified), { length: 'medium' }).captions;
+
+    expect(first).not.toContain('chứng nhận CPO');
+    expect(first).not.toContain('nhóm tiêu chí');
+    // It still has a real, stored condition grade to talk about instead.
+    expect(first).toContain('• Tình trạng A theo biên bản kiểm tra tại TrustCar');
+    expect(certified.cpoCertificateId).toBeTruthy();
+  });
+
+  test('a car with neither CPO nor a condition grade claims only the workshop check', () => {
+    const [first] = buildTemplateCaptions(
+      buildCaptionFacts({ ...baseCar, cpoCertificateId: null, conditionGrade: null }),
+      { length: 'medium' },
+    ).captions;
+
+    expect(first).toContain('• Đã kiểm tra ngoại quan và vận hành tại TrustCar');
+  });
+
+  test('a missing odometer is omitted, never replaced by "xe mới"', () => {
+    const [first] = buildTemplateCaptions(
+      buildCaptionFacts({ ...baseCar, mileage: null }),
+      { length: 'medium' },
+    ).captions;
+
+    expect(first).not.toContain('Số km đã đi');
+    expect(first).not.toContain('Xe mới về showroom');
+    expect(first).not.toMatch(/xe mới/i);
+    // The rest of the block still renders.
+    expect(first).toContain('• Phiên bản: 1.5G 2020');
+    expect(first).toContain('Giá: 520 triệu');
+  });
+
+  test('short captions stay compact but still price, odometer and CTA', () => {
     const [first] = buildTemplateCaptions(facts(), { length: 'short' }).captions;
 
-    expect(first).not.toContain('km');
+    expect(first.split('\n').length).toBeLessThanOrEqual(5);
+    expect(first).toContain('50,000 km');
     expect(first).toContain('520 triệu');
+    expect(first).toContain('Inbox TrustCar');
+    // The bullet block belongs to the medium form only.
+    expect(first).not.toContain('•');
   });
 
   test('hashtags come from the car, not from a fixed promo list', () => {
@@ -185,6 +272,16 @@ describe('buildTemplateCaptions', () => {
     expect(hashtags).toContain('#CPO');
     expect(hashtags).toContain('#Zalo');
     expect(hashtags.every((t) => /^#\w+$/.test(t))).toBe(true);
+  });
+
+  test('hyphenated makes are camel-cased so Facebook does not truncate the tag', () => {
+    const { hashtags } = buildTemplateCaptions(
+      buildCaptionFacts({ ...baseCar, make: 'MERCEDES-BENZ', model: 'C-Class' }),
+    );
+
+    expect(hashtags).toContain('#MercedesBenz');
+    expect(hashtags).toContain('#CClass');
+    expect(hashtags.some((t) => t.includes('-'))).toBe(false);
   });
 });
 
@@ -282,6 +379,35 @@ describe('generateCaptions', () => {
     expect(llm.complete).toHaveBeenCalledTimes(2);
   });
 
+  test('changing the image invalidates the cache', async () => {
+    llm.configured = true;
+    llm.reply = llmReply(['Vios 2020, giĂ¡ 520 triá»‡u.']);
+    await generate();
+
+    putCar({ images: [{ url: 'https://res.cloudinary.com/demo/image/upload/v1/trustcar/cars/vios-new.jpg', isPrimary: true }] });
+    const result = await generate();
+
+    expect(result.cached).toBe(false);
+    expect(result.imageSuggestion.url).toContain('vios-new.jpg');
+    expect(llm.complete).toHaveBeenCalledTimes(2);
+  });
+
+  test('cars with identical facts do not share cached captions or images', async () => {
+    llm.configured = true;
+    llm.reply = llmReply(['Vios 2020, giĂ¡ 520 triá»‡u.']);
+    const first = await generate();
+    const otherCarId = '65f000000000000000000043';
+    carStore.set(otherCarId, { ...baseCar, _id: otherCarId });
+
+    const second = await generate({ carId: otherCarId });
+
+    expect(first.carId).toBe(CAR_ID);
+    expect(second.cached).toBe(false);
+    expect(second.carId).toBe(otherCarId);
+    expect(contentStore).toHaveLength(2);
+    expect(llm.complete).toHaveBeenCalledTimes(2);
+  });
+
   test('different tone/platform/length are cached separately', async () => {
     await generate({ tone: 'friendly' });
     await generate({ tone: 'urgent' });
@@ -313,5 +439,16 @@ describe('generateCaptions', () => {
 
     expect(result.hashtags.join(' ')).not.toContain('Giam30Trieu');
     expect(result.hashtags.some((t) => t.includes('Vios'))).toBe(true);
+  });
+
+  test('hashtags with invented numbers are removed even when enough safe tags remain', async () => {
+    llm.configured = true;
+    llm.reply = llmReply(['Vios 2020, 50.000 km, giĂ¡ 520 triá»‡u.'], {
+      hashtags: ['#Vios', '#Giam30Trieu', '#TrustCar'],
+    });
+
+    const result = await generate();
+
+    expect(result.hashtags).toEqual(['#Vios', '#TrustCar']);
   });
 });

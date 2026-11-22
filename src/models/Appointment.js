@@ -7,12 +7,15 @@
  *   repair work orders, or technician dispatching are tracked here.
  *
  * Key constraints:
- * - appointmentCode auto-generated (APT-NNNN) by testDriveBookingService.js.
+ * - appointmentCode auto-generated (APT-NNNN) by appointmentWrite.js.
  * - scheduledAt must be ≥ 2 hours ahead and ≤ 60 days ahead (GBR-19).
  * - No overlapping CONFIRMED/PENDING appointments for the same car (GBR-20).
- * - slotSeat marks an appointment that holds a place in its time slot. Removing it
- *   gives the place back, and the partial unique indexes below only cover documents
- *   that have it, so older appointments are never affected.
+ * - slotSeat marks an appointment that holds a place in its time slot (older KAN-28 rows). Removing
+ *   it gives the place back, and the partial unique indexes below only cover documents that have
+ *   it, so newer appointments are never affected.
+ * - holdsCar / visitSeat are the hold fields of the visit model: every open row holds its car, one
+ *   row per visit holds the seat. They are released in the update that closes the row. Their unique
+ *   indexes (appointmentHoldIndexes.js) are created by the migration script only, never here.
  * - Soft-delete only (GBR-25).
  */
 
@@ -39,7 +42,12 @@ const AppointmentSchema = new mongoose.Schema(
     car: {
       type:     mongoose.Schema.Types.ObjectId,
       ref:      'Car',
-      required: [true, 'Car reference is required.'],
+      // KAN-96: SERVICE appointments don't bind to a showroom car; every other
+      // appointment type still requires one.
+      required: [
+        function () { return this.type !== AppointmentType.SERVICE; },
+        'Car reference is required.',
+      ],
       index:    true,
     },
 
@@ -122,6 +130,21 @@ const AppointmentSchema = new mongoose.Schema(
       // Present only while PENDING/CONFIRMED; 1…maxGuestsPerSlot within the slot
     },
 
+    // ── Visit holds (test-drive-capacity-guard) ────────────────────────
+    // Present only while the row is open (PENDING/CONFIRMED, isActive). Both are $unset in the
+    // same update that closes the row. The unique indexes that use them are NOT declared here:
+    // see appointmentHoldIndexes.js (created only by the migration script).
+    holdsCar: {
+      type: Boolean,
+      // true on every open row: one open row per (car, scheduledAt)
+    },
+
+    visitSeat: {
+      type: Number,
+      min:  1,
+      // Only on ONE row of a visit (lowest appointmentCode): the visit's seat in its slot
+    },
+
     reminderSentAt: {
       type: Date,
       // Set before sending so that overlapping scans cannot send twice; cleared on failure
@@ -133,6 +156,31 @@ const AppointmentSchema = new mongoose.Schema(
       maxlength: 1000,
       default:   null,
       // Outcome notes recorded after completion
+    },
+
+    // ── Service appointment (KAN-96) ──────────────────────────────────
+    // Only set when `type === SERVICE`. The snapshot freezes the package's
+    // name and price at booking time so a later admin edit of the gói
+    // cannot retroactively change what the customer booked.
+    service: {
+      type:    mongoose.Schema.Types.ObjectId,
+      ref:     'ShowroomService',
+      default: null,
+    },
+    serviceSnapshot: {
+      type: new mongoose.Schema(
+        {
+          code:             { type: String, trim: true },
+          serviceName:      { type: String, trim: true },
+          referencePrice:   { type: Number, min: 0 },
+          estimatedMinutes: { type: Number, min: 0 },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
+    serviceVehiclePlate: {
+      type: String, trim: true, uppercase: true, maxlength: 15, default: null,
     },
 
     // ── Status ────────────────────────────────────────────────────────
@@ -178,6 +226,22 @@ AppointmentSchema.index({ customer: 1 });
 AppointmentSchema.index({ assignedTo: 1 });
 AppointmentSchema.index({ status: 1, scheduledAt: 1 });
 AppointmentSchema.index({ appointmentCode: 1 });
+
+// KAN-96: a customer can only hold ONE open SERVICE appointment at a given slot.
+// The partial filter means the index does not interfere with TEST_DRIVE rows
+// (same (customer, scheduledAt) can host test-drive + service in different docs).
+AppointmentSchema.index(
+  { customer: 1, scheduledAt: 1 },
+  {
+    name:   'uniq_service_open_per_customer_slot',
+    unique: true,
+    partialFilterExpression: {
+      type:     AppointmentType.SERVICE,
+      status:   { $in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
+      isActive: true,
+    },
+  },
+);
 
 // Concurrent bookings: the database refuses a second holder of the same car, staff
 // member or seat at the same time, whichever request got there first.

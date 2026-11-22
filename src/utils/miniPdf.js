@@ -81,17 +81,47 @@ export const wrapText = (text, fontSize, maxWidth) => {
   return lines.length ? lines : [''];
 };
 
+const num = (n) => Number(n).toFixed(2);
+
 /**
- * Builds a one-page PDF document.
+ * Serialises a list of object bodies (1-indexed) into a complete PDF 1.4 file.
+ * Shared by the single-page and multi-page branches.
+ */
+const assemble = (objects, catalogId) => {
+  const header = Buffer.from('%PDF-1.4\n%\xFF\xFF\xFF\xFF\n', 'latin1');
+  const parts = [header];
+  const offsets = [0];
+  objects.forEach((body, i) => {
+    offsets.push(parts.reduce((sum, p) => sum + p.length, 0));
+    parts.push(Buffer.from(`${i + 1} 0 obj\n${body}\nendobj\n`, 'latin1'));
+  });
+  const xrefPos = parts.reduce((sum, p) => sum + p.length, 0);
+  const rows = ['0000000000 65535 f \n', ...offsets.slice(1).map((o) => `${String(o).padStart(10, '0')} 00000 n \n`)];
+  parts.push(Buffer.from(`xref\n0 ${objects.length + 1}\n${rows.join('')}`, 'latin1'));
+  parts.push(Buffer.from(`trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`, 'latin1'));
+  return Buffer.concat(parts);
+};
+
+/**
+ * Builds a one- or multi-page PDF document. Call `newPage()` between pages; the
+ * single-page branch stays byte-identical to pre-KAN-98 output when `newPage`
+ * is never called.
+ *
  * @param {{ width?: number, height?: number }} [options] page size in points (default A4).
  */
 export const createPdf = ({ width = 595.28, height = 841.89 } = {}) => {
-  const commands = [];
-  const num = (n) => Number(n).toFixed(2);
+  let commands = [];
+  const finishedPages = [];
 
-  return {
+  const api = {
     width,
     height,
+
+    /** Closes the current page and starts a new one. Single-page callers must not call this. */
+    newPage() {
+      finishedPages.push(commands.join('\n'));
+      commands = [];
+    },
 
     /** Filled rectangle. `color` is [r, g, b] in 0..1. */
     rect(x, y, w, h, color = [0, 0, 0]) {
@@ -133,42 +163,60 @@ export const createPdf = ({ width = 595.28, height = 841.89 } = {}) => {
 
     /** @returns {Buffer} the finished PDF. */
     toBuffer() {
-      const content = Buffer.from(`${commands.join('\n')}\n`, 'latin1');
+      // ── Single-page branch: unchanged from pre-KAN-98 output ────────────
+      if (finishedPages.length === 0) {
+        const content = Buffer.from(`${commands.join('\n')}\n`, 'latin1');
+        const objects = [];
+        const add = (body) => { objects.push(body); return objects.length; };
+
+        const catalogId = add('<< /Type /Catalog /Pages 2 0 R >>');
+        const pagesId = add('<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+        const pageId = add([
+          '<< /Type /Page',
+          `/Parent ${pagesId} 0 R`,
+          `/MediaBox [0 0 ${num(width)} ${num(height)}]`,
+          '/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >>',
+          '/Contents 4 0 R >>',
+        ].join(' '));
+        const contentId = add(`<< /Length ${content.length} >>\nstream\n${content.toString('latin1')}endstream`);
+        add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+        add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+
+        if ([catalogId, pagesId, pageId, contentId].some((id, i) => id !== i + 1)) {
+          throw new Error('Unexpected PDF object ordering.');
+        }
+        return assemble(objects, catalogId);
+      }
+
+      // ── Multi-page branch: assign font ids dynamically ──────────────────
+      const contents = [...finishedPages, commands.join('\n')];
       const objects = [];
       const add = (body) => { objects.push(body); return objects.length; };
 
-      const catalogId = add('<< /Type /Catalog /Pages 2 0 R >>');
-      const pagesId = add('<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
-      const pageId = add([
-        '<< /Type /Page',
-        `/Parent ${pagesId} 0 R`,
-        `/MediaBox [0 0 ${num(width)} ${num(height)}]`,
-        '/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >>',
-        '/Contents 4 0 R >>',
-      ].join(' '));
-      const contentId = add(`<< /Length ${content.length} >>\nstream\n${content.toString('latin1')}endstream`);
-      add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
-      add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+      const catalogId = add(null); // placeholder
+      const pagesId   = add(null); // placeholder
+      const fontId    = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+      const fontBoldId = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
 
-      // Object numbers above assume this exact insertion order; assert it.
-      if ([catalogId, pagesId, pageId, contentId].some((id, i) => id !== i + 1)) {
-        throw new Error('Unexpected PDF object ordering.');
-      }
-
-      const header = Buffer.from('%PDF-1.4\n%\xFF\xFF\xFF\xFF\n', 'latin1');
-      const parts = [header];
-      const offsets = [0];
-      objects.forEach((body, i) => {
-        offsets.push(parts.reduce((sum, p) => sum + p.length, 0));
-        parts.push(Buffer.from(`${i + 1} 0 obj\n${body}\nendobj\n`, 'latin1'));
+      const pageIds = contents.map((raw) => {
+        const content = Buffer.from(`${raw}\n`, 'latin1');
+        const contentId = add(`<< /Length ${content.length} >>\nstream\n${content.toString('latin1')}endstream`);
+        return add([
+          '<< /Type /Page',
+          `/Parent ${pagesId} 0 R`,
+          `/MediaBox [0 0 ${num(width)} ${num(height)}]`,
+          `/Resources << /Font << /F1 ${fontId} 0 R /F2 ${fontBoldId} 0 R >> >>`,
+          `/Contents ${contentId} 0 R >>`,
+        ].join(' '));
       });
-      const xrefPos = parts.reduce((sum, p) => sum + p.length, 0);
-      const rows = ['0000000000 65535 f \n', ...offsets.slice(1).map((o) => `${String(o).padStart(10, '0')} 00000 n \n`)];
-      parts.push(Buffer.from(`xref\n0 ${objects.length + 1}\n${rows.join('')}`, 'latin1'));
-      parts.push(Buffer.from(`trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`, 'latin1'));
-      return Buffer.concat(parts);
+
+      objects[pagesId - 1]   = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
+      objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
+
+      return assemble(objects, catalogId);
     },
   };
+  return api;
 };
 
 export default { createPdf, textWidth, wrapText };

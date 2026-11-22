@@ -51,6 +51,8 @@ export const seedAdminAccount = async () => {
       password, // Pre-save hook will hash this
       role:     adminRole._id,
       roleName: Roles.ADMIN,
+      roles:     [adminRole._id],   // KAN-93
+      roleNames: [Roles.ADMIN],     // KAN-93
       isActive: true,
     });
 

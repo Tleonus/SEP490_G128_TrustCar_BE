@@ -330,7 +330,7 @@ export const setupAuthHarness = async () => {
 
   // ── Roles (fixed ids so tests can compare) ────────────────────────────────
   const roleIds = Object.fromEntries(
-    ['ADMIN', 'SALES_STAFF', 'CUSTOMER'].map((name) => [name, new mongoose.Types.ObjectId()])
+    ['ADMIN', 'SALES_STAFF', 'CUSTOMER', 'INSPECTOR'].map((name) => [name, new mongoose.Types.ObjectId()])
   );
   jest.spyOn(Role, 'findOne').mockImplementation((filter = {}) => listQuery(() => {
     const name = filter.name;
@@ -374,12 +374,16 @@ export const setupAuthHarness = async () => {
       // password: null → account without password (Google-only customer)
       const plain = overrides.password === null ? undefined : (overrides.password || 'TrustCar2026');
       const roleName = overrides.roleName || 'ADMIN';
+      // KAN-93: allow creating a multi-role user via overrides.roleNames.
+      const roleNames = overrides.roleNames || [roleName];
       const doc = new User({
         fullName: 'Test User',
         email:    `user${users.size + 1}@trustcar.vn`,
-        role:     roleIds[roleName],
-        roleName,
         ...overrides,
+        role:      roleIds[roleName],
+        roleName,
+        roles:     overrides.roles || roleNames.map((n) => roleIds[n]).filter(Boolean),
+        roleNames,
         password: plain,
       });
       await doc.save();

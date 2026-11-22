@@ -15,12 +15,12 @@ import 'dotenv/config'; // Load .env FIRST, before any module reads process.env
 
 import app, { corsOptions } from './app.js';
 import { connectDB, disconnectDB } from './config/db.js';
-import { startRealtime, stopRealtime } from './config/realtime.js';
 import { configureCloudinary } from './config/cloudinary.js';
 import Role from './models/Role.js';
 import { seedAdminAccount } from './seeders/adminSeeder.js';
+import { seedShowroomServices } from './seeders/showroomServiceSeeder.js';
+import { startLeadScoringJob, stopLeadScoringJob } from './jobs/leadScoringJob.js';
 import './models/index.js'; // Register the complete ERD model set before startup.
-import { startTestDriveJob, stopTestDriveJob } from './jobs/testDriveJob.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -47,7 +47,13 @@ const startServer = async () => {
     // 4. Seed initial admin account if no admin exists
     await seedAdminAccount();
 
-    // 5. Start HTTP server
+    // 5. Seed default showroom service packages (KAN-96)
+    await seedShowroomServices();
+
+    // 6. Start background jobs (KAN-97 lead scoring)
+    startLeadScoringJob();
+
+    // 7. Start HTTP server
     const server = app.listen(PORT, () => {
       console.log('════════════════════════════════════════════════════');
       console.log(`🚀  TrustCar API Server running on port ${PORT}`);
@@ -57,17 +63,13 @@ const startServer = async () => {
       console.log('════════════════════════════════════════════════════');
     });
 
-    // 6. Realtime notifications share the HTTP server and the API's allowed origins
-    startRealtime(server, { origin: corsOptions.origin });
-
-    // 7. Start periodic test-drive reminders and cancellations
-    startTestDriveJob();
 
     // ── Graceful Shutdown ─────────────────────────────────────────────────
     const shutdown = async (signal) => {
       console.log(`\n⏳  ${signal} received. Graceful shutdown initiated...`);
-      stopTestDriveJob();
-      stopRealtime(); // server.close below would otherwise wait for open connections
+
+      // Stop background jobs (KAN-97)
+      stopLeadScoringJob();
 
       // Stop accepting new connections
       server.close(async () => {

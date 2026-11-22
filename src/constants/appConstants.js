@@ -85,6 +85,7 @@ export const AppointmentType = Object.freeze({
   TEST_DRIVE:  'TEST_DRIVE',
   VIEWING:     'VIEWING',
   MAINTENANCE: 'MAINTENANCE', // Intake scheduling ONLY – NO garage execution (LI-05)
+  SERVICE:     'SERVICE',     // KAN-96: showroom service appointment (wash, polish, …)
 });
 
 export const AppointmentStatus = Object.freeze({
@@ -96,15 +97,16 @@ export const AppointmentStatus = Object.freeze({
 });
 
 // ── User Roles ────────────────────────────────────────────────────────────────
-// Ref: FE-12, FE-13, GBR-02, GBR-03
+// Ref: FE-12, FE-13, GBR-02, GBR-03, KAN-93, KAN-94
 export const Roles = Object.freeze({
   ADMIN:       'ADMIN',
   SALES_STAFF: 'SALES_STAFF',
-  CUSTOMER:    'CUSTOMER', // self-registered website customer – no internal permissions
+  CUSTOMER:    'CUSTOMER',   // self-registered website customer – no internal permissions
+  INSPECTOR:   'INSPECTOR',  // CPO vehicle inspector – KAN-94
 });
 
 // Internal (staff) roles – the only roles Admin can assign via user management.
-export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
+export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF, Roles.INSPECTOR]);
 
 // ── Granular Permissions ───────────────────────────────────────────────────────
 // Ref: FE-13
@@ -138,6 +140,15 @@ export const Permissions = Object.freeze({
   // ── Reporting / Analytics ──
   REPORT_VIEW:       'report:view',
   REPORT_EXPORT:     'report:export',
+
+  // ── Inspection (CPO checklist) — KAN-94 ──
+  INSPECTION_READ:   'inspection:read',
+  INSPECTION_WRITE:  'inspection:write',  // create draft, update, submit
+  INSPECTION_ADMIN:  'inspection:admin',  // reject, approve-sale (ADMIN only)
+
+  // ── Showroom Service (KAN-96) ──
+  SERVICE_READ:      'service:read',
+  SERVICE_WRITE:     'service:write',     // create/update/deactivate service packages
 });
 
 // ── Role → Permission Matrix ───────────────────────────────────────────────────
@@ -160,6 +171,15 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.APPOINTMENT_CREATE,
     Permissions.APPOINTMENT_UPDATE,
     Permissions.REPORT_VIEW,
+    Permissions.INSPECTION_READ,   // KAN-94
+    Permissions.INSPECTION_WRITE,  // KAN-94
+    Permissions.SERVICE_READ,      // KAN-96: read service packages while consulting
+  ],
+
+  [Roles.INSPECTOR]: [             // KAN-94
+    Permissions.CAR_READ,
+    Permissions.INSPECTION_READ,
+    Permissions.INSPECTION_WRITE,
   ],
 
   [Roles.CUSTOMER]: [],
@@ -214,6 +234,8 @@ export const ActivityEventType = Object.freeze({
   CUSTOMER_REGISTERED:   'CUSTOMER_REGISTERED',
   GOOGLE_LINKED:         'GOOGLE_LINKED',
   PROFILE_COMPLETED:     'PROFILE_COMPLETED',
+  PROFILE_UPDATED:       'PROFILE_UPDATED',
+  SETTINGS_UPDATED:      'SETTINGS_UPDATED',
 
   // User Management
   USER_CREATED:          'USER_CREATED',
@@ -242,12 +264,25 @@ export const ActivityEventType = Object.freeze({
   APPOINTMENT_CANCELLED: 'APPOINTMENT_CANCELLED',
   APPOINTMENT_COMPLETED: 'APPOINTMENT_COMPLETED',
   APPOINTMENT_NO_SHOW:   'APPOINTMENT_NO_SHOW',
+  APPOINTMENT_RESCHEDULED: 'APPOINTMENT_RESCHEDULED',
   APPOINTMENT_REASSIGNED: 'APPOINTMENT_REASSIGNED',
   APPOINTMENT_NO_SHOW_CORRECTED: 'APPOINTMENT_NO_SHOW_CORRECTED',
+
+  // Showroom Service (KAN-96)
+  SERVICE_CREATED:        'SERVICE_CREATED',
+  SERVICE_UPDATED:        'SERVICE_UPDATED',
+  SERVICE_DEACTIVATED:    'SERVICE_DEACTIVATED',
+  SERVICE_APPOINTMENT_CREATED:   'SERVICE_APPOINTMENT_CREATED',
+  SERVICE_APPOINTMENT_CANCELLED: 'SERVICE_APPOINTMENT_CANCELLED',
+
+  // Lead Scoring (KAN-97)
+  LEAD_SCORE_UPDATED:     'LEAD_SCORE_UPDATED',
+  INTERACTION_TRACKED:    'INTERACTION_TRACKED',
 
   // Inspection (CPO checklist)
   INSPECTION_DRAFT_CREATED: 'INSPECTION_DRAFT_CREATED',
   INSPECTION_SUBMITTED:     'INSPECTION_SUBMITTED',
+  INSPECTION_REJECTED:      'INSPECTION_REJECTED',
 
   // Wishlist & Price Drop Alerts
   CAR_SAVED_WISHLIST:       'CAR_SAVED_WISHLIST',
@@ -280,40 +315,3 @@ export const APPOINTMENT_CONSTRAINTS = Object.freeze({
   CONFLICT_BUFFER_MIN: 30,  // ±30 minute buffer for conflict detection (GBR-20)
 });
 
-// ── Test-Drive Booking ───────────────────────────────────────────────────────
-export const TEST_DRIVE_LIMITS = Object.freeze({
-  MAX_ACTIVE_BOOKINGS:       2,  // Upcoming bookings per customer
-  MAX_ACTIVE_PER_CAR:        1,  // Upcoming bookings per customer and car
-  MAX_BOOKINGS_PER_DAY:      3,  // Includes cancelled bookings
-  MAX_COMPLETED_IN_WINDOW:   3,  // Completed test drives within WINDOW_DAYS
-  NO_SHOWS_TO_LOCK:          2,  // Within WINDOW_DAYS of each other
-  WINDOW_DAYS:               30,
-  LOCK_DAYS:                 30, // Counted from the latest no-show's scheduled time
-  NEAREST_SLOTS:             3,  // Alternatives returned on SLOT_FULL/CAR_SLOT_TAKEN
-  NEAREST_SLOTS_DAYS:        7,
-  BOOKING_MAX_ATTEMPTS:      5,  // Transaction retries on write conflict/duplicate key
-  BOOKING_RATE_MAX:          10, // Booking requests per account per window
-  BOOKING_RATE_WINDOW_MS:    15 * 60 * 1000,
-  REMINDER_LEAD_MINUTES:     60,
-  JOB_INTERVAL_MS:           5 * 60 * 1000,
-  JOB_BATCH_SIZE:            200,
-});
-
-// Statuses in which an appointment holds its place in a slot.
-export const TEST_DRIVE_ACTIVE_STATUSES = Object.freeze([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]);
-
-// Staff-selectable cancellation reasons; the text is what the customer sees.
-export const TestDriveCancelReason = Object.freeze({
-  SLOT_FULL:       'SLOT_FULL',
-  OVER_CAPACITY:   'OVER_CAPACITY',
-  CAR_UNAVAILABLE: 'CAR_UNAVAILABLE',
-  OTHER:           'OTHER',
-});
-
-export const TEST_DRIVE_CANCEL_TEXT = Object.freeze({
-  SLOT_FULL:          'Khung giờ đã hết chỗ',
-  OVER_CAPACITY:      'Showroom quá số lượng khách trong khung giờ này',
-  CAR_UNAVAILABLE:    'Xe không còn sẵn sàng để lái thử',
-  OTHER:              'Lý do khác',
-  CUSTOMER_CANCELLED: 'Khách hủy lịch',
-});

@@ -9,7 +9,9 @@
 import { Router } from 'express';
 import Joi from 'joi';
 import * as publicCarController from '../controllers/publicCarController.js';
+import * as carCompareController from '../controllers/carCompareController.js';
 import { validateQuery } from '../middlewares/validateMiddleware.js';
+import { compareQuerySchema } from './carCompareSchemas.js';
 import { BodyType, FuelType, Transmission, DriveType, PAGINATION } from '../constants/appConstants.js';
 
 const router = Router();
@@ -82,6 +84,16 @@ router.get('/filters', publicCarController.getFilterOptions);
  *          Ref: FE-01 (homepage featured section)
  */
 router.get('/featured', publicCarController.getFeaturedCars);
+
+/**
+ * @route   GET /api/v1/public/cars/compare?ids=a,b,c
+ * @access  Public (guests, customers, staff and admins alike; no token needed)
+ * @desc    Side-by-side comparison of 2–3 AVAILABLE vehicles (allow-listed fields only,
+ *          the same public attributes the catalog already shows).
+ *          Must be before /:id so Express doesn't capture "compare" as an ID.
+ *          Ref: .sdd/features/vehicle-comparison/SPEC.md (REQ-005, 007, 008, 009)
+ */
+router.get('/compare', validateQuery(compareQuerySchema), carCompareController.compareCars);
 
 /**
  * @route   GET /api/v1/public/cars

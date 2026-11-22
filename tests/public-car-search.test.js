@@ -76,6 +76,13 @@ test('matches comma-separated lists with $in', async () => {
   });
 });
 
+test('filters and summarizes drive type and condition grade', async () => {
+  const result = await getAvailableCars({ driveType: 'AWD', conditionGrade: 'A' });
+
+  expect(filterOf()).toMatchObject({ driveType: 'AWD', conditionGrade: 'A' });
+  expect(result.filterSummary).toMatchObject({ driveType: ['AWD'], conditionGrade: ['A'] });
+});
+
 test('filters colour, year and mileage', async () => {
   await getAvailableCars({ color: 'Đỏ', minYear: '2020', maxYear: '2024', maxMileage: '50000' });
 
@@ -152,4 +159,14 @@ test('keeps the legacy param names the current front-end sends', async () => {
     year: { $gte: 2019 },
     mileage: { $lte: 80000 },
   });
+});
+
+test('multi-token search matches each token across fields and recognizes Vietnamese specs & model aliases', async () => {
+  await getAvailableCars({ search: 'Mazda CX5 2022 số tự động' });
+
+  const f = filterOf();
+  expect(f.transmission).toBe('AUTOMATIC');
+  expect(f.$and).toHaveLength(3);
+  expect(f.$and[1].$or[1].model.$regex).toBe('cx[-\\s]?5');
+  expect(f.$and[2].$or).toContainEqual({ year: 2022 });
 });

@@ -140,6 +140,157 @@ const matchOneOrMany = (value, { uppercase = false } = {}) => {
  */
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const normalizeNoAccent = (text = '') =>
+  String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const COMPACT_TOKEN_ALIASES = [
+  { test: /^cx-?5$/i, pattern: 'cx[-\\s]?5' },
+  { test: /^cx-?8$/i, pattern: 'cx[-\\s]?8' },
+  { test: /^cx-?3$/i, pattern: 'cx[-\\s]?3' },
+  { test: /^cx-?30$/i, pattern: 'cx[-\\s]?30' },
+  { test: /^cr-?v$/i, pattern: 'cr[-\\s]?v' },
+  { test: /^hr-?v$/i, pattern: 'hr[-\\s]?v' },
+  { test: /^br-?v$/i, pattern: 'br[-\\s]?v' },
+  { test: /^vf-?([3-9]|e34)$/i, pattern: 'vf[-\\s]?$1' },
+  { test: /^mazda-?([236])$/i, pattern: 'mazda[-\\s]?$1' },
+  { test: /^santafe$/i, pattern: 'santa[-\\s]?fe' },
+  { test: /^huyndai$/i, pattern: '(?:hyundai|huyndai)' },
+  { test: /^merc(?:edes)?$/i, pattern: 'mercedes' },
+  { test: /^mitsu(?:bishi)?$/i, pattern: 'mitsubishi' },
+];
+
+const SEARCH_STOPWORDS = new Set(['xe', 'oto', 'tim', 'mua', 'can', 'doi', 'nam', 'mau', 'dong', 'chiec']);
+
+const buildTokenClause = (token) => {
+  const alias = COMPACT_TOKEN_ALIASES.find((a) => a.test.test(token));
+  const pattern = alias ? token.replace(alias.test, alias.pattern) : escapeRegex(token);
+  const regex = { $regex: pattern, $options: 'i' };
+
+  const orList = [
+    { make: regex },
+    { model: regex },
+    { variant: regex },
+    { vehicleCode: regex },
+    { bodyType: regex },
+    { 'specifications.color': regex },
+  ];
+
+  if (/^(199\d|20[0-3]\d)$/.test(token)) {
+    orList.push({ year: Number(token) });
+  }
+
+  return { $or: orList };
+};
+
+const applySmartSearchToFilter = (filter, rawSearch) => {
+  const trimmed = String(rawSearch || '').trim();
+  if (!trimmed) return;
+
+  const isSingleToken = !/\s/.test(trimmed);
+  const isSpecialSingleToken =
+    /^(199\d|20[0-3]\d)$/.test(trimmed) ||
+    COMPACT_TOKEN_ALIASES.some((a) => a.test.test(trimmed));
+
+  // Keep exact single-keyword 4-field $or contract when a single plain keyword is passed
+  if (isSingleToken && !isSpecialSingleToken) {
+    const regex = { $regex: escapeRegex(trimmed), $options: 'i' };
+    filter.$or = [
+      { make: regex },
+      { model: regex },
+      { variant: regex },
+      { vehicleCode: regex },
+    ];
+    return;
+  }
+
+  if (isSingleToken && isSpecialSingleToken) {
+    const clause = buildTokenClause(trimmed);
+    filter.$or = clause.$or;
+    return;
+  }
+
+  // Multi-word smart search: detect natural Vietnamese phrases + match all remaining tokens
+  let working = trimmed;
+  let norm = normalizeNoAccent(working);
+
+  // Normalize multi-word model names into single hyphenated tokens before splitting
+  working = working
+    .replace(/\bsanta\s+fe\b/gi, 'santafe')
+    .replace(/\bmazda\s+([236])\b/gi, 'mazda$1')
+    .replace(/\bvf\s+([3-9]|e34)\b/gi, 'vf$1')
+    .replace(/\b(cx|cr|hr|br)\s+([358v0]+)\b/gi, '$1-$2');
+  norm = normalizeNoAccent(working);
+
+  if (!filter.bodyType) {
+    if (/\b(gam cao|suv|crossover|cuv)\b/.test(norm)) {
+      filter.bodyType = 'SUV';
+      working = working.replace(/gầm\s*cao|gam\s*cao|\bsuv\b|\bcrossover\b|\bcuv\b/gi, ' ');
+    } else if (/\b(ban tai|pickup|pick-up)\b/.test(norm)) {
+      filter.bodyType = 'PICKUP';
+      working = working.replace(/bán\s*tải|ban\s*tai|\bpickup\b|\bpick-up\b/gi, ' ');
+    } else if (/\b(sedan|gam thap)\b/.test(norm)) {
+      filter.bodyType = 'SEDAN';
+      working = working.replace(/\bsedan\b|gầm\s*thấp|gam\s*thap/gi, ' ');
+    } else if (/\b(hatchback|hatback)\b/.test(norm)) {
+      filter.bodyType = 'HATCHBACK';
+      working = working.replace(/\bhatchback\b|\bhatback\b/gi, ' ');
+    } else if (/\b(mpv|da dung)\b/.test(norm)) {
+      filter.bodyType = 'MPV';
+      working = working.replace(/\bmpv\b|đa\s*dụng|da\s*dung/gi, ' ');
+    }
+  }
+
+  if (!filter.fuelType) {
+    if (/\b(may dau|xe dau|diesel)\b/.test(norm)) {
+      filter.fuelType = 'DIESEL';
+      working = working.replace(/máy\s*dầu|may\s*dau|xe\s*dầu|xe\s*dau|\bdiesel\b/gi, ' ');
+    } else if (/\b(may xang|xe xang)\b/.test(norm)) {
+      filter.fuelType = 'GASOLINE';
+      working = working.replace(/máy\s*xăng|may\s*xang|xe\s*xăng|xe\s*xang/gi, ' ');
+    } else if (/\b(hybrid|xang lai dien)\b/.test(norm)) {
+      filter.fuelType = 'HYBRID';
+      working = working.replace(/\bhybrid\b|xăng\s*lai\s*điện|xang\s*lai\s*dien/gi, ' ');
+    } else if (/\b(xe dien|thuan dien)\b/.test(norm)) {
+      filter.fuelType = 'ELECTRIC';
+      working = working.replace(/xe\s*điện|xe\s*dien|thuần\s*điện|thuan\s*dien/gi, ' ');
+    }
+  }
+
+  if (!filter.transmission) {
+    if (/\b(so tu dong|tu dong)\b/.test(norm)) {
+      filter.transmission = 'AUTOMATIC';
+      working = working.replace(/số\s*tự\s*động|so\s*tu\s*dong|tự\s*động|tu\s*dong/gi, ' ');
+    } else if (/\b(so san)\b/.test(norm)) {
+      filter.transmission = 'MANUAL';
+      working = working.replace(/số\s*sàn|so\s*san/gi, ' ');
+    }
+  }
+
+  const rawTokens = working
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  const meaningfulTokens = rawTokens.filter(
+    (t) => !SEARCH_STOPWORDS.has(normalizeNoAccent(t))
+  );
+
+  const tokensToMatch = meaningfulTokens.length > 0 ? meaningfulTokens : rawTokens;
+
+  if (tokensToMatch.length === 1) {
+    const clause = buildTokenClause(tokensToMatch[0]);
+    filter.$or = clause.$or;
+  } else if (tokensToMatch.length > 1) {
+    filter.$and = tokensToMatch.map(buildTokenClause);
+  }
+};
+
 /**
  * First query param that the caller actually sent.
  * @param {object} query
@@ -173,6 +324,8 @@ const buildPublicFilter = (query) => {
   if (query.bodyType) filter.bodyType = matchOneOrMany(query.bodyType, { uppercase: true });
   if (query.fuelType) filter.fuelType = matchOneOrMany(query.fuelType, { uppercase: true });
   if (query.transmission) filter.transmission = matchOneOrMany(query.transmission, { uppercase: true });
+  if (query.driveType) filter.driveType = matchOneOrMany(query.driveType, { uppercase: true });
+  if (query.conditionGrade) filter.conditionGrade = matchOneOrMany(query.conditionGrade, { uppercase: true });
 
   // ── Colour lives inside specifications ───────────────────────────────
   if (query.color) {
@@ -203,13 +356,7 @@ const buildPublicFilter = (query) => {
 
   // ── Keyword over the public-facing text fields, case-insensitive ─────
   if (query.search) {
-    const regex = { $regex: escapeRegex(query.search.trim()), $options: 'i' };
-    filter.$or = [
-      { make: regex },
-      { model: regex },
-      { variant: regex },
-      { vehicleCode: regex },
-    ];
+    applySmartSearchToFilter(filter, query.search);
   }
 
   return filter;
@@ -281,6 +428,8 @@ export const getAvailableCars = async (query) => {
   if (query.bodyType) filterSummary.bodyType = splitList(query.bodyType);
   if (query.fuelType) filterSummary.fuelType = splitList(query.fuelType);
   if (query.transmission) filterSummary.transmission = splitList(query.transmission);
+  if (query.driveType) filterSummary.driveType = splitList(query.driveType);
+  if (query.conditionGrade) filterSummary.conditionGrade = splitList(query.conditionGrade);
   if (query.color) filterSummary.color = query.color;
   const minPrice = firstParam(query, 'minPrice', 'priceMin');
   const maxPrice = firstParam(query, 'maxPrice', 'priceMax');
