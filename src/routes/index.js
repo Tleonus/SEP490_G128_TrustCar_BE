@@ -45,6 +45,7 @@ import profileRoutes        from './profileRoutes.js';
 import depositRoutes        from './depositRoutes.js';
 import { publicRouter as publicServiceRoutes, manageRouter as manageServiceRoutes } from './serviceRoutes.js';
 import trackRoutes          from './trackRoutes.js';
+import vehicleHistoryRoutes from './vehicleHistoryRoutes.js';
 
 const router = Router();
 
@@ -66,6 +67,7 @@ router.use('/public/cars', publicCarRoutes);
 router.use('/public/wishlist', publicWishlistRoutes);
 router.use('/public/chat', publicChatRoutes);
 router.use('/public', publicSettingsRoutes);
+router.use('/public', vehicleHistoryRoutes); // KAN-98: /public/history/:code/pdf + /public/verify/:hash
 router.use('/settings', loanSettingsRoutes);
 
 // ── Inventory Aging & Markdown (Staff & Admin) ───────────────────────────

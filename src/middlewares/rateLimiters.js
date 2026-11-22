@@ -160,8 +160,27 @@ export const createTrackLimiter = (max = resolveLimit(process.env.TRACK_RATE_LIM
   },
 });
 
+/**
+ * KAN-98 — /api/v1/public/history/:code/pdf renders a multi-page PDF on the fly.
+ * 30 requests per 10 minutes per IP keeps the CPU cost bounded while still
+ * allowing a visitor to open the report, refresh, and share the link.
+ * @param {number} [max=30]
+ */
+export const createHistoryPdfLimiter = (max = resolveLimit(process.env.HISTORY_PDF_RATE_LIMIT, 30)) => rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max,
+  keyGenerator: (req) => `history-pdf:${req.ip}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many history PDF requests. Please try again later.',
+    code: 'HISTORY_PDF_RATE_LIMIT',
+  },
+});
+
 export default {
   identifyCaller, createGlobalLimiter, createAuthLimiter, createDailyCaptionLimiter,
-  createTrackLimiter, limitsFromEnv, resolveLimit,
+  createTrackLimiter, createHistoryPdfLimiter, limitsFromEnv, resolveLimit,
 };
 
