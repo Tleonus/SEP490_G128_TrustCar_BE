@@ -153,6 +153,64 @@ export const activateUser = async (req, res, next) => {
   }
 };
 
+/**
+ * @route   POST /api/v1/users/:id/reset-password  (KAN-101)
+ * @access  Admin only
+ * @body    { reason?: string }
+ * @desc    Generates a random password, emails it to the user, revokes all sessions.
+ */
+export const resetUserPassword = async (req, res, next) => {
+  try {
+    const result = await userService.resetUserPassword({
+      targetUserId: req.params.id,
+      requestingUserId: req.userId,
+      reason: req.body?.reason,
+      ipAddress: req.ip,
+    });
+    return sendSuccess(res, 200, 'Password reset email sent.', result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @route   POST /api/v1/users/:id/lock  (KAN-101)
+ * @access  Admin only
+ * @body    { reason: string }
+ */
+export const lockUser = async (req, res, next) => {
+  try {
+    const result = await userService.lockUser({
+      targetUserId: req.params.id,
+      requestingUserId: req.userId,
+      reason: req.body?.reason,
+      ipAddress: req.ip,
+    });
+    return sendSuccess(res, 200, 'User account locked.', result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @route   POST /api/v1/users/:id/unlock  (KAN-101)
+ * @access  Admin only
+ * @body    { reason?: string }
+ */
+export const unlockUser = async (req, res, next) => {
+  try {
+    const result = await userService.unlockUser({
+      targetUserId: req.params.id,
+      requestingUserId: req.userId,
+      reason: req.body?.reason,
+      ipAddress: req.ip,
+    });
+    return sendSuccess(res, 200, 'User account unlocked.', result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export default {
   createUser,
   listUsers,
@@ -162,4 +220,7 @@ export default {
   updateUserRoles,
   deactivateUser,
   activateUser,
+  resetUserPassword,  // KAN-101
+  lockUser,           // KAN-101
+  unlockUser,         // KAN-101
 };

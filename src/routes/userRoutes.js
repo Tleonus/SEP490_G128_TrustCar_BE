@@ -68,6 +68,17 @@ const updateUserRolesSchema = Joi.object({
     }),
 });
 
+// KAN-101 — admin-driven account actions.
+// `reason` is optional for reset/unlock (soft audit metadata) but required for
+// lock, so support can tell later why someone was blocked.
+const reasonField = Joi.string().trim().max(200);
+const resetPasswordSchema = Joi.object({ reason: reasonField.optional() });
+const lockUserSchema      = Joi.object({ reason: reasonField.required().messages({
+  'any.required': 'Vui lòng ghi rõ lý do khoá tài khoản.',
+  'string.empty': 'Vui lòng ghi rõ lý do khoá tài khoản.',
+}) });
+const unlockUserSchema    = Joi.object({ reason: reasonField.optional() });
+
 // ── Routes ────────────────────────────────────────────────────────────────
 
 /**
@@ -147,6 +158,42 @@ router.patch(
   '/:id/activate',
   validateParams(objectIdParamSchema),
   userController.activateUser
+);
+
+/**
+ * @route   POST /api/v1/users/:id/reset-password   (KAN-101)
+ * @access  Admin only
+ * @desc    Generates a random password, emails it to the user, revokes all sessions.
+ */
+router.post(
+  '/:id/reset-password',
+  validateParams(objectIdParamSchema),
+  validate(resetPasswordSchema),
+  userController.resetUserPassword
+);
+
+/**
+ * @route   POST /api/v1/users/:id/lock              (KAN-101)
+ * @access  Admin only
+ * @desc    Locks an account until an admin unlocks it; kicks every active session.
+ */
+router.post(
+  '/:id/lock',
+  validateParams(objectIdParamSchema),
+  validate(lockUserSchema),
+  userController.lockUser
+);
+
+/**
+ * @route   POST /api/v1/users/:id/unlock            (KAN-101)
+ * @access  Admin only
+ * @desc    Clears any lock (admin or auto-rate-limit) and resets failure counter.
+ */
+router.post(
+  '/:id/unlock',
+  validateParams(objectIdParamSchema),
+  validate(unlockUserSchema),
+  userController.unlockUser
 );
 
 export default router;

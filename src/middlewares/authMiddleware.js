@@ -84,6 +84,16 @@ const authenticate = ({ allowIncomplete = false } = {}) => async (req, res, next
       return next(new AppError(MSG.MSG06.message, MSG.MSG06.httpStatus, MSG.MSG06.code));
     }
 
+    // KAN-101: block signed-in requests from users under an active lock. Virtual
+    // `isLocked` is not loaded on a `.lean()` document, so compare the field directly.
+    if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+      return next(new AppError(
+        MSG.MSG_ACCOUNT_LOCKED.message,
+        MSG.MSG_ACCOUNT_LOCKED.httpStatus,
+        MSG.MSG_ACCOUNT_LOCKED.code,
+      ));
+    }
+
     if (!profileStatus.profileCompleted && !allowIncomplete) {
       return next(new AppError(MSG.MSG74.message, MSG.MSG74.httpStatus, MSG.MSG74.code));
     }
