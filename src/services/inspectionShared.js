@@ -10,6 +10,7 @@ import ActivityLog from '../models/ActivityLog.js';
 import { ActivityEventType, CarStatus } from '../constants/appConstants.js';
 import { AppError } from '../utils/apiResponse.js';
 import { generateCpoCertificate } from './inspectionVerdict.js';
+import { buildHistoryVerifyHash } from './vehicleHistoryService.js';
 
 /** Car statuses from which a new inspection may start (re-inspection after REJECTED included). */
 export const INSPECTABLE_CAR_STATUSES = Object.freeze([
@@ -84,6 +85,10 @@ export const applyVerdictToCar = async (car, { passed, mileage }, session) => {
 
   car.status = passed ? CarStatus.APPROVED_CPO : CarStatus.REJECTED;
   car.cpoCertificateId = cpoCertificateId;
+  // KAN-98: reverse QR hash follows the certificate id; null when no certificate.
+  car.historyVerifyHash = cpoCertificateId
+    ? buildHistoryVerifyHash(car._id, cpoCertificateId)
+    : null;
   if (Number(mileage) > Number(car.mileage || 0)) car.mileage = Number(mileage);
 
   try {

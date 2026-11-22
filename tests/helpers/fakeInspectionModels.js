@@ -95,12 +95,14 @@ export const setupInspectionHarness = async () => {
   const { default: Car } = await import('../../src/models/Car.js');
   const { default: InspectionRecord } = await import('../../src/models/InspectionRecord.js');
   const { default: ActivityLog } = await import('../../src/models/ActivityLog.js');
+  const { default: User } = await import('../../src/models/User.js');
   const { signAccessToken } = await import('../../src/utils/authTokens.js');
 
   const cars = new Map();
   const records = new Map();
   const activity = [];
   const faults = { carSaves: [], cpoCollisions: 0 };
+  const reads = { carFindOne: 0 };
 
   // ── Transactions: serialised fake sessions with snapshot/rollback ────────
   let lock = Promise.resolve();
@@ -139,7 +141,7 @@ export const setupInspectionHarness = async () => {
   };
   jest.spyOn(Car, 'findById').mockImplementation((id) => fakeQuery(Car, () => cars.get(String(id)) || null));
   jest.spyOn(Car, 'findOne').mockImplementation((filter) =>
-    fakeQuery(Car, () => [...cars.values()].find((c) => matches(c, filter)) || null));
+    fakeQuery(Car, () => { reads.carFindOne += 1; return [...cars.values()].find((c) => matches(c, filter)) || null; }));
   jest.spyOn(Car, 'exists').mockImplementation((filter) => {
     const forced = filter.cpoCertificateId && faults.cpoCollisions > 0;
     if (forced) faults.cpoCollisions -= 1;
@@ -148,6 +150,14 @@ export const setupInspectionHarness = async () => {
       session: () => Promise.resolve(hit ? { _id: hit._id || 'forced' } : null),
       then: (ok, ko) => Promise.resolve(hit ? { _id: hit._id || 'forced' } : null).then(ok, ko),
     };
+  });
+  // KAN-98: self-heal write used by getHistoryReport when historyVerifyHash is null.
+  jest.spyOn(Car, 'updateOne').mockImplementation(async (filter, update) => {
+    const hit = [...cars.values()].find((c) => matches(c, filter));
+    if (!hit) return { matchedCount: 0, modifiedCount: 0 };
+    const sets = update?.$set || {};
+    Object.entries(sets).forEach(([path, value]) => setPath(hit, path, clone(value)));
+    return { matchedCount: 1, modifiedCount: 1 };
   });
   jest.spyOn(Car.prototype, 'save').mockImplementation(async function save() {
     if (faults.carSaves.length) throw faults.carSaves.shift();
@@ -178,6 +188,32 @@ export const setupInspectionHarness = async () => {
     fakeQuery(InspectionRecord, () => records.get(String(id)) || null));
   jest.spyOn(InspectionRecord, 'findOne').mockImplementation((filter) =>
     fakeQuery(InspectionRecord, () => recordList(filter)[0] || null));
+  // KAN-98: returns every matching record, chainable with .sort().lean().
+  jest.spyOn(InspectionRecord, 'find').mockImplementation((filter) => {
+    const list = recordList(filter);
+    let sortSpec = null;
+    const q = {
+      sort(spec) { sortSpec = spec; return q; },
+      lean: () => q,
+      exec: async () => {
+        const out = list.map(clone);
+        if (sortSpec) {
+          const [field, dir] = Object.entries(sortSpec)[0] || [];
+          if (field) {
+            out.sort((a, b) => {
+              const av = getPath(a, field); const bv = getPath(b, field);
+              if (av == null) return 1; if (bv == null) return -1;
+              const cmp = av > bv ? 1 : av < bv ? -1 : 0;
+              return dir < 0 ? -cmp : cmp;
+            });
+          }
+        }
+        return out;
+      },
+      then: (ok, ko) => q.exec().then(ok, ko),
+    };
+    return q;
+  });
   jest.spyOn(InspectionRecord, 'create').mockImplementation(async (data) => {
     const list = Array.isArray(data) ? data : [data];
     const docs = [];
@@ -203,11 +239,41 @@ export const setupInspectionHarness = async () => {
     return fakeQuery(InspectionRecord, () => result);
   });
 
-  // ── ActivityLog (transactional create) ───────────────────────────────────
+  // ── ActivityLog (transactional create + read for history report) ──────────
   jest.spyOn(ActivityLog, 'create').mockImplementation(async (data) => {
     const list = Array.isArray(data) ? data : [data];
     list.forEach((entry) => activity.push(clone(entry)));
     return list;
+  });
+  // KAN-98: bulk inspector lookup. Delegates to the auth harness's User.findById
+  // mock so the in-memory user store stays the single source of truth.
+  jest.spyOn(User, 'find').mockImplementation((filter) => {
+    const ids = filter?._id?.$in || [];
+    const q = {
+      select: () => q,
+      lean: () => q,
+      exec: async () => {
+        const out = [];
+        for (const id of ids) {
+          // eslint-disable-next-line no-await-in-loop
+          const doc = await User.findById(id).select('fullName').lean();
+          if (doc) out.push(doc);
+        }
+        return out;
+      },
+      then: (ok, ko) => q.exec().then(ok, ko),
+    };
+    return q;
+  });
+
+  jest.spyOn(ActivityLog, 'find').mockImplementation((filter) => {
+    const list = activity.filter((entry) => matches(entry, filter));
+    const q = {
+      lean: () => q,
+      exec: async () => list.map(clone),
+      then: (ok, ko) => q.exec().then(ok, ko),
+    };
+    return q;
   });
 
   const harness = {
@@ -226,6 +292,7 @@ export const setupInspectionHarness = async () => {
       activity.length = 0;
       faults.carSaves.length = 0;
       faults.cpoCollisions = 0;
+      reads.carFindOne = 0;
       Object.keys(sessionStats).forEach((k) => { sessionStats[k] = 0; });
     },
 
@@ -264,6 +331,7 @@ export const setupInspectionHarness = async () => {
     forceCpoCollisions(count) { faults.cpoCollisions = count; },
 
     duplicateKeyError,
+    reads,
     car(id) { return cars.get(String(id)); },
     record(id) { return records.get(String(id)); },
   };
