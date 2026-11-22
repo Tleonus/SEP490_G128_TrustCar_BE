@@ -179,8 +179,27 @@ export const createHistoryPdfLimiter = (max = resolveLimit(process.env.HISTORY_P
   },
 });
 
+/**
+ * KAN-75 — Dedicated rate limit for POST /api/v1/public/chat to prevent prompt
+ * flooding and LLM quota abuse. 60 requests per 10 minutes per IP/account by default.
+ * @param {number} [max=60]
+ */
+export const createPublicChatLimiter = (max = resolveLimit(process.env.CHAT_RATE_LIMIT, 60)) => rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max,
+  keyGenerator: (req) =>
+    req.rateLimitCaller ? `chat:user:${req.rateLimitCaller.userId}` : `chat:ip:${req.ip}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Bạn đang gửi tin nhắn quá nhanh. Vui lòng thử lại sau ít phút.',
+    code: 'CHAT_RATE_LIMIT',
+  },
+});
+
 export default {
   identifyCaller, createGlobalLimiter, createAuthLimiter, createDailyCaptionLimiter,
-  createTrackLimiter, createHistoryPdfLimiter, limitsFromEnv, resolveLimit,
+  createTrackLimiter, createHistoryPdfLimiter, createPublicChatLimiter, limitsFromEnv, resolveLimit,
 };
 

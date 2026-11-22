@@ -15,36 +15,21 @@ import Car from '../models/Car.js';
 import ChatConversation from '../models/chat-conversation.model.js';
 import ChatMessage from '../models/chat-message.model.js';
 import { ConversationStatus, SenderType } from '../models/extendedEnums.js';
-import { CarStatus, BodyType, FuelType, Transmission } from '../constants/appConstants.js';
+import { BodyType, FuelType, Transmission } from '../constants/appConstants.js';
 import { toPublicCar } from './publicCarService.js';
 import { getBaseSettings } from './baseSettingsService.js';
 import { getLoanSettings } from './loanSettingsService.js';
 import { createPublicEnquiry } from './leadService.js';
 import { generateGroundedChatCompletion } from './chatLlmClient.js';
 import { normalizePhone, isValidVietnamesePhone } from '../utils/validators.js';
+import {
+  detectPromptInjection,
+  sanitizeChatHistory,
+  buildGuardRefusalReply,
+  buildWhitelistedCarQuery,
+} from './chatSecurityGuard.js';
 
 // ── Constants & Lookup Tables ────────────────────────────────────────────────
-
-const CHAT_CAR_PROJECTION = {
-  vehicleCode: 1,
-  make: 1,
-  model: 1,
-  variant: 1,
-  year: 1,
-  bodyType: 1,
-  fuelType: 1,
-  transmission: 1,
-  driveType: 1,
-  mileage: 1,
-  price: 1,
-  marketPrice: 1,
-  status: 1,
-  images: 1,
-  conditionGrade: 1,
-  cpoCertificateId: 1,
-  'specifications.numberOfSeats': 1,
-  'specifications.color': 1,
-};
 
 const BRAND_PATTERNS = [
   { brand: 'Toyota', regex: /\b(toyota)\b/i },
@@ -409,7 +394,7 @@ export const analyzeConversationTurn = (message = '', history = []) => {
   ) {
     intent = 'TEST_DRIVE_BOOKING';
   } else if (
-    /\b(cpo|kiem dinh|bao hanh|hang muc|담 bao|dam bao| ngập nuoc|ngap nuoc|dam dung|tai nan|chung nhan)\b/.test(
+    /\b(cpo|kiem dinh|bao hanh|hang muc|dam bao|ngap nuoc|dam dung|tai nan|chung nhan)\b/.test(
       norm
     )
   ) {
@@ -518,68 +503,28 @@ export const computeLoanEstimate = (rawText = '', loanSettings = {}, referencePr
   };
 };
 
-// ── MongoDB Inventory Query Helper ───────────────────────────────────────────
-
-const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// ── MongoDB Inventory Query Helper (Strictly Whitelisted — KAN-75) ──────────
 
 const queryInventoryForChat = async (filters = {}) => {
-  const baseFilter = {
-    status: CarStatus.AVAILABLE,
-    isActive: true,
-  };
+  const {
+    mongoFilter,
+    sort,
+    projection,
+    limit,
+    appliedFilters,
+    isExactVehicleCode,
+  } = buildWhitelistedCarQuery(filters, 3);
 
-  if (filters.vehicleCode) {
-    const exactCar = await Car.findOne(
-      { ...baseFilter, vehicleCode: filters.vehicleCode },
-      CHAT_CAR_PROJECTION
-    ).lean();
+  if (isExactVehicleCode) {
+    const exactCar = await Car.findOne(mongoFilter, projection).lean();
     if (exactCar) {
       return { matchedCars: [toPublicCar(exactCar)], alternativeCars: [] };
     }
   }
 
-  const criteriaFilter = { ...baseFilter };
-  if (filters.brand) {
-    criteriaFilter.make = { $regex: `^${escapeRegex(filters.brand)}$`, $options: 'i' };
-  }
-  if (filters.model) {
-    criteriaFilter.model = { $regex: escapeRegex(filters.model), $options: 'i' };
-  }
-  if (filters.bodyType) {
-    criteriaFilter.bodyType = filters.bodyType.toUpperCase();
-  }
-  if (filters.fuelType) {
-    criteriaFilter.fuelType = filters.fuelType.toUpperCase();
-  }
-  if (filters.transmission) {
-    criteriaFilter.transmission = filters.transmission.toUpperCase();
-  }
-  if (filters.yearMin) {
-    criteriaFilter.year = { $gte: Number(filters.yearMin) };
-  }
-  if (filters.priceMin || filters.priceMax) {
-    criteriaFilter.price = {};
-    if (filters.priceMin) criteriaFilter.price.$gte = Number(filters.priceMin);
-    if (filters.priceMax) criteriaFilter.price.$lte = Number(filters.priceMax);
-  }
-  if (filters.seats === 7) {
-    criteriaFilter.$or = [
-      { 'specifications.numberOfSeats': { $gte: 7 } },
-      { bodyType: { $in: [BodyType.SUV, BodyType.MPV] } },
-    ];
-  }
-
-  const sortMap = {
-    price_asc: { price: 1 },
-    price_desc: { price: -1 },
-    mileage_asc: { mileage: 1 },
-    year_desc: { year: -1 },
-  };
-  const sort = sortMap[filters.sortBy] || { createdAt: -1 };
-
-  const matchedRaw = await Car.find(criteriaFilter, CHAT_CAR_PROJECTION)
+  const matchedRaw = await Car.find(mongoFilter, projection)
     .sort(sort)
-    .limit(3)
+    .limit(limit)
     .lean();
 
   const matchedCars = matchedRaw.map((car) => toPublicCar({ ...car }));
@@ -588,20 +533,22 @@ const queryInventoryForChat = async (filters = {}) => {
     return { matchedCars, alternativeCars: [] };
   }
 
-  // Fallback: fetch up to 3 available cars so visitor still gets real stock options
-  const fallbackFilter = { ...baseFilter };
-  if (filters.priceMax) {
-    fallbackFilter.price = { $lte: Math.round(filters.priceMax * 1.2) };
-  }
-  let altRaw = await Car.find(fallbackFilter, CHAT_CAR_PROJECTION)
-    .sort({ createdAt: -1 })
-    .limit(3)
+  // Fallback: fetch up to 3 available cars through the same query whitelist
+  const fallbackInput = appliedFilters.priceMax
+    ? { priceMax: Math.round(appliedFilters.priceMax * 1.2) }
+    : {};
+  const fallbackQuery = buildWhitelistedCarQuery(fallbackInput, 3);
+
+  let altRaw = await Car.find(fallbackQuery.mongoFilter, fallbackQuery.projection)
+    .sort(fallbackQuery.sort)
+    .limit(fallbackQuery.limit)
     .lean();
 
   if (altRaw.length === 0) {
-    altRaw = await Car.find(baseFilter, CHAT_CAR_PROJECTION)
-      .sort({ createdAt: -1 })
-      .limit(3)
+    const defaultQuery = buildWhitelistedCarQuery({}, 3);
+    altRaw = await Car.find(defaultQuery.mongoFilter, defaultQuery.projection)
+      .sort(defaultQuery.sort)
+      .limit(defaultQuery.limit)
       .lean();
   }
 
@@ -982,8 +929,47 @@ const persistChatTurn = async ({
  */
 export const processPublicChatMessage = async (payload = {}, context = {}) => {
   const message = String(payload.message || '').trim();
-  const history = Array.isArray(payload.history) ? payload.history : [];
+  const rawHistory = Array.isArray(payload.history) ? payload.history : [];
+  const history = sanitizeChatHistory(rawHistory, { maxTurns: 6, maxCharsPerTurn: 600 });
   const conversationCode = normalizeConversationCode(payload.sessionId);
+
+  // KAN-75: Prompt Injection & Confidential Data Probe Guard (runs before DB & LLM)
+  const guardCheck = detectPromptInjection(message);
+  if (guardCheck.blocked) {
+    const showroom = await getBaseSettings().catch(() => null);
+    const refusalReply = buildGuardRefusalReply(guardCheck.category, showroom);
+    const { actions, followUps } = buildActionsAndFollowUps({
+      intent: 'GENERAL',
+      filters: {},
+      matchedCars: [],
+      alternativeCars: [],
+      showroom,
+    });
+
+    await persistChatTurn({
+      conversationCode,
+      userMessage: message,
+      aiReply: refusalReply,
+      customerName: null,
+      phone: null,
+      leadId: null,
+      summaryText: `Intent: GUARD_BLOCKED | Reason: ${guardCheck.category}`,
+    });
+
+    return {
+      conversationCode,
+      sessionId: conversationCode,
+      intent: 'GUARD_BLOCKED',
+      guardBlocked: true,
+      guardReason: guardCheck.category,
+      reply: refusalReply,
+      cars: [],
+      actions,
+      followUps,
+      leadCaptured: null,
+      source: 'security-guard',
+    };
+  }
 
   const analysis = analyzeConversationTurn(message, history);
   const phone = analysis.phone || (payload.customerPhone ? normalizePhone(payload.customerPhone) : null);
