@@ -46,6 +46,7 @@ import depositRoutes        from './depositRoutes.js';
 import { publicRouter as publicServiceRoutes, manageRouter as manageServiceRoutes } from './serviceRoutes.js';
 import trackRoutes          from './trackRoutes.js';
 import vehicleHistoryRoutes from './vehicleHistoryRoutes.js';
+import analyticsRoutes      from './analyticsRoutes.js';  // KAN-100
 
 const router = Router();
 
@@ -91,6 +92,9 @@ router.use('/leads', leadPublicRoutes);
 router.use('/leads', leadRoutes);
 // KAN-97: alias để FE /admin/sales (gọi /manage/leads) hết rơi về demo fallback.
 router.use('/manage/leads', leadRoutes);
+
+// KAN-100 — Admin analytics dashboard
+router.use('/manage/analytics', analyticsRoutes);
 
 // ── Marketing Tooling (Admin & Sales staff) ────────────────────────────────
 router.use('/marketing', marketingRoutes);

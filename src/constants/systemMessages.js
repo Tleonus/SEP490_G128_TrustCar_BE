@@ -41,6 +41,13 @@ export const SystemMessages = Object.freeze({
   MSG18: { code: 'EMAIL_ALREADY_EXISTS', message: 'An account with this email address already exists.',      httpStatus: 409 },
   MSG19: { code: 'USER_ALREADY_ACTIVE',  message: 'This user account is already active.',                    httpStatus: 409 },
 
+  // KAN-101 — account lock & admin-driven password reset
+  MSG_ACCOUNT_LOCKED:    { code: 'ACCOUNT_LOCKED',     message: 'Your account has been locked. Contact an administrator.',        httpStatus: 403 },
+  MSG_CANNOT_MODIFY_SELF:{ code: 'CANNOT_MODIFY_SELF', message: 'You cannot perform this action on your own account.',           httpStatus: 400 },
+  MSG_ALREADY_LOCKED:    { code: 'ALREADY_LOCKED',     message: 'This user account is already locked.',                          httpStatus: 409 },
+  MSG_NOT_LOCKED:        { code: 'NOT_LOCKED',         message: 'This user account is not locked.',                              httpStatus: 409 },
+  MSG_LAST_ADMIN:        { code: 'LAST_ADMIN',         message: 'Cannot lock or deactivate the only remaining administrator.',   httpStatus: 400 },
+
   // ════════════════════════════════════════════════════════════════════════════
   // VEHICLE / CAR INVENTORY – MSG20 to MSG29
   // ════════════════════════════════════════════════════════════════════════════

@@ -141,6 +141,20 @@ const UserSchema = new mongoose.Schema(
       default: null,
     },
 
+    // KAN-101: who performed the lock and why (ADMIN_LOCK vs AUTO_RATE_LIMIT).
+    // Populated by lockUser() / autoLockUser(); cleared by unlockUser().
+    lockedReason: {
+      type:    String,
+      enum:    ['ADMIN_LOCK', 'AUTO_RATE_LIMIT', null],
+      default: null,
+    },
+
+    lockedBy: {
+      type:    mongoose.Schema.Types.ObjectId,
+      ref:     'User',
+      default: null,
+    },
+
     // ── Session Revocation ────────────────────────────────────────────────
     // Monotonic counter embedded in every issued JWT. Bumping it on logout /
     // password change / password reset invalidates all previously issued
