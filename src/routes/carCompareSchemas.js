@@ -14,6 +14,14 @@ export const MAX_IDS = 3;
 const MAX_IDS_LENGTH = 200;
 const OBJECT_ID_REGEX = /^[0-9a-f]{24}$/;
 
+export const COMPARE_PREFERENCES = Object.freeze([
+  'overall',
+  'economy',
+  'performance',
+  'family',
+  'likenew',
+]);
+
 /**
  * Splits `ids` on commas, trims and lower-cases each item, validates every item
  * as a 24-character hex id, removes duplicates (first occurrence wins) and
@@ -24,7 +32,8 @@ const OBJECT_ID_REGEX = /^[0-9a-f]{24}$/;
  * @ears .sdd/features/vehicle-comparison/SPEC.md#REQ-008
  */
 const parseCompareIds = (value, helpers) => {
-  const parts = value.split(',').map((part) => part.trim().toLowerCase());
+  const rawList = Array.isArray(value) ? value : String(value).split(',');
+  const parts = rawList.map((part) => String(part ?? '').trim().toLowerCase());
   if (!parts.every((part) => OBJECT_ID_REGEX.test(part))) {
     return helpers.error('compare.invalidId');
   }
@@ -49,6 +58,24 @@ export const compareQuerySchema = Joi.object({
       'compare.invalidId': 'Each id must be a 24-character hexadecimal vehicle id.',
       'compare.count':     `Provide ${MIN_IDS} to ${MAX_IDS} different vehicle ids.`,
     }),
+});
+
+export const compareAiInsightBodySchema = Joi.object({
+  ids: Joi.alternatives()
+    .try(
+      Joi.array().items(Joi.string().trim()).min(MIN_IDS).max(10),
+      Joi.string().max(MAX_IDS_LENGTH)
+    )
+    .required()
+    .custom(parseCompareIds)
+    .messages({
+      'any.required':      'ids is required: provide 2 to 3 vehicle ids.',
+      'compare.invalidId': 'Each id must be a 24-character hexadecimal vehicle id.',
+      'compare.count':     `Provide ${MIN_IDS} to ${MAX_IDS} different vehicle ids.`,
+    }),
+  preference: Joi.string()
+    .valid(...COMPARE_PREFERENCES)
+    .default('overall'),
 });
 
 export default compareQuerySchema;

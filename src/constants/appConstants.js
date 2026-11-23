@@ -242,6 +242,12 @@ export const ActivityEventType = Object.freeze({
   USER_UPDATED:          'USER_UPDATED',
   USER_DEACTIVATED:      'USER_DEACTIVATED',
   USER_ACTIVATED:        'USER_ACTIVATED',
+  // KAN-101: admin-driven account actions, audited separately from USER_UPDATED
+  // so the "Nhật ký" explorer can filter them without scanning the free-text summary.
+  USER_LOCKED:           'USER_LOCKED',
+  USER_UNLOCKED:         'USER_UNLOCKED',
+  USER_PASSWORD_RESET:   'USER_PASSWORD_RESET',
+  USER_ROLE_CHANGED:     'USER_ROLE_CHANGED',
 
   // Vehicle
   CAR_CREATED:           'CAR_CREATED',
@@ -250,6 +256,7 @@ export const ActivityEventType = Object.freeze({
   CAR_PRICE_UPDATED:     'CAR_PRICE_UPDATED',
   CAR_IMAGE_ADDED:       'CAR_IMAGE_ADDED',
   CAR_IMAGE_REMOVED:     'CAR_IMAGE_REMOVED',
+  CAR_PUBLISHED_FACEBOOK: 'CAR_PUBLISHED_FACEBOOK', // KAN-91: đăng bài lên Facebook Page
 
   // Customer & Lead
   CUSTOMER_CREATED:      'CUSTOMER_CREATED',

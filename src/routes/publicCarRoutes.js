@@ -10,8 +10,8 @@ import { Router } from 'express';
 import Joi from 'joi';
 import * as publicCarController from '../controllers/publicCarController.js';
 import * as carCompareController from '../controllers/carCompareController.js';
-import { validateQuery } from '../middlewares/validateMiddleware.js';
-import { compareQuerySchema } from './carCompareSchemas.js';
+import { validate, validateQuery } from '../middlewares/validateMiddleware.js';
+import { compareQuerySchema, compareAiInsightBodySchema } from './carCompareSchemas.js';
 import { BodyType, FuelType, Transmission, DriveType, PAGINATION } from '../constants/appConstants.js';
 
 const router = Router();
@@ -94,6 +94,13 @@ router.get('/featured', publicCarController.getFeaturedCars);
  *          Ref: .sdd/features/vehicle-comparison/SPEC.md (REQ-005, 007, 008, 009)
  */
 router.get('/compare', validateQuery(compareQuerySchema), carCompareController.compareCars);
+
+/**
+ * @route   POST /api/v1/public/cars/compare/ai-insight
+ * @access  Public
+ * @desc    On-demand AI quick analysis and situational recommendation for 2–3 compared vehicles.
+ */
+router.post('/compare/ai-insight', validate(compareAiInsightBodySchema), carCompareController.getCompareAiInsight);
 
 /**
  * @route   GET /api/v1/public/cars

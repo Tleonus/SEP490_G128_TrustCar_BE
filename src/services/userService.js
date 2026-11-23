@@ -235,7 +235,7 @@ export const updateUserRoles = async ({ userId, roleIds, updatedByUserId, ipAddr
   await user.save();
 
   await ActivityLog.log({
-    eventType: ActivityEventType.USER_UPDATED,
+    eventType: ActivityEventType.USER_ROLE_CHANGED,
     performedBy: updatedByUserId,
     targetModel: 'User',
     targetId: user._id,
@@ -378,6 +378,210 @@ export const activateUser = async ({ targetUserId, requestingUserId, ipAddress }
   });
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// KAN-101 — Reset / Lock / Unlock
+// ════════════════════════════════════════════════════════════════════════════
+
+const ADMIN_LOCK_SENTINEL = new Date('2099-12-31T00:00:00.000Z');
+
+/**
+ * Generates a strong random password without characters that are easily confused
+ * in email (0/O, l/1). 12 characters, mixed case, digits and a few safe symbols.
+ */
+const generateRandomPassword = () => {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$';
+  // crypto is available in Node ≥ 18 as global; fall back to Math.random in tests
+  // where the subset of Node might lack webcrypto. Either way we have >= 70 bits.
+  const bytes = globalThis.crypto?.getRandomValues
+    ? globalThis.crypto.getRandomValues(new Uint8Array(12))
+    : Array.from({ length: 12 }, () => Math.floor(Math.random() * 256));
+  let out = '';
+  for (let i = 0; i < 12; i += 1) {
+    out += alphabet[bytes[i] % alphabet.length];
+  }
+  return out;
+};
+
+/**
+ * Admin-driven password reset. Generates a random password, emails it to the
+ * user, revokes all existing sessions. Never returns the password in the API
+ * response — it is only ever delivered by email (reduces leak surface via
+ * browser history / logs).
+ */
+export const resetUserPassword = async ({
+  targetUserId, requestingUserId, reason, ipAddress,
+}) => {
+  if (String(targetUserId) === String(requestingUserId)) {
+    throw new AppError(
+      MSG.MSG_CANNOT_MODIFY_SELF.message,
+      MSG.MSG_CANNOT_MODIFY_SELF.httpStatus,
+      MSG.MSG_CANNOT_MODIFY_SELF.code,
+    );
+  }
+
+  const user = await User.findById(targetUserId).select('+password +tokenVersion');
+  if (!user) {
+    throw new AppError(MSG.MSG17.message, MSG.MSG17.httpStatus, MSG.MSG17.code);
+  }
+
+  const newPassword = generateRandomPassword();
+  user.password     = newPassword;                          // pre-save hook hashes it
+  user.tokenVersion = (user.tokenVersion ?? 0) + 1;         // kick every session
+  await user.save();                                        // run validators (password strength)
+
+  // Email delivery is best-effort: if the mailer fails we still return success
+  // so the admin knows the password was rotated. The ActivityLog carries the
+  // email-delivery flag so support can tell why a user is confused later.
+  let emailDelivered = false;
+  try {
+    const { sendMail } = await import('../config/mailer.js');
+    await sendMail({
+      to:       user.email,
+      toName:   user.fullName || '',
+      subject:  'TrustCar — Mật khẩu của bạn đã được quản trị viên đặt lại',
+      html: `
+        <p>Xin chào ${user.fullName || user.email},</p>
+        <p>Quản trị viên vừa đặt lại mật khẩu cho tài khoản <strong>${user.email}</strong>.</p>
+        <p>Mật khẩu tạm thời: <code style="font-family:monospace;font-size:16px">${newPassword}</code></p>
+        <p>Vui lòng đăng nhập và đổi mật khẩu ngay sau khi vào hệ thống.</p>
+        <p>Nếu bạn không yêu cầu thao tác này, hãy liên hệ quản trị viên ngay lập tức.</p>
+      `,
+      text: `Mật khẩu tạm thời cho ${user.email}: ${newPassword}\nHãy đổi mật khẩu sau khi đăng nhập.`,
+    });
+    emailDelivered = true;
+  } catch (err) {
+    // Non-fatal — audit entry below will record delivery failure.
+    // eslint-disable-next-line no-console
+    console.error('[KAN-101] password reset email failed:', err.message);
+  }
+
+  await ActivityLog.log({
+    eventType:   ActivityEventType.USER_PASSWORD_RESET,
+    performedBy: requestingUserId,
+    targetModel: 'User',
+    targetId:    user._id,
+    summary:     `Admin reset password for ${user.email}`,
+    ipAddress,
+    metadata:    { reason: reason || null, emailDelivered, sentTo: user.email },
+  });
+
+  return { emailSent: emailDelivered, sentTo: user.email };
+};
+
+/**
+ * KAN-101 — locks a staff account until an admin unlocks it. Bumps tokenVersion
+ * so any session held by the user is dropped immediately.
+ */
+export const lockUser = async ({
+  targetUserId, requestingUserId, reason, ipAddress,
+}) => {
+  if (String(targetUserId) === String(requestingUserId)) {
+    throw new AppError(
+      MSG.MSG_CANNOT_MODIFY_SELF.message,
+      MSG.MSG_CANNOT_MODIFY_SELF.httpStatus,
+      MSG.MSG_CANNOT_MODIFY_SELF.code,
+    );
+  }
+
+  const user = await User.findById(targetUserId).select('+tokenVersion');
+  if (!user) {
+    throw new AppError(MSG.MSG17.message, MSG.MSG17.httpStatus, MSG.MSG17.code);
+  }
+
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    throw new AppError(
+      MSG.MSG_ALREADY_LOCKED.message,
+      MSG.MSG_ALREADY_LOCKED.httpStatus,
+      MSG.MSG_ALREADY_LOCKED.code,
+    );
+  }
+
+  // Refuse to lock the only active admin — the system would become unreachable.
+  if (user.roleName === Roles.ADMIN) {
+    const otherAdmins = await User.countDocuments({
+      _id: { $ne: user._id },
+      roleName: Roles.ADMIN,
+      isActive: true,
+      $or: [{ lockedUntil: null }, { lockedUntil: { $lte: new Date() } }],
+    });
+    if (otherAdmins === 0) {
+      throw new AppError(
+        MSG.MSG_LAST_ADMIN.message,
+        MSG.MSG_LAST_ADMIN.httpStatus,
+        MSG.MSG_LAST_ADMIN.code,
+      );
+    }
+  }
+
+  user.lockedUntil  = ADMIN_LOCK_SENTINEL;
+  user.lockedReason = 'ADMIN_LOCK';
+  user.lockedBy     = requestingUserId;
+  user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+  await user.save({ validateBeforeSave: false });
+
+  await ActivityLog.log({
+    eventType:   ActivityEventType.USER_LOCKED,
+    performedBy: requestingUserId,
+    targetModel: 'User',
+    targetId:    user._id,
+    summary:     `Account locked for ${user.email}`,
+    ipAddress,
+    metadata:    { reason: reason || null, lockedReason: 'ADMIN_LOCK' },
+  });
+
+  return {
+    _id:          user._id,
+    email:        user.email,
+    isLocked:     true,
+    lockedReason: user.lockedReason,
+    lockedUntil:  user.lockedUntil,
+  };
+};
+
+/**
+ * KAN-101 — clears any lock (admin or auto) and resets the failure counter on
+ * the user document. Separate ActivityLog entry so the audit trail is explicit.
+ */
+export const unlockUser = async ({
+  targetUserId, requestingUserId, reason, ipAddress,
+}) => {
+  const user = await User.findById(targetUserId);
+  if (!user) {
+    throw new AppError(MSG.MSG17.message, MSG.MSG17.httpStatus, MSG.MSG17.code);
+  }
+
+  if (!user.lockedUntil || user.lockedUntil <= new Date()) {
+    throw new AppError(
+      MSG.MSG_NOT_LOCKED.message,
+      MSG.MSG_NOT_LOCKED.httpStatus,
+      MSG.MSG_NOT_LOCKED.code,
+    );
+  }
+
+  const previousReason = user.lockedReason;
+  user.lockedUntil         = null;
+  user.lockedReason        = null;
+  user.lockedBy            = null;
+  user.failedLoginAttempts = 0;
+  await user.save({ validateBeforeSave: false });
+
+  await ActivityLog.log({
+    eventType:   ActivityEventType.USER_UNLOCKED,
+    performedBy: requestingUserId,
+    targetModel: 'User',
+    targetId:    user._id,
+    summary:     `Account unlocked for ${user.email}`,
+    ipAddress,
+    metadata:    { reason: reason || null, previousLockedReason: previousReason },
+  });
+
+  return {
+    _id:      user._id,
+    email:    user.email,
+    isLocked: false,
+  };
+};
+
 export default {
   createUser,
   getUsers,
@@ -387,4 +591,7 @@ export default {
   updateUserRoles,   // KAN-93
   deactivateUser,
   activateUser,
+  resetUserPassword, // KAN-101
+  lockUser,          // KAN-101
+  unlockUser,        // KAN-101
 };

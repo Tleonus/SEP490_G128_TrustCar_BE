@@ -9,6 +9,7 @@
  */
 
 import * as carCompareService from '../services/carCompareService.js';
+import * as carCompareAiService from '../services/carCompareAiService.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 
 /**
@@ -29,4 +30,22 @@ export const compareCars = async (req, res, next) => {
   }
 };
 
-export default { compareCars };
+/**
+ * @route   POST /api/v1/public/cars/compare/ai-insight
+ * @access  Public (triggered on-demand when the user clicks "Gợi ý từ AI")
+ * @body    { ids: string[] | string, preference?: 'overall'|'economy'|'performance'|'family'|'likenew' }
+ * @desc    Returns a grounded AI quick analysis and situational recommendation with an AI disclaimer.
+ */
+export const getCompareAiInsight = async (req, res, next) => {
+  try {
+    const data = await carCompareAiService.generateCompareAiInsight({
+      ids: req.body.ids,
+      preference: req.body.preference,
+    });
+    return sendSuccess(res, 200, 'AI comparison insight generated successfully.', data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export default { compareCars, getCompareAiInsight };
