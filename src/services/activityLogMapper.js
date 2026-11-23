@@ -7,6 +7,8 @@
  * Ref: .sdd/features/system-audit-logs/SPEC.md (REQ-007, REQ-008, REQ-012; C8, C9)
  */
 
+import { actionOf } from '../constants/auditActions.js';
+
 /** Keys whose value must never leave the server (C9). Deliberately broad: better to over-hide than leak. */
 const SECRET_KEY = /pass(word)?|token|secret|hash|authorization|api[-_]?key/i;
 export const HIDDEN = '[hidden]';
@@ -55,6 +57,7 @@ export const hideSecrets = (value, depth = 0) => {
 export const toListItem = (doc) => ({
   id: String(doc._id),
   eventType: doc.eventType,
+  action: actionOf(doc.eventType), // KAN-92: CREATE / UPDATE / DELETE / STATUS_CHANGE / AUTH / OTHER
   createdAt: doc.createdAt,
   actor: { id: idOf(doc.performedBy), email: doc.performedByEmail ?? null },
   target: { model: doc.targetModel ?? null, id: idOf(doc.targetId), code: doc.targetCode ?? null },

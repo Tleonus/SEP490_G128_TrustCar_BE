@@ -31,10 +31,11 @@ describe('toListItem: allow-list of the list row', () => {
   test('returns exactly the documented fields', () => {
     const d = doc();
     const item = toListItem(d);
-    expect(Object.keys(item).sort()).toEqual(['actor', 'createdAt', 'eventType', 'id', 'ipAddress', 'summary', 'target'].sort());
+    expect(Object.keys(item).sort()).toEqual(['action', 'actor', 'createdAt', 'eventType', 'id', 'ipAddress', 'summary', 'target'].sort());
     expect(item).toEqual({
       id: String(d._id),
       eventType: 'CAR_PRICE_UPDATED',
+      action: 'UPDATE',
       createdAt: d.createdAt,
       actor: { id: String(d.performedBy), email: 'admin@trustcar.vn' },
       target: { model: 'Car', id: String(d.targetId), code: 'TC-2026-0001' },
