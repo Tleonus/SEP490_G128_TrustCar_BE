@@ -143,6 +143,17 @@ export const createDailyCaptionLimiter = (max = resolveLimit(process.env.CAPTION
 });
 
 /**
+ * Cap on Facebook publishes per caller per calendar day (KAN-91).
+ *
+ * Mỗi lượt đăng tạo một bài thật, công khai ngay trên Page, nên hạn mức ngày thấp hơn caption.
+ * Key theo tài khoản Admin đã đăng nhập.
+ *
+ * @param {number} [max=10]
+ */
+export const createDailyPublishLimiter = (max = resolveLimit(process.env.FACEBOOK_DAILY_PUBLISH_LIMIT, 10)) => rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max,
+  keyGenerator: (req) => `fb-publish:${req.userId ?? req.ip}`,
  * KAN-97 — /api/v1/track là endpoint public. Khoá theo IP (120 request / 5 phút
  * mặc định) để chặn script spam mà vẫn đủ cho một phiên duyệt bình thường.
  * @param {number} [max=120]
@@ -155,6 +166,8 @@ export const createTrackLimiter = (max = resolveLimit(process.env.TRACK_RATE_LIM
   legacyHeaders: false,
   message: {
     success: false,
+    message: `Daily Facebook publish limit reached (${max} per day). Please try again tomorrow.`,
+    code: 'FACEBOOK_DAILY_LIMIT',
     message: 'Too many tracking events. Slow down.',
     code: 'TRACK_RATE_LIMIT',
   },
@@ -199,6 +212,13 @@ export const createPublicChatLimiter = (max = resolveLimit(process.env.CHAT_RATE
 });
 
 export default {
+  identifyCaller,
+  createGlobalLimiter,
+  createAuthLimiter,
+  createDailyCaptionLimiter,
+  createDailyPublishLimiter,
+  limitsFromEnv,
+  resolveLimit,
   identifyCaller, createGlobalLimiter, createAuthLimiter, createDailyCaptionLimiter,
   createTrackLimiter, createHistoryPdfLimiter, createPublicChatLimiter, limitsFromEnv, resolveLimit,
 };

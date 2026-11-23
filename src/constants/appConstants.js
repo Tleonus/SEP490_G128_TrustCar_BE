@@ -256,6 +256,7 @@ export const ActivityEventType = Object.freeze({
   CAR_PRICE_UPDATED:     'CAR_PRICE_UPDATED',
   CAR_IMAGE_ADDED:       'CAR_IMAGE_ADDED',
   CAR_IMAGE_REMOVED:     'CAR_IMAGE_REMOVED',
+  CAR_PUBLISHED_FACEBOOK: 'CAR_PUBLISHED_FACEBOOK', // KAN-91: đăng bài lên Facebook Page
 
   // Customer & Lead
   CUSTOMER_CREATED:      'CUSTOMER_CREATED',
