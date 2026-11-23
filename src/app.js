@@ -11,13 +11,14 @@
  *   1. Helmet (security headers)
  *   2. CORS (cross-origin policy)
  *   3. Morgan (request logging)
- *   4. Rate limiter (global request throttle)
- *   5. JSON body parser
- *   6. URL-encoded parser
- *   7. Share pages (/share/car/:code) — HTML for crawlers, mounted before the API
- *   8. API Routes (/api/v1/*)
- *   9. 404 Not Found handler
- *  10. Global Error handler
+ *   4. Wishlist error-contract marker (before the limiter and body parsers)
+ *   5. Rate limiter (global request throttle)
+ *   6. JSON body parser
+ *   7. URL-encoded parser
+ *   8. Share pages (/share/car/:code) — HTML for crawlers, mounted before the API
+ *   9. API Routes (/api/v1/*)
+ *  10. 404 Not Found handler
+ *  11. Global Error handler
  */
 
 import express from 'express';
@@ -32,7 +33,7 @@ import shareCarRoutes from './routes/shareCarRoutes.js';
 
 // Error handlers (MUST be last in the chain)
 import { notFoundHandler, errorHandler } from './middlewares/errorMiddleware.js';
-import { createAuthLimiter, createGlobalLimiter, identifyCaller } from './middlewares/rateLimiters.js';
+import { createAuthLimiter, createGlobalLimiter, identifyCaller, markWishlistErrorContract } from './middlewares/rateLimiters.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EXPRESS INSTANCE
@@ -74,6 +75,9 @@ app.use(morgan(logFormat, {
 // ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITING (Global)
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Mark Wishlist requests first so errors from the limiter or body parser use ENG-02.
+app.use(markWishlistErrorContract);
 
 // Per-account and per-IP quotas are documented in middlewares/rateLimiters.js.
 app.use('/api/', identifyCaller, createGlobalLimiter());

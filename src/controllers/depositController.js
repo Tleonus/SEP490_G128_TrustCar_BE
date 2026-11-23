@@ -25,6 +25,7 @@ export const createDeposit = handle(async (req, res) => {
     carId: req.body.carId,
     depositAmount: req.body.depositAmount,
     userId: req.body.userId, // optional – must equal the JWT account (checked in the service)
+    paymentProvider: req.body.paymentProvider, // KAN-99: MANUAL | VNPAY (defaults in service)
     ...requestContext(req),
   });
   return sendSuccess(res, 201, 'Đặt cọc giữ xe thành công.', data);

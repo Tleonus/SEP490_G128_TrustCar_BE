@@ -1,6 +1,10 @@
 import mongoose from 'mongoose';
+import { TRACKABLE_EVENT_TYPES } from '../constants/leadScoringConstants.js';
 
 const { Schema } = mongoose;
+
+/** KAN-97: `LEAD_ENQUIRY` để dành cho ghi event khi khách gửi form liên hệ. */
+const EVENT_TYPES = [...TRACKABLE_EVENT_TYPES, 'LEAD_ENQUIRY'];
 
 const InteractionEventSchema = new Schema(
   {
@@ -8,7 +12,11 @@ const InteractionEventSchema = new Schema(
     carId: { type: Schema.Types.ObjectId, ref: 'Car', default: null },
     recommendationItemId: { type: Schema.Types.ObjectId, default: null },
     leadId: { type: Schema.Types.ObjectId, ref: 'Lead', default: null },
-    eventType: { type: String, required: true },
+    eventType: {
+      type: String,
+      required: true,
+      enum: { values: EVENT_TYPES, message: 'Unknown interaction event type.' },
+    },
     occurredAt: { type: Date, default: Date.now },
     metadata: { type: Schema.Types.Mixed, default: null },
   },

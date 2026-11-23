@@ -49,7 +49,7 @@ const hidden = () => fakes.appointments.filter((r) => !r.isActive);
 
 describe('customer reschedule: the happy path (AC-30)', () => {
   it('creates PENDING appointments for the same cars at the new time and hides the old ones', async () => {
-    const [a, b] = myVisit(2, { status: 'CONFIRMED', assignedTo: staffId, confirmedBy: staffId, confirmedAt: NOW });
+    const [a, b] = myVisit(2);
     const oldCode = a.appointmentCode;
     const { visit, previousVisitCode } = await move();
 
@@ -98,16 +98,10 @@ describe('customer reschedule: the happy path (AC-30)', () => {
     expect(visible().filter((r) => ['PENDING', 'CONFIRMED'].includes(r.status))).toHaveLength(2);
   });
 
-  it('sends one e-mail with both times and both codes, asking for a new confirmation', async () => {
-    const [a] = myVisit(1, { status: 'CONFIRMED' });
-    const { visit } = await move();
-    const sent = await fakes.flushMail();
-    expect(sent).toHaveLength(1);
-    expect(sent[0].subject).toContain(visit.visitCode);
-    expect(sent[0].html).toContain('Thứ năm, 10:00 ngày 12/11/2026');
-    expect(sent[0].html).toContain('Thứ sáu, 13:00 ngày 13/11/2026');
-    expect(sent[0].html).toContain(a.appointmentCode);
-    expect(sent[0].html).toContain('xác nhận lại');
+  it('sends no e-mail: the customer moved it themselves (mail only for staff actions)', async () => {
+    myVisit(1);
+    await move();
+    expect(await fakes.flushMail()).toHaveLength(0);
   });
 
   it('leaves an auto-cancelled appointment of the old visit where it was (C29)', async () => {
@@ -126,6 +120,22 @@ describe('customer reschedule: the happy path (AC-30)', () => {
     expect((await move()).visit.status).toBe('PENDING');
     await fakes.flushMail();
     quiet.mockRestore();
+  });
+});
+
+describe('a confirmed visit: the customer calls the showroom', () => {
+  it('moving it online is refused and nothing changes; canReschedule is false', async () => {
+    myVisit(2, { status: 'CONFIRMED', confirmedBy: staffId, confirmedAt: NOW });
+    const before = snapshot();
+    expect((await reject(move()))?.code).toBe('APPOINTMENT_CONFIRMED_CALL_SHOWROOM');
+    expect(snapshot()).toBe(before);
+    const { visits } = await listMyVisits({ customerId: me._id, now: NOW });
+    expect(visits[0].canReschedule).toBe(false);
+  });
+
+  it('staff can still move it', async () => {
+    myVisit(1, { status: 'CONFIRMED', confirmedBy: staffId, confirmedAt: NOW });
+    expect((await moveByStaff()).visit.status).toBe('CONFIRMED');
   });
 });
 
@@ -222,6 +232,17 @@ describe('customer reschedule: refusals leave everything as it was (AC-31)', () 
     const sent = await fakes.flushMail();
     expect(sent).toHaveLength(1);
     expect(sent[0].subject).toContain('có xe không còn khả dụng');
+  });
+
+  it('a move made by staff still e-mails the customer once, with both times and both codes', async () => {
+    const [a] = myVisit(1, { status: 'CONFIRMED' });
+    const { visit } = await moveByStaff();
+    const sent = await fakes.flushMail();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toContain(visit.visitCode);
+    expect(sent[0].html).toContain('Thứ năm, 10:00 ngày 12/11/2026');
+    expect(sent[0].html).toContain('Thứ sáu, 13:00 ngày 13/11/2026');
+    expect(sent[0].html).toContain(a.appointmentCode);
   });
 
   it('never deletes a row physically', async () => {

@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { SystemMessages as MSG } from '../constants/systemMessages.js';
+
 /**
  * @file apiResponse.js
  * @description Factory / Utility Pattern – Standardized API response wrappers.
@@ -10,6 +13,8 @@
  *
  * Error:
  *   { success: false, message, code, errors? }
+ *
+ * Wishlist errors opt in to the ENG-02 metadata fields through `res.locals`.
  *
  * Usage:
  *   import { sendSuccess, sendError, sendPaginated } from '../utils/apiResponse.js';
@@ -57,20 +62,35 @@ export const sendPaginated = (res, message, items, pagination) => {
   });
 };
 
-/**
- * Sends a standardized error response.
- * Used directly in controllers for known/expected errors.
- *
- * @param {import('express').Response} res
- * @param {number}   statusCode - HTTP status code.
- * @param {string}   message    - Human-readable error message.
- * @param {string}   [code]     - Machine-readable error code (e.g., 'VEHICLE_SOLD_LOCKED').
- * @param {Array}    [errors]   - Validation error detail array.
- */
-export const sendError = (res, statusCode, message, code = 'ERROR', errors = null) => {
+export const WISHLIST_ERROR_CONTRACT = 'wishlist-v1';
+const publicErrorMessages = new Map(Object.values(MSG).map(({ code, message }) => [code, message]));
+const wishlistField = /^(?:carIds(?:\.\d+)?|carId|priceAlertEnabled|page|limit|ids|alertId)$/;
+
+const safeWishlistErrors = (errors) => (Array.isArray(errors) ? errors : []).map((error) => ({
+  field: typeof error?.field === 'string' && wishlistField.test(error.field) ? error.field : 'unknown',
+  message: 'Invalid value for this field.',
+}));
+
+/** @ears .sdd/features/wishlist-model-api-sync-login/SPEC.md#REQ-024 */
+const buildErrorBody = (res, statusCode, message, code, errors) => {
   const body = { success: false, message, code };
   if (errors) body.errors = errors;
-  return res.status(statusCode).json(body);
+
+  if (res.locals?.errorContract === WISHLIST_ERROR_CONTRACT) {
+    body.message = statusCode >= 500 ? MSG.MSG62.message : publicErrorMessages.get(code) || MSG.MSG42.message;
+    if (errors) body.errors = statusCode >= 500 ? [] : safeWishlistErrors(errors);
+    res.locals.wishlistRequestId ??= randomUUID();
+    body.error_code = code;
+    body.request_id = res.locals.wishlistRequestId;
+    body.timestamp = new Date().toISOString();
+  }
+
+  return body;
+};
+
+/** Sends an error, with ENG-02 metadata only for requests opted in by Wishlist. */
+export const sendError = (res, statusCode, message, code = 'ERROR', errors = null) => {
+  return res.status(statusCode).json(buildErrorBody(res, statusCode, message, code, errors));
 };
 
 /**

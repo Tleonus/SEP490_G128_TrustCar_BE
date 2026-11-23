@@ -77,6 +77,8 @@ export const googleSignIn = async ({ idToken, ipAddress, userAgent }) => {
         firebaseUid: identity.uid,
         role:        role._id,
         roleName:    Roles.CUSTOMER,
+        roles:       [role._id],        // KAN-93
+        roleNames:   [Roles.CUSTOMER],  // KAN-93
         lastLoginAt: new Date(),
         lastLoginIp: ipAddress || null,
       });

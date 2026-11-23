@@ -22,11 +22,19 @@ import rateLimit from 'express-rate-limit';
 import { Roles } from '../constants/appConstants.js';
 import { TokenType, verifyTokenOfType } from '../utils/authTokens.js';
 import { extractToken } from './authMiddleware.js';
+import { sendError, WISHLIST_ERROR_CONTRACT } from '../utils/apiResponse.js';
 
 const WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX = 30;
 const LOGOUT_PATH = '/api/v1/auth/logout';
 const PROFILE_PATH = '/api/v1/auth/me';
+const WISHLIST_PATH = /^\/api\/v1\/(?:customer|public)\/wishlist(?:\/|$)/i;
+
+/** Mark Wishlist paths before app-level middleware can return an error. */
+export const markWishlistErrorContract = (req, res, next) => {
+  if (WISHLIST_PATH.test(req.path)) res.locals.errorContract = WISHLIST_ERROR_CONTRACT;
+  next();
+};
 
 /**
  * @param {string|undefined} value - Raw environment value.
@@ -80,6 +88,12 @@ export const createGlobalLimiter = (limits = limitsFromEnv()) => rateLimit({
   skip: isLogout,
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res, _next, options) => {
+    if (res.locals?.errorContract === WISHLIST_ERROR_CONTRACT) {
+      return sendError(res, options.statusCode, options.message.message, options.message.code);
+    }
+    return res.status(options.statusCode).send(options.message);
+  },
   message: {
     success: false,
     message: 'Too many requests. Please try again later.',
@@ -140,12 +154,60 @@ export const createDailyPublishLimiter = (max = resolveLimit(process.env.FACEBOO
   windowMs: 24 * 60 * 60 * 1000,
   max,
   keyGenerator: (req) => `fb-publish:${req.userId ?? req.ip}`,
+ * KAN-97 — /api/v1/track là endpoint public. Khoá theo IP (120 request / 5 phút
+ * mặc định) để chặn script spam mà vẫn đủ cho một phiên duyệt bình thường.
+ * @param {number} [max=120]
+ */
+export const createTrackLimiter = (max = resolveLimit(process.env.TRACK_RATE_LIMIT, 120)) => rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max,
+  keyGenerator: (req) => `track:${req.ip}`,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
     success: false,
     message: `Daily Facebook publish limit reached (${max} per day). Please try again tomorrow.`,
     code: 'FACEBOOK_DAILY_LIMIT',
+    message: 'Too many tracking events. Slow down.',
+    code: 'TRACK_RATE_LIMIT',
+  },
+});
+
+/**
+ * KAN-98 — /api/v1/public/history/:code/pdf renders a multi-page PDF on the fly.
+ * 30 requests per 10 minutes per IP keeps the CPU cost bounded while still
+ * allowing a visitor to open the report, refresh, and share the link.
+ * @param {number} [max=30]
+ */
+export const createHistoryPdfLimiter = (max = resolveLimit(process.env.HISTORY_PDF_RATE_LIMIT, 30)) => rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max,
+  keyGenerator: (req) => `history-pdf:${req.ip}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many history PDF requests. Please try again later.',
+    code: 'HISTORY_PDF_RATE_LIMIT',
+  },
+});
+
+/**
+ * KAN-75 — Dedicated rate limit for POST /api/v1/public/chat to prevent prompt
+ * flooding and LLM quota abuse. 60 requests per 10 minutes per IP/account by default.
+ * @param {number} [max=60]
+ */
+export const createPublicChatLimiter = (max = resolveLimit(process.env.CHAT_RATE_LIMIT, 60)) => rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max,
+  keyGenerator: (req) =>
+    req.rateLimitCaller ? `chat:user:${req.rateLimitCaller.userId}` : `chat:ip:${req.ip}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Bạn đang gửi tin nhắn quá nhanh. Vui lòng thử lại sau ít phút.',
+    code: 'CHAT_RATE_LIMIT',
   },
 });
 
@@ -157,5 +219,7 @@ export default {
   createDailyPublishLimiter,
   limitsFromEnv,
   resolveLimit,
+  identifyCaller, createGlobalLimiter, createAuthLimiter, createDailyCaptionLimiter,
+  createTrackLimiter, createHistoryPdfLimiter, createPublicChatLimiter, limitsFromEnv, resolveLimit,
 };
 

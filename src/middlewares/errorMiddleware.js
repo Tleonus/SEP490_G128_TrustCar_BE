@@ -13,7 +13,7 @@
  */
 
 import mongoose from 'mongoose';
-import { AppError } from '../utils/apiResponse.js';
+import { AppError, sendError, WISHLIST_ERROR_CONTRACT } from '../utils/apiResponse.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
 
 // ── Error Normalizer ───────────────────────────────────────────────────────
@@ -111,8 +111,22 @@ export const notFoundHandler = (req, _res, next) => {
  */
 export const errorHandler = (err, req, res, next) => { // eslint-disable-line no-unused-vars
   const normalized = normalizeError(err);
+  const isWishlistError = res.locals?.errorContract === WISHLIST_ERROR_CONTRACT;
 
-  // Log non-operational (programming) errors with full stack for debugging
+  // Wishlist logs only correlation and classification, never the raw provider error.
+  if (isWishlistError) {
+    const response = sendError(res, normalized.statusCode, normalized.message, normalized.code, normalized.errors);
+    if (normalized.statusCode >= 500) {
+      console.error('[Wishlist error]', {
+        request_id: res.locals.wishlistRequestId,
+        statusCode: normalized.statusCode,
+        code: normalized.code,
+      });
+    }
+    return response;
+  }
+
+  // Keep the existing logging and response contract for other API consumers.
   if (!normalized.isOperational || process.env.NODE_ENV === 'development') {
     console.error('💥 [Error]:', {
       method:     req.method,

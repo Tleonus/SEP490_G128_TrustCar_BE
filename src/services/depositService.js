@@ -35,10 +35,14 @@ import { runDepositAtomic } from '../utils/depositTransaction.js';
 import { ActivityEventType, CarStatus, Roles } from '../constants/appConstants.js';
 import {
   DepositStatus, DepositPaymentStatus, ACTIVE_HOLD_STATUSES, DepositAction, PublicCarState, DepositErrorCode,
+  PaymentProvider,
   getDepositSettings, computeDepositPolicy,
 } from '../constants/depositConstants.js';
 import repo from '../repositories/depositRepository.js';
 import logger from '../utils/logger.js';
+import Deposit from '../models/Deposit.js';
+import { buildPaymentUrl, generateTxnRef } from './vnpayService.js';
+import { assertVnpayEnabled } from '../config/vnpay.js';
 
 const STAFF_ROLES = new Set([Roles.ADMIN, Roles.SALES_STAFF]);
 export const isStaff = (user) => STAFF_ROLES.has(user?.roleName);
@@ -238,7 +242,7 @@ const runAtomic = (work) => runDepositAtomic(work, { maxAttempts: getDepositSett
  * @param {number} params.depositAmount - integer VND
  * @param {string} [params.userId]      - optional (Jira contract); must equal the signed-in account
  */
-export const createDeposit = async ({ user, carId, depositAmount, userId, ipAddress, userAgent }) => {
+export const createDeposit = async ({ user, carId, depositAmount, userId, paymentProvider, ipAddress, userAgent }) => {
   if (userId && String(userId) !== String(user._id)) {
     throw new AppError('userId không khớp với tài khoản đang đăng nhập.', 403, DepositErrorCode.USER_MISMATCH);
   }
@@ -266,6 +270,12 @@ export const createDeposit = async ({ user, carId, depositAmount, userId, ipAddr
       [{ field: 'depositAmount', message: 'Out of allowed range.', minAmount: policy.minAmount, maxAmount: policy.maxAmount }],
     );
   }
+
+  // KAN-99: normalise paymentProvider; MANUAL is the legacy default so any
+  // client that omits the field keeps the original KAN-22 flow.
+  const provider = Object.values(PaymentProvider).includes(paymentProvider)
+    ? paymentProvider
+    : PaymentProvider.MANUAL;
 
   const settings = getDepositSettings();
 
@@ -304,7 +314,8 @@ export const createDeposit = async ({ user, carId, depositAmount, userId, ipAddr
           reservedAt: now,
           expiresAt,
           carStatusChangedAt: now,
-          history: [historyEntry(DepositAction.CREATED, user._id, `Deposit ${amount} VND, hold until ${expiresAt.toISOString()}`)],
+          paymentProvider: provider,
+          history: [historyEntry(DepositAction.CREATED, user._id, `Deposit ${amount} VND via ${provider}, hold until ${expiresAt.toISOString()}`)],
         }, session);
         break;
       } catch (error) {
@@ -844,8 +855,132 @@ export const reconcileHolds = async () => {
   return { closed };
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// KAN-99 — VNPay payment intent
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Build a VNPay sandbox payment URL for an existing PENDING_PAYMENT deposit.
+ *
+ * Side effects (one DB write): the generated `vnpTxnRef` is persisted on the
+ * Deposit so `vnpayIpnService` can match the webhook back to the row. The
+ * stamp is unique sparse — regenerating the URL writes a fresh ref, which is
+ * fine because only the LATEST txnRef is accepted by the IPN handler.
+ *
+ * @param {object} args
+ * @param {object} args.user       JWT user (from verifyToken)
+ * @param {string} args.depositId  ObjectId string
+ * @param {string} args.ipAddress  req.ip
+ * @returns {Promise<{
+ *   depositId: string,
+ *   depositCode: string,
+ *   paymentProvider: string,
+ *   vnpTxnRef: string,
+ *   paymentUrl: string,
+ *   amount: number,
+ *   currency: string,
+ *   expiresAt: Date,
+ * }>}
+ */
+export const createVnpayPaymentIntent = async ({ user, depositId, ipAddress }) => {
+  const config = assertVnpayEnabled();
+
+  const deposit = await repo.findDepositById(depositId);
+  if (!deposit) throw notFound();
+
+  const owner = String(deposit.userId) === String(user?._id);
+  if (!owner && !isStaff(user)) {
+    throw new AppError('Bạn không có quyền truy cập lượt đặt cọc này.', 403, DepositErrorCode.USER_MISMATCH);
+  }
+
+  if (deposit.status !== DepositStatus.PENDING_PAYMENT) {
+    throw new AppError('Lượt đặt cọc không còn ở trạng thái chờ thanh toán.', 409, DepositErrorCode.INVALID_STATE);
+  }
+  if (deposit.paymentStatus !== DepositPaymentStatus.UNPAID) {
+    throw new AppError('Tiền cọc đã được ghi nhận trước đó.', 409, DepositErrorCode.VNPAY_ALREADY_PAID);
+  }
+  if (new Date(deposit.expiresAt).getTime() <= Date.now()) {
+    throw new AppError('Lượt đặt cọc đã hết hạn.', 410, DepositErrorCode.EXPIRED);
+  }
+
+  // The route's Joi schema accepts MANUAL as default, but once the customer
+  // opts into VNPay we flip the provider to make the audit trail match reality.
+  // A deposit that went MANUAL cannot roll back to MANUAL after this call —
+  // that's fine, we don't support mixed providers inside one deposit anyway.
+  const now = new Date();
+  let built;
+  try {
+    built = buildPaymentUrl({
+      deposit,
+      ipAddress,
+      now,
+      config,
+    });
+  } catch (error) {
+    logger.error('[vnpay-url] build failed', { depositId: String(deposit._id), error: error?.message });
+    throw new AppError('Không tạo được liên kết thanh toán VNPay.', 500, 'VNPAY_URL_BUILD_FAILED');
+  }
+
+  // Unique sparse index on vnpayTxnRef is the hard guard — the random ms
+  // suffix makes collisions essentially impossible. We retry once in the
+  // astronomical case of a collision.
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const updated = await Deposit.findOneAndUpdate(
+        {
+          _id: deposit._id,
+          status: DepositStatus.PENDING_PAYMENT,
+          paymentStatus: DepositPaymentStatus.UNPAID,
+        },
+        {
+          $set: {
+            paymentProvider: PaymentProvider.VNPAY,
+            vnpayTxnRef: built.vnpTxnRef,
+          },
+          $push: {
+            history: historyEntry(
+              DepositAction.VNPAY_URL_ISSUED,
+              user?._id ?? null,
+              `TxnRef ${built.vnpTxnRef} • expires ${built.expiresAt.toISOString()}`,
+            ),
+          },
+        },
+        { new: true },
+      );
+      if (!updated) {
+        throw new AppError('Lượt đặt cọc đã thay đổi trạng thái. Vui lòng tải lại trang.', 409, DepositErrorCode.INVALID_STATE);
+      }
+      return {
+        depositId: String(updated._id),
+        depositCode: updated.depositCode,
+        paymentProvider: PaymentProvider.VNPAY,
+        vnpTxnRef: built.vnpTxnRef,
+        paymentUrl: built.paymentUrl,
+        amount: updated.depositAmount,
+        currency: updated.currency || 'VND',
+        expiresAt: built.expiresAt,
+      };
+    } catch (error) {
+      if (isDuplicateKey(error, 'vnpayTxnRef') && attempt < 2) {
+        // Rebuild with a different ms stamp and retry.
+        built = buildPaymentUrl({
+          deposit,
+          ipAddress,
+          now: new Date(Date.now() + attempt),
+          config,
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+  // Unreachable — the loop either returns or throws.
+  throw new AppError('Không tạo được liên kết thanh toán VNPay.', 500, 'VNPAY_URL_BUILD_FAILED');
+};
+
 export default {
   createDeposit, expireDeposit, expireDueHoldOfCar, cancelDeposit, confirmDepositPayment, completeDeposit,
   refundDeposit, getCarHoldStatus, getDepositById, listMyDeposits, listDepositsForStaff, reconcileHolds,
+  createVnpayPaymentIntent,
   toDepositDto, isStaff,
 };

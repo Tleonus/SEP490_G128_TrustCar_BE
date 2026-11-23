@@ -95,6 +95,19 @@ const UserSchema = new mongoose.Schema(
     },
 
     // ── Role & Status ────────────────────────────────────────────────────
+    // KAN-93: a user may hold multiple roles (e.g. SALES_STAFF + INSPECTOR).
+    // `roles`/`roleNames` are the source of truth; `role`/`roleName` below are
+    // kept in sync with the primary role (roles[0]) for backward compatibility.
+    roles: {
+      type:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'Role' }],
+      default: [],
+    },
+
+    roleNames: {
+      type:    [{ type: String, enum: Object.values(Roles) }],
+      default: [],
+    },
+
     role: {
       type:     mongoose.Schema.Types.ObjectId,
       ref:      'Role',
@@ -104,7 +117,7 @@ const UserSchema = new mongoose.Schema(
     roleName: {
       type:  String,
       enum:  Object.values(Roles),
-      // Denormalized for fast JWT payload construction without an extra lookup
+      // Denormalized (primary role) for fast JWT payload construction without an extra lookup
     },
 
     isActive: {
@@ -125,6 +138,20 @@ const UserSchema = new mongoose.Schema(
 
     lockedUntil: {
       type:    Date,
+      default: null,
+    },
+
+    // KAN-101: who performed the lock and why (ADMIN_LOCK vs AUTO_RATE_LIMIT).
+    // Populated by lockUser() / autoLockUser(); cleared by unlockUser().
+    lockedReason: {
+      type:    String,
+      enum:    ['ADMIN_LOCK', 'AUTO_RATE_LIMIT', null],
+      default: null,
+    },
+
+    lockedBy: {
+      type:    mongoose.Schema.Types.ObjectId,
+      ref:     'User',
       default: null,
     },
 
@@ -173,6 +200,7 @@ const UserSchema = new mongoose.Schema(
 // ── Indexes ────────────────────────────────────────────────────────────────
 UserSchema.index({ email: 1 });
 UserSchema.index({ roleName: 1 });
+UserSchema.index({ roleNames: 1 }); // KAN-93: filter staff by any of their roles
 UserSchema.index({ isActive: 1 });
 UserSchema.index(
   { firebaseUid: 1 },
@@ -211,6 +239,22 @@ UserSchema.pre('save', async function (next) {
   } catch (err) {
     next(err);
   }
+});
+
+// ── Pre-Validate Hook: Keep the primary role in sync (KAN-93) ─────────────
+/**
+ * `roles[]` / `roleNames[]` are the source of truth. Whenever they change,
+ * mirror their first entry into the legacy single-value `role` / `roleName`
+ * fields so old code paths (JWT, filters, UI) keep working.
+ */
+UserSchema.pre('validate', function (next) {
+  if (Array.isArray(this.roles) && this.roles.length > 0) {
+    this.role = this.roles[0];
+  }
+  if (Array.isArray(this.roleNames) && this.roleNames.length > 0) {
+    this.roleName = this.roleNames[0];
+  }
+  next();
 });
 
 // ── Static Methods ─────────────────────────────────────────────────────────

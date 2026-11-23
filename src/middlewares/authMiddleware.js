@@ -20,6 +20,7 @@ import User from '../models/User.js';
 import { TokenType, verifyTokenOfType, isTokenCurrent } from '../utils/authTokens.js';
 import { AppError } from '../utils/apiResponse.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
+import { ROLE_PERMISSIONS } from '../constants/appConstants.js';
 
 /**
  * Extracts the Bearer token from the Authorization header.
@@ -65,7 +66,10 @@ const authenticate = ({ allowIncomplete = false } = {}) => async (req, res, next
 
     // GBR-21: Secondary DB check – account must still be active
     // '+password' only to know whether one is set (profile status); removed below.
-    const user = await User.findById(decoded.userId).select('+tokenVersion +password').populate('role').lean();
+    const user = await User.findById(decoded.userId)
+      .select('+tokenVersion +password')
+      .populate('roles')
+      .lean();
 
     // Unknown user, or token issued before the latest logout / password change
     if (!user || !isTokenCurrent(decoded, user)) {
@@ -80,16 +84,45 @@ const authenticate = ({ allowIncomplete = false } = {}) => async (req, res, next
       return next(new AppError(MSG.MSG06.message, MSG.MSG06.httpStatus, MSG.MSG06.code));
     }
 
+    // KAN-101: block signed-in requests from users under an active lock. Virtual
+    // `isLocked` is not loaded on a `.lean()` document, so compare the field directly.
+    if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+      return next(new AppError(
+        MSG.MSG_ACCOUNT_LOCKED.message,
+        MSG.MSG_ACCOUNT_LOCKED.httpStatus,
+        MSG.MSG_ACCOUNT_LOCKED.code,
+      ));
+    }
+
     if (!profileStatus.profileCompleted && !allowIncomplete) {
       return next(new AppError(MSG.MSG74.message, MSG.MSG74.httpStatus, MSG.MSG74.code));
     }
 
+    // KAN-93: union of the permission sets of every role the user holds.
+    // `roles` is populated above; when the entries are bare ObjectIds (role
+    // document deleted, or a driver that did not populate) fall back to the
+    // static role → permission matrix using the user's role names.
+    const populatedRoles = (user.roles || []).filter(
+      (r) => r && typeof r === 'object' && Array.isArray(r.permissions)
+    );
+
+    const allPermissions = populatedRoles.length
+      ? Array.from(new Set(populatedRoles.flatMap((r) => r.permissions)))
+      : Array.from(
+          new Set(
+            (user.roleNames?.length ? user.roleNames : (user.roleName ? [user.roleName] : []))
+              .flatMap((name) => ROLE_PERMISSIONS[name] || [])
+          )
+        );
+
     // Attach user context to request (never includes password – lean() + select behaviour)
-    req.user      = user;
-    req.userId    = user._id.toString();
-    req.userRole  = user.roleName;
-    req.token     = token;
-    req.profileStatus = profileStatus;
+    req.user            = user;
+    req.userId          = user._id.toString();
+    req.userRole        = user.roleName;                        // primary role (legacy)
+    req.userRoleNames   = user.roleNames?.length ? user.roleNames : (user.roleName ? [user.roleName] : []);
+    req.userPermissions = allPermissions;                       // union (KAN-93)
+    req.token           = token;
+    req.profileStatus   = profileStatus;
 
     next();
   } catch (error) {
@@ -120,12 +153,21 @@ export const optionalAuth = async (req, res, next) => {
       return next(); // Invalid / wrong-type token – continue anonymously
     }
 
-    const user = await User.findById(decoded.userId).select('+tokenVersion').lean();
+    const user = await User.findById(decoded.userId).select('+tokenVersion').populate('roles').lean();
     if (user && user.isActive && isTokenCurrent(decoded, user)) {
       delete user.tokenVersion;
-      req.user     = user;
-      req.userId   = user._id.toString();
-      req.userRole = user.roleName;
+      const populatedRoles = (user.roles || []).filter(
+        (r) => r && typeof r === 'object' && Array.isArray(r.permissions)
+      );
+      const roleNames = user.roleNames?.length ? user.roleNames : (user.roleName ? [user.roleName] : []);
+      const allPermissions = populatedRoles.length
+        ? Array.from(new Set(populatedRoles.flatMap((r) => r.permissions)))
+        : Array.from(new Set(roleNames.flatMap((name) => ROLE_PERMISSIONS[name] || [])));
+      req.user            = user;
+      req.userId          = user._id.toString();
+      req.userRole        = user.roleName;
+      req.userRoleNames   = roleNames;
+      req.userPermissions = allPermissions;
     }
 
     next();

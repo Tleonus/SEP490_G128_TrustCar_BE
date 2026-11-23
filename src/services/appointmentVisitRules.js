@@ -152,6 +152,7 @@ export const bookedAtOf = (rows) => new Date(Math.min(...rows.map((row) => timeO
 export const rescheduleBlock = (visit, count, now = new Date()) => {
   const remaining = timeOf(visit.scheduledAt) - timeOf(now);
   if (!visit.rows.some(isOpenRow) || remaining < SELF_RESCHEDULE_MIN_HOURS * HOUR_MS) return 'NOT_ALLOWED';
+  if (deriveVisitStatus(visit.rows) === AppointmentStatus.CONFIRMED) return 'CONFIRMED'; // call the showroom
   return count >= MAX_RESCHEDULES_PER_VISIT ? 'LIMIT' : null;
 };
 

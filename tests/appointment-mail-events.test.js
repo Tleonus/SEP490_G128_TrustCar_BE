@@ -43,16 +43,10 @@ const staffChange = (extra = {}) => changeVisitStatus({ id: fakes.appointments[0
 const cancelAsCustomer = (extra = {}) => cancelMyVisit({ customerId: customer._id, userId, id: fakes.appointments[0]._id, now: NOW, ...extra });
 
 describe('booking', () => {
-  it('sends one "received" e-mail listing the cars, after the rows exist', async () => {
+  it('a customer booking sends no e-mail (mail goes out once staff confirm)', async () => {
     const a = car(); const b = car();
     await book([String(a._id), String(b._id)]);
-    const sent = await fakes.flushMail();
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ to: 'an@example.com', toName: 'Nguyễn An' });
-    expect(sent[0].subject).toBe('TrustCar: đã nhận lịch lái thử APT-0001');
-    expect(sent[0].html).toContain('Thứ ba, 10:00 ngày 10/11/2026');
-    expect(sent[0].html).toContain('sẽ gọi điện để xác nhận');
-    expect((sent[0].html.match(/<li>/g) ?? [])).toHaveLength(2);
+    expect(await fakes.flushMail()).toHaveLength(0);
   });
 
   it('sends nothing when the booking is refused', async () => {
@@ -75,32 +69,18 @@ describe('booking', () => {
 });
 
 describe('customer cancel', () => {
-  it('sends one cancellation e-mail with the code shown on screen and only the cancelled cars', async () => {
+  it('a customer cancelling their own visit sends no e-mail', async () => {
     visit(2);
-    visit(0);
-    const dto = await cancelAsCustomer({ reason: 'bận' });
-    const sent = await fakes.flushMail();
-    expect(sent).toHaveLength(1);
-    expect(sent[0].subject).toBe(`TrustCar: bạn đã hủy lịch lái thử ${dto.visitCode}`);
-    expect((sent[0].html.match(/<li>/g) ?? [])).toHaveLength(2);
-    expect(sent[0].html).not.toContain('bận'); // the customer's own words are not echoed
+    await cancelAsCustomer({ reason: 'bận' });
+    expect(await fakes.flushMail()).toHaveLength(0);
   });
 
-  it('uses the whole visit for the code and lists only the cars that were still open', async () => {
-    visit(1, { status: 'CANCELLED', cancellationReason: 'AUTO_CAR_UNAVAILABLE:SOLD' }); // APT smallest, already closed
-    visit(1);
-    const dto = await cancelMyVisit({ customerId: customer._id, userId, id: fakes.appointments[1]._id, now: NOW });
-    const sent = await fakes.flushMail();
-    expect(sent[0].subject).toContain(dto.visitCode);
-    expect((sent[0].html.match(/<li>/g) ?? [])).toHaveLength(1);
-  });
-
-  it('a second cancellation (409) and a refused one send nothing more', async () => {
-    visit(1);
+  it('booking, cancelling and booking again (spam) sends nothing at all', async () => {
+    const a = car();
+    await book([String(a._id)]);
     await cancelAsCustomer();
-    expect(await reject(cancelAsCustomer())).not.toBeNull();
-    expect(await reject(cancelAsCustomer({ reason: 'RACE_LOST' }))).not.toBeNull();
-    expect(await fakes.flushMail()).toHaveLength(1);
+    await book([String(a._id)]);
+    expect(await fakes.flushMail()).toHaveLength(0);
   });
 });
 

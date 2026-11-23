@@ -124,7 +124,7 @@ describe('two moves of the same visit (INV-11)', () => {
     expect(mineOpen()).toHaveLength(1);
     expect(a).toMatchObject({ isActive: false, status: 'CANCELLED' });
     expectGlobalInvariants();
-    expect(await fakes.flushMail()).toHaveLength(1); // only the winner is told
+    expect(await fakes.flushMail()).toHaveLength(0); // a customer's own move is not e-mailed
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(fakes.openTransactions).toBe(0);
   });
@@ -140,7 +140,7 @@ describe('two moves of the same visit (INV-11)', () => {
     expect(mineOpen()[0].scheduledAt).toEqual(S1);
     expect(a).toMatchObject({ isActive: false });
     expectGlobalInvariants();
-    expect(await fakes.flushMail()).toHaveLength(1);
+    expect(await fakes.flushMail()).toHaveLength(0);
     expect(logSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -269,14 +269,14 @@ describe('a move racing other customers for the target slot (INV-3, INV-2)', () 
 describe('failures in the middle (INV-10: a failed move changes nothing)', () => {
   it('the retirement changes only some of the old rows: the whole move is refused and rolled back', async () => {
     const [a, b] = [
-      row(me, OLD, { status: 'CONFIRMED', confirmedBy: userId, confirmedAt: NOW, holdsCar: true, visitSeat: 1 }),
-      row(me, OLD, { status: 'CONFIRMED', confirmedBy: userId, confirmedAt: NOW, holdsCar: true }),
+      row(me, OLD, { holdsCar: true, visitSeat: 1 }),
+      row(me, OLD, { holdsCar: true }),
     ];
     Appointment.updateMany.mockImplementationOnce(async () => ({ modifiedCount: 1 })); // as if another request closed one row
     const error = await move(S1, a._id).catch((e) => e);
     expect(error.code).toBe('APPOINTMENT_STATUS_INVALID');
-    expect(a).toMatchObject({ isActive: true, status: 'CONFIRMED', holdsCar: true, visitSeat: 1 });
-    expect(b).toMatchObject({ isActive: true, status: 'CONFIRMED', holdsCar: true });
+    expect(a).toMatchObject({ isActive: true, status: 'PENDING', holdsCar: true, visitSeat: 1 });
+    expect(b).toMatchObject({ isActive: true, status: 'PENDING', holdsCar: true });
     expect(fakes.appointments).toHaveLength(2); // nothing new
     expectGlobalInvariants();
     expect(await fakes.flushMail()).toHaveLength(0);

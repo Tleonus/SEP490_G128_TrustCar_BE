@@ -180,15 +180,15 @@ describe('refusals create nothing (REQ-040)', () => {
 });
 
 describe('the customer stays in control (REQ-041, INV-13)', () => {
-  it('sees the visit in their own list and can cancel it; the cancellation counts as the customer\'s', async () => {
+  it('sees the visit in their own list; it is already confirmed, so cancelling online is refused (call the showroom)', async () => {
     const visit = await book();
     const mine = await getMyVisit({ customerId: customer._id, id: visit.visitId, now: NOW });
     expect(mine).toMatchObject({ status: 'CONFIRMED', visitCode: visit.visitCode });
     expect(JSON.stringify(mine)).not.toMatch(/Lan Sales|confirmedBy|assignedTo/);
 
     const customerUser = new mongoose.Types.ObjectId();
-    const cancelled = await cancelMyVisit({ customerId: customer._id, userId: customerUser, id: visit.visitId, reason: 'đổi ý', now: NOW });
-    expect(cancelled).toMatchObject({ status: 'CANCELLED', cancellationType: 'CUSTOMER', cancellationReason: 'đổi ý' });
+    const error = await reject(cancelMyVisit({ customerId: customer._id, userId: customerUser, id: visit.visitId, reason: 'đổi ý', now: NOW }));
+    expect(error?.code).toBe('APPOINTMENT_CONFIRMED_CALL_SHOWROOM');
   });
 });
 

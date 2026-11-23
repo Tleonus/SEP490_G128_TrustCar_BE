@@ -278,7 +278,12 @@ describe('the application never builds the new indexes by itself (AC-36, REQ-221
   });
 
   it('nothing in src creates or syncs indexes on the appointment collection', () => {
-    const offenders = sources.filter((file) => /syncIndexes|ensureIndexes|\.createIndex\(/.test(read(file)) && !/appointmentHoldIndexes/.test(file));
+    const appointmentIndexTarget = /\bappointments?\b|holdsCar|visitSeat|uniq_visit_(?:car|seat)_time/i;
+    const offenders = sources.filter((file) => {
+      if (/appointmentHoldIndexes/.test(file)) return false;
+      const source = read(file);
+      return /syncIndexes|ensureIndexes|\.createIndex\(/.test(source) && appointmentIndexTarget.test(source);
+    });
     expect(offenders.map((file) => path.basename(file))).toEqual([]);
   });
 

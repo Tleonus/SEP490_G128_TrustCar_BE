@@ -69,9 +69,12 @@ const boundsOf = ({ from, to, needsOutcome: wantsOutcome }, now) => {
 const isTrue = (value) => value === true || value === 'true';
 
 const matchesFilters = (visit, query, now) => {
-  const { status, carId, cancellationType } = query;
+  const { status, carId, cancellationType, type } = query;
   if (status && deriveVisitStatus(visit.rows) !== status) return false;
   if (carId && !visit.rows.some((row) => String(row.car) === String(carId))) return false;
+  // KAN-96: filter by appointment type (e.g. SERVICE). A visit matches when every
+  // row shares the requested type, which is always true for a single-row service visit.
+  if (type && !visit.rows.every((row) => row.type === type)) return false;
   if (cancellationType && cancellationOf(visit.rows)?.type !== cancellationType) return false;
   if (isTrue(query.needsReminderCall) && !needsReminderCall(visit, now)) return false;
   if (isTrue(query.needsOutcome) && !needsOutcome(visit, now)) return false;

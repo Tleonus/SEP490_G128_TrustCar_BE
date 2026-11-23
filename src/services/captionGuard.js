@@ -13,6 +13,7 @@
  */
 
 import { factsTitle } from './captionFacts.js';
+import { priceBand } from '../utils/shareFormat.js';
 
 /** Number-like tokens: 1.234, 40 000, 0.52, 520, 2.0, 1,5 */
 const NUMBER_TOKEN = /\d+(?:[.,]\d+)*/g;
@@ -67,6 +68,11 @@ export const allowedNumbers = (facts) => {
     }
     // "chỉ từ 520 triệu" → "520"; "0,52 tỷ" → "0,52".
     add(Number((price / 1e9).toFixed(2)));
+
+    // "tầm 500 triệu" / "dưới 550 triệu" — the band bound is derived from the
+    // price and rounded away from it, so it is a true statement about the price.
+    const band = priceBand(price);
+    if (band) add(band.valueMillion);
   }
 
   // Digits inside the model name ("Vios 1.5G") and the certificate code.
