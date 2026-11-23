@@ -8,6 +8,7 @@
 
 import ActivityLog from '../models/ActivityLog.js';
 import { ActivityEventType } from '../constants/appConstants.js';
+import { AuditAction, eventActionMap } from '../constants/auditActions.js';
 import { AppError, buildPaginationMeta, parsePagination } from '../utils/apiResponse.js';
 import { buildFilter, sortDirection } from './activityLogFilter.js';
 import { toDetail, toListItem } from './activityLogMapper.js';
@@ -52,12 +53,33 @@ export const getActivityLog = async (id) => {
  * that appears in the log (blank and null values dropped).
  *
  * @ears .sdd/features/system-audit-logs/SPEC.md#REQ-010
- * @returns {Promise<{ eventTypes: string[], targetModels: string[] }>}
+ * KAN-92 adds `actions`, `eventActions` (event type → action) and `actorEmails`.
+ * @returns {Promise<{ eventTypes: string[], targetModels: string[], actions: string[], eventActions: object, actorEmails: string[] }>}
  */
 export const getActivityLogMeta = async () => {
-  const models = await ActivityLog.distinct('targetModel');
+  const [models, emails] = await Promise.all([
+    ActivityLog.distinct('targetModel'),
+    ActivityLog.distinct('performedByEmail'),
+  ]);
   const targetModels = [...new Set(models.filter((name) => typeof name === 'string' && name.trim() !== ''))].sort();
-  return { eventTypes: Object.values(ActivityEventType).sort(), targetModels };
+
+  // KAN-92: people who appear in the log (for the "Người thực hiện" select). Case-insensitive de-duplication,
+  // first spelling kept; matched back with the case-insensitive `actorEmail` filter.
+  const seen = new Map();
+  for (const email of emails) {
+    if (typeof email !== 'string' || email.trim() === '') continue;
+    const key = email.trim().toLowerCase();
+    if (!seen.has(key)) seen.set(key, email.trim());
+  }
+  const actorEmails = [...seen.values()].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+  return {
+    eventTypes: Object.values(ActivityEventType).sort(),
+    targetModels,
+    actions: Object.values(AuditAction),
+    eventActions: eventActionMap(),
+    actorEmails,
+  };
 };
 
 export default { listActivityLogs, getActivityLog, getActivityLogMeta };
