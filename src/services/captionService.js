@@ -58,13 +58,8 @@ const factsFingerprint = (facts) => crypto
   .digest('hex')
   .slice(0, 16);
 
-<<<<<<< Updated upstream
 const cacheTitle = (carId, facts, { tone, platform, length }) =>
-  `${carId}|${tone}|${platform}|${length}|${factsFingerprint(facts)}`;
-=======
-const cacheTitle = (facts, { tone, platform, length }) =>
-  `${CAPTION_TEMPLATE_VERSION}|${tone}|${platform}|${length}|${factsFingerprint(facts)}`;
->>>>>>> Stashed changes
+  `${CAPTION_TEMPLATE_VERSION}|${carId}|${tone}|${platform}|${length}|${factsFingerprint(facts)}`;
 
 const SYSTEM_PROMPT = [
   'Bạn là nhân viên marketing của TrustCar, showroom xe đã qua sử dụng có kiểm định (CPO).',
