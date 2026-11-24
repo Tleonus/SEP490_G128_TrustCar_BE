@@ -283,8 +283,6 @@ const CarSchema = new mongoose.Schema(
     cpoCertificateId: {
       type:    String,
       trim:    true,
-      unique:  true,
-      sparse:  true,
       default: null,
     },
 
@@ -316,7 +314,7 @@ const CarSchema = new mongoose.Schema(
     },
     /**
      * Opaque QR verify hash. Derived from (carId, cpoCertificateId, secret) in
-     * services/vehicleHistoryService.js; sparse-unique so uncertified cars have no hash.
+     * services/vehicleHistoryService.js. A partial index keeps assigned hashes unique.
      */
     historyVerifyHash: {
       type:    String,
@@ -417,8 +415,20 @@ CarSchema.index({ mileage: 1 });
 CarSchema.index({ status: 1, isActive: 1 });
 CarSchema.index({ make: 1, status: 1, price: 1 }); // Public filter compound index
 CarSchema.index(
+  { cpoCertificateId: 1 },
+  {
+    unique: true,
+    name: 'uniq_car_cpo_certificate_string',
+    partialFilterExpression: { cpoCertificateId: { $type: 'string' } },
+  },
+);
+CarSchema.index(
   { historyVerifyHash: 1 },
-  { unique: true, sparse: true, name: 'uniq_history_verify_hash' },
+  {
+    unique: true,
+    name: 'uniq_car_history_verify_hash_string',
+    partialFilterExpression: { historyVerifyHash: { $type: 'string' } },
+  },
 ); // KAN-98: reverse lookup from QR hash
 
 // ── Virtual: primaryImage ─────────────────────────────────────────────────

@@ -6,9 +6,25 @@
 
 import request from 'supertest';
 import { setupInspectionHarness } from './helpers/fakeInspectionModels.js';
-import { getChecklist } from '../src/config/inspectionChecklist.js';
+import { getChecklist, PUBLIC_REPORT_SCOPE_NOTE } from '../src/config/inspectionChecklist.js';
 
 const h = await setupInspectionHarness();
+
+// Extend the shared fake for the report selector. Projection and sort arguments
+// are covered by the repository suite. Return raw fixtures to test the HTTP allowlist.
+const findOneRecord = h.InspectionRecord.findOne.getMockImplementation();
+h.InspectionRecord.findOne.mockImplementation((filter, projection) => {
+  if (!filter.$or) return findOneRecord(filter, projection);
+  const query = {
+    sort: () => query,
+    lean: async () => [...h.records.values()].find((record) =>
+      String(record.carId) === filter.carId && record.cpoCertificateId === filter.cpoCertificateId &&
+      record.result === filter.result && filter.$or.some(({ status }) => (record.status ?? null) === status),
+    ) ?? null,
+  };
+  return query;
+});
+
 const api = () => request(h.app);
 const CLOUD = process.env.CLOUDINARY_CLOUD_NAME;
 const CODE = 'CPO-20261102-3F9A';
@@ -17,6 +33,16 @@ const allTrue = {
 };
 const img = (folder, name) => `https://res.cloudinary.com/${CLOUD}/image/upload/v1/${folder}/${name}.jpg`;
 const report = (idOrCode) => api().get(`/api/v1/public/cars/${idOrCode}/inspection-report`);
+const reportNotFound = {
+  success: false, code: 'INSPECTION_REPORT_NOT_FOUND', message: 'Inspection report not found.',
+};
+const passedGroups = [
+  ['G1_BODY_FRAME', 'Khung gầm, thân vỏ không đâm va'],
+  ['G2_FLOOD', 'Không ngập nước, thủy kích'],
+  ['G3_ENGINE_GEARBOX', 'Động cơ, hộp số nguyên bản'],
+  ['G4_ODOMETER', 'ODO chuẩn, không tua'],
+  ['G5_ELECTRICAL_SAFETY', 'Điện tử, an toàn hoạt động tốt'],
+].map(([key, label]) => ({ key, label, passed: true, items: [], photos: [], minorDefects: [] }));
 
 let inspector;
 
@@ -36,6 +62,10 @@ const certifiedCar = (carOverrides = {}, recordOverrides = {}) => {
     submittedBy: inspector.id,
     submittedAt: new Date('2026-11-02T08:15:00Z'),
     notes: 'Ghi chú nội bộ',
+    createdBy: inspector.id,
+    checklistSnapshot: { templateKey: 'GASOLINE', revision: 1, groups: [{ label: 'Tên nội bộ' }] },
+    answers: [{ questionId: 'internal-photo', value: [img('trustcar/inspections/r', 'answer')] }],
+    archivedAnswers: [{ questionId: 'old-answer', value: 'Dữ liệu cũ nội bộ', sourceRevision: 1 }],
     vehicleInfo: {
       original: { make: 'TOYOTA', mileage: 40000 },
       confirmed: { make: 'TOYOTA', model: 'Vios', variant: '1.5G', color: 'Trắng', year: 2020, mileage: 50000 },
@@ -67,13 +97,18 @@ describe('GET /api/v1/public/cars/:id/inspection-report', () => {
     const res = await report(carId);
 
     expect(res.status).toBe(200);
-    expect(res.body.data).toMatchObject({
-      certificateId: CODE, level: 'FULL', inspector: 'N.V.A.', issuedAt: '2026-11-02T08:15:00.000Z',
-      vehicle: { model: 'Vios', mileage: 50000 },
+    expect(res.body).toEqual({
+      success: true,
+      message: 'Inspection report retrieved successfully.',
+      data: {
+        certificateId: CODE, level: 'FULL', inspector: 'N.V.A.', issuedAt: '2026-11-02T08:15:00.000Z',
+        vehicle: { make: 'TOYOTA', model: 'Vios', variant: '1.5G', color: 'Trắng', year: 2020, mileage: 50000 },
+        groups: passedGroups,
+        overviewPhotos: null,
+        photos: [],
+        scopeNote: PUBLIC_REPORT_SCOPE_NOTE,
+      },
     });
-    expect(res.body.data.groups).toHaveLength(5);
-    const json = JSON.stringify(res.body);
-    ['Ghi chú nội bộ', 'nội bộ', inspector.id, '"40000"', ':40000'].forEach((s) => expect(json).not.toContain(s));
   });
 
   test('APPROVED_CPO car (not yet on sale) → 200; lookup by vehicleCode works', async () => {
@@ -93,8 +128,26 @@ describe('GET /api/v1/public/cars/:id/inspection-report', () => {
 
     const res = await report(carId);
 
-    expect(res.body.data).toMatchObject({ level: 'MINIMAL', overviewPhotos: null, photos: [img('trustcar/inspections/quick/c', 'q')] });
-    expect(res.body.data.vehicle.mileage).toBe(50000);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      level: 'MINIMAL', overviewPhotos: null, photos: [], groups: passedGroups,
+      vehicle: { make: 'TOYOTA', model: 'Vios', variant: '1.5G', color: 'Trắng', year: 2020, mileage: 50000 },
+    });
+  });
+
+  test('legacy certificate uses the stored criteria and createdAt when submittedAt is missing', async () => {
+    const createdAt = new Date('2026-09-01T08:00:00Z');
+    const { carId, recordId } = certifiedCar({}, { status: undefined, source: undefined, submittedAt: undefined, createdAt });
+    const { criteria } = h.records.get(recordId);
+    criteria.noWaterDamage = false;
+    delete criteria.engineGearboxIntact;
+    criteria.verifiedOdo = 'true';
+
+    const res = await report(carId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ level: 'MINIMAL', issuedAt: createdAt.toISOString() });
+    expect(res.body.data.groups).toEqual([passedGroups[0], passedGroups[4]]);
   });
 
   test.each([
@@ -105,15 +158,17 @@ describe('GET /api/v1/public/cars/:id/inspection-report', () => {
     ['inactive car', { isActive: false }, {}],
     ['car without certificate', { cpoCertificateId: null }, {}],
     ['record with another certificate', {}, { cpoCertificateId: 'CPO-20260101-0000' }],
+    ['record for another car', {}, { carId: '65f000000000000000000099' }],
     ['record not PASSED', {}, { result: 'FAILED' }],
     ['record still a DRAFT', {}, { status: 'DRAFT' }],
+    ['record awaiting approval', {}, { status: 'PENDING_APPROVAL' }],
   ])('%s → 404 INSPECTION_REPORT_NOT_FOUND', async (_label, carOverrides, recordOverrides) => {
     const { carId } = certifiedCar(carOverrides, recordOverrides);
 
     const res = await report(carId);
 
     expect(res.status).toBe(404);
-    expect(res.body).toMatchObject({ code: 'INSPECTION_REPORT_NOT_FOUND', message: 'Inspection report not found.' });
+    expect(res.body).toEqual(reportNotFound);
   });
 
   test('unknown id, unknown vehicleCode and garbage id → the same 404', async () => {
@@ -121,7 +176,7 @@ describe('GET /api/v1/public/cars/:id/inspection-report', () => {
       // eslint-disable-next-line no-await-in-loop
       const res = await report(id);
       expect(res.status).toBe(404);
-      expect(res.body.code).toBe('INSPECTION_REPORT_NOT_FOUND');
+      expect(res.body).toEqual(reportNotFound);
     }
   });
 
@@ -146,8 +201,18 @@ describe('GET /api/v1/public/cars/:id/inspection-report', () => {
     const spies = [h.Car.findOne, h.InspectionRecord.findOne, h.User.findById];
     spies.forEach((spy) => spy.mockClear());
 
-    await report(carId);
+    expect((await report(carId)).status).toBe(200);
 
-    expect(spies.reduce((sum, spy) => sum + spy.mock.calls.length, 0)).toBeLessThanOrEqual(3);
+    spies.forEach((spy) => expect(spy).toHaveBeenCalledTimes(1));
+  });
+
+  test('unexpected query failures use the global error handler', async () => {
+    const { carId } = certifiedCar();
+    h.Car.findOne.mockImplementationOnce(() => { throw new Error('Simulated report lookup failure'); });
+
+    const res = await report(carId);
+
+    expect(res.status).toBe(500);
+    expect(res.body).toMatchObject({ success: false, code: 'INTERNAL_ERROR' });
   });
 });

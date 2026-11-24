@@ -154,6 +154,16 @@ export const createDailyPublishLimiter = (max = resolveLimit(process.env.FACEBOO
   windowMs: 24 * 60 * 60 * 1000,
   max,
   keyGenerator: (req) => `fb-publish:${req.userId ?? req.ip}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: `Daily Facebook publish limit reached (${max} per day). Please try again tomorrow.`,
+    code: 'FACEBOOK_DAILY_LIMIT',
+  },
+});
+
+/**
  * KAN-97 — /api/v1/track là endpoint public. Khoá theo IP (120 request / 5 phút
  * mặc định) để chặn script spam mà vẫn đủ cho một phiên duyệt bình thường.
  * @param {number} [max=120]
@@ -166,8 +176,6 @@ export const createTrackLimiter = (max = resolveLimit(process.env.TRACK_RATE_LIM
   legacyHeaders: false,
   message: {
     success: false,
-    message: `Daily Facebook publish limit reached (${max} per day). Please try again tomorrow.`,
-    code: 'FACEBOOK_DAILY_LIMIT',
     message: 'Too many tracking events. Slow down.',
     code: 'TRACK_RATE_LIMIT',
   },
