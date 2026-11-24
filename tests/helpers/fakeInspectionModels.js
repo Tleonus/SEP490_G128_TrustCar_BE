@@ -1,9 +1,8 @@
 /**
  * @file fakeInspectionModels.js
  * @description Test harness for inspection integration tests. Runs the REAL
- * Express app (routes → Joi → controllers → services → models) on top of the
- * auth harness, replacing only persistence for Car, InspectionRecord and
- * ActivityLog with in-memory Maps.
+ * Express app and inspection adapters on top of the auth harness, with
+ * in-memory persistence for cars, inspections, forms, and audit.
  *
  * Emulated database behaviour (keep in sync with what the inspection code uses):
  * - Transactions: `mongoose.startSession()` returns a fake session. Sessions are
@@ -15,7 +14,7 @@
  *   chainable .session() .select() .populate() .lean(); Model.create([docs], opts);
  *   doc.save(opts); ActivityLog.create([docs], opts).
  * - Fault injection: `failNextCarSaves(n, error)` makes the next n Car saves throw;
- *   `forceCpoCollisions(n)` makes the next n CPO-code checks (`Car.exists`) report a clash.
+ *   `forceCpoCollisions(n)` makes the next n certificate writes report a clash.
  *
  * Usage (top of a test file):
  *   import { setupInspectionHarness } from './helpers/fakeInspectionModels.js';
@@ -26,6 +25,7 @@
 import { jest } from '@jest/globals';
 import mongoose from 'mongoose';
 import { setupAuthHarness } from './fakeAuthModels.js';
+import { CPO_CRITERIA, InspectionResult } from '../../src/domain/inspection/criteria.js';
 
 process.env.CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || 'trustcar-test';
 process.env.CLOUDINARY_API_KEY    = process.env.CLOUDINARY_API_KEY || 'test-key';
@@ -62,7 +62,7 @@ const matches = (doc, filter = {}) => Object.entries(filter).every(([path, cond]
   if (cond && typeof cond === 'object' && !(cond instanceof mongoose.Types.ObjectId) && '$ne' in cond) {
     return actual !== norm(cond.$ne);
   }
-  return actual === norm(cond);
+  return cond === null ? actual == null : actual === norm(cond);
 });
 
 const duplicateKeyError = (index, keyValue) => Object.assign(
@@ -97,24 +97,37 @@ export const setupInspectionHarness = async () => {
   const { default: ActivityLog } = await import('../../src/models/ActivityLog.js');
   const { default: User } = await import('../../src/models/User.js');
   const { signAccessToken } = await import('../../src/utils/authTokens.js');
+  const { FormTemplateHead, FormTemplateRevision, FormTemplateAudit } =
+    await import('../../src/infra/inspection/formTemplateModel.js');
 
   const cars = new Map();
   const records = new Map();
+  const formHeads = new Map();
+  const formRevisions = new Map();
+  const formAudit = [];
   const activity = [];
-  const faults = { carSaves: [], cpoCollisions: 0 };
+  const faults = { carSaves: [], cpoCollisions: 0, recordUpdates: 0 };
   const reads = { carFindOne: 0 };
 
   // ── Transactions: serialised fake sessions with snapshot/rollback ────────
   let lock = Promise.resolve();
+  const copyMap = (map) => new Map([...map].map(([k, v]) => [k, clone(v)]));
+  const restoreMap = (map, copied) => {
+    map.clear();
+    copied.forEach((value, key) => map.set(key, value));
+  };
   const snapshot = () => ({
-    cars: new Map([...cars].map(([k, v]) => [k, clone(v)])),
-    records: new Map([...records].map(([k, v]) => [k, clone(v)])),
-    activity: activity.length,
+    cars: copyMap(cars), records: copyMap(records),
+    formHeads: copyMap(formHeads), formRevisions: copyMap(formRevisions),
+    activity: activity.length, formAudit: formAudit.length,
   });
   const restore = (snap) => {
-    cars.clear(); snap.cars.forEach((v, k) => cars.set(k, v));
-    records.clear(); snap.records.forEach((v, k) => records.set(k, v));
+    restoreMap(cars, snap.cars);
+    restoreMap(records, snap.records);
+    restoreMap(formHeads, snap.formHeads);
+    restoreMap(formRevisions, snap.formRevisions);
     activity.length = snap.activity;
+    formAudit.length = snap.formAudit;
   };
   const sessionStats = { started: 0, committed: 0, aborted: 0 };
 
@@ -142,6 +155,21 @@ export const setupInspectionHarness = async () => {
   jest.spyOn(Car, 'findById').mockImplementation((id) => fakeQuery(Car, () => cars.get(String(id)) || null));
   jest.spyOn(Car, 'findOne').mockImplementation((filter) =>
     fakeQuery(Car, () => { reads.carFindOne += 1; return [...cars.values()].find((c) => matches(c, filter)) || null; }));
+  jest.spyOn(Car, 'findOneAndUpdate').mockImplementation((filter, update, options = {}) => fakeQuery(Car, () => {
+    const raw = [...cars.values()].find((car) => matches(car, filter));
+    if (!raw) return null;
+    const fields = update.$set;
+    if (Object.hasOwn(fields, 'status') && faults.carSaves.length) throw faults.carSaves.shift();
+    if (fields.cpoCertificateId && faults.cpoCollisions > 0) {
+      faults.cpoCollisions -= 1;
+      throw duplicateKeyError('cpoCertificateId_1', { cpoCertificateId: fields.cpoCertificateId });
+    }
+    const next = clone(raw);
+    Object.entries(fields).forEach(([path, value]) => setPath(next, path, clone(value)));
+    assertCarUnique(next);
+    cars.set(String(next._id), next);
+    return options.new ? next : raw;
+  }));
   jest.spyOn(Car, 'exists').mockImplementation((filter) => {
     const forced = filter.cpoCertificateId && faults.cpoCollisions > 0;
     if (forced) faults.cpoCollisions -= 1;
@@ -223,6 +251,10 @@ export const setupInspectionHarness = async () => {
   // Synchronous match + write: atomic with respect to other requests (MongoDB
   // single-document atomicity), which is what the "only one submit wins" rule relies on.
   jest.spyOn(InspectionRecord, 'findOneAndUpdate').mockImplementation((filter, update, options = {}) => {
+    if (faults.recordUpdates > 0) {
+      faults.recordUpdates -= 1;
+      return fakeQuery(InspectionRecord, () => { throw new Error('Simulated inspection update failure'); });
+    }
     const raw = recordList(filter)[0];
     let result = null;
     if (raw) {
@@ -237,6 +269,50 @@ export const setupInspectionHarness = async () => {
       result = options.new ? raw : before;
     }
     return fakeQuery(InspectionRecord, () => result);
+  });
+
+  // Both templates are fixtures. These models back the actual repository used by the app.
+  const templateId = (key, rev) => `${key}:${rev}`;
+  function seedTemplate(key) {
+    const groups = CPO_CRITERIA.map((criterion) => ({
+      ...criterion,
+      questions: [{
+        id: `${key}-${criterion.key}`, label: 'Kết quả', type: 'SINGLE_CHOICE', required: true,
+        config: { options: [
+          { id: 'pass', label: 'Đạt', result: InspectionResult.PASS },
+          { id: 'fail', label: 'Không đạt', result: InspectionResult.FAIL },
+          { id: 'unchecked', label: 'Chưa kiểm tra', result: InspectionResult.NOT_CHECKABLE },
+        ] },
+      }],
+    }));
+    formHeads.set(key, { templateKey: key, revision: 1 });
+    formRevisions.set(templateId(key, 1), {
+      templateKey: key, revision: 1, groups, retiredIds: { questions: [], options: [] },
+    });
+  }
+  jest.spyOn(FormTemplateHead, 'findOne').mockImplementation((filter) =>
+    fakeQuery(FormTemplateHead, () => formHeads.get(filter.templateKey)));
+  jest.spyOn(FormTemplateRevision, 'findOne').mockImplementation((filter) =>
+    fakeQuery(FormTemplateRevision, () => formRevisions.get(templateId(filter.templateKey, filter.revision))));
+  jest.spyOn(FormTemplateHead, 'updateOne').mockImplementation(async (filter, update) => {
+    const head = formHeads.get(filter.templateKey);
+    if (!head || !matches(head, filter)) return { matchedCount: 0, modifiedCount: 0 };
+    Object.assign(head, update.$set);
+    return { matchedCount: 1, modifiedCount: 1 };
+  });
+  jest.spyOn(FormTemplateRevision, 'create').mockImplementation(async (entries) => {
+    const docs = entries.map((entry) => new FormTemplateRevision(entry));
+    for (const doc of docs) {
+      await doc.validate();
+      const key = templateId(doc.templateKey, doc.revision);
+      if (formRevisions.has(key)) throw duplicateKeyError('template_revision', { templateKey: doc.templateKey, revision: doc.revision });
+      formRevisions.set(key, doc.toObject());
+    }
+    return docs;
+  });
+  jest.spyOn(FormTemplateAudit, 'create').mockImplementation(async (entries) => {
+    formAudit.push(...entries.map(clone));
+    return entries;
   });
 
   // ── ActivityLog (transactional create + read for history report) ──────────
@@ -283,6 +359,7 @@ export const setupInspectionHarness = async () => {
     cars,
     records,
     activity,
+    formAudit,
     sessionStats,
 
     reset() {
@@ -290,8 +367,13 @@ export const setupInspectionHarness = async () => {
       cars.clear();
       records.clear();
       activity.length = 0;
+      formHeads.clear();
+      formRevisions.clear();
+      formAudit.length = 0;
+      ['GASOLINE', 'ELECTRIC'].forEach(seedTemplate);
       faults.carSaves.length = 0;
       faults.cpoCollisions = 0;
+      faults.recordUpdates = 0;
       reads.carFindOne = 0;
       Object.keys(sessionStats).forEach((k) => { sessionStats[k] = 0; });
     },
@@ -300,7 +382,8 @@ export const setupInspectionHarness = async () => {
     createCar(overrides = {}) {
       const doc = new Car({
         make: 'Toyota', model: 'Vios', variant: '1.5G', year: 2020, mileage: 50000,
-        specifications: { color: 'Trắng' }, status: 'INCOMING', ...overrides,
+        specifications: { color: 'Trắng' }, status: 'INCOMING', fuelType: 'GASOLINE',
+        updatedAt: new Date(), ...overrides,
       });
       const raw = doc.toObject({ depopulate: true, virtuals: false });
       cars.set(String(doc._id), raw);
@@ -322,6 +405,27 @@ export const setupInspectionHarness = async () => {
       return { id, token, auth: `Bearer ${token}` };
     },
 
+    /** Simulates populated Role documents instead of the fallback ObjectIds. */
+    setPopulatedRoles(id, permissionsByRole) {
+      auth.stored(id).roles = Object.entries(permissionsByRole).map(([name, permissions]) => ({
+        _id: auth.roleIds[name], name, permissions: [...permissions],
+      }));
+    },
+
+    fillDraft(id, confirmed = {}) {
+      const record = records.get(String(id));
+      const definition = formRevisions.get(templateId(record.templateKey, Number(record.checklistVersion)));
+      const photo = (name) => `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload/v1/trustcar/inspections/${id}/${name}.jpg`;
+      record.vehicleInfo.confirmed = { ...record.vehicleInfo.original, ...confirmed };
+      record.overviewPhotos = Object.fromEntries(['FRONT', 'REAR', 'LEFT', 'RIGHT'].map((position) => [position, photo(position)]));
+      record.answers = definition.groups.map(({ questions }) => ({ questionId: questions[0].id, value: 'pass' }));
+      record.groups = definition.groups.map(({ key }) => ({
+        groupKey: key, note: key === 'G1_BODY_FRAME' ? 'Thân vỏ tốt' : '', photos: [photo(key)],
+        odometerPhoto: key === 'G4_ODOMETER' ? photo('odometer') : null, items: [], minorDefects: [], passed: null,
+      }));
+      return record;
+    },
+
     /** Makes the next `count` Car saves throw `error` (default: a generic write failure). */
     failNextCarSaves(count = 1, error = null) {
       for (let i = 0; i < count; i += 1) faults.carSaves.push(error || new Error('Simulated write failure'));
@@ -329,6 +433,7 @@ export const setupInspectionHarness = async () => {
 
     /** Makes the next `count` CPO-code uniqueness checks report the code as taken. */
     forceCpoCollisions(count) { faults.cpoCollisions = count; },
+    failNextInspectionUpdate() { faults.recordUpdates += 1; },
 
     duplicateKeyError,
     reads,
