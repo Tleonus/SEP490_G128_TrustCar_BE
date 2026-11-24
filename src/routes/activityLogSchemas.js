@@ -1,14 +1,15 @@
 /**
  * @file activityLogSchemas.js
- * @description Joi schema of the admin activity-log list query (KAN-40). Used with the strict
- * query validator of `appointmentSchemas.js`, so unknown or empty parameters answer 422 VALIDATION_ERROR
- * before any database access.
+ * @description Joi schema of the admin activity-log list query (KAN-40, extended by KAN-92 with `action`
+ * and `actorId`). Used with the strict query validator of `appointmentSchemas.js`, so unknown or empty
+ * parameters answer 422 VALIDATION_ERROR before any database access.
  *
  * Ref: .sdd/features/system-audit-logs/SPEC.md (REQ-005; C3, C4, C6; AC-08)
  */
 
 import Joi from 'joi';
 import { ActivityEventType } from '../constants/appConstants.js';
+import { AuditAction } from '../constants/auditActions.js';
 import { parseDateKey } from '../services/appointmentSlotRules.js';
 
 const TEXT_MAX = 200;
@@ -16,6 +17,7 @@ const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
 const text = Joi.string().trim().min(1).max(TEXT_MAX);
+const objectId = Joi.string().pattern(OBJECT_ID).lowercase();
 
 /** `YYYY-MM-DD` that exists on the calendar (2026-02-30 is rejected). */
 const realDay = (value, helpers) => (parseDateKey(value) ? value : helpers.error('any.invalid'));
@@ -32,10 +34,12 @@ const notBeforeFrom = (value, helpers) => {
  */
 export const listQuery = Joi.object({
   eventType: Joi.string().valid(...Object.values(ActivityEventType)),
+  action: Joi.string().valid(...Object.values(AuditAction)), // KAN-92
   targetModel: text,
-  targetId: Joi.string().pattern(OBJECT_ID).lowercase(),
+  targetId: objectId,
   targetCode: text,
   actorEmail: text,
+  actorId: objectId, // KAN-92: `performedBy`
   from: day,
   to: day.custom(notBeforeFrom, 'not before from'),
   sort: Joi.string().valid('asc', 'desc'),

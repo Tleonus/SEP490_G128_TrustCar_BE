@@ -170,7 +170,7 @@ describe('what a list row contains', () => {
     });
     const [item] = (await get()).body.data;
 
-    expect(Object.keys(item).sort()).toEqual(['actor', 'createdAt', 'eventType', 'id', 'ipAddress', 'summary', 'target']);
+    expect(Object.keys(item).sort()).toEqual(['action', 'actor', 'createdAt', 'eventType', 'id', 'ipAddress', 'summary', 'target']);
     expect(item.actor).toEqual({ id: String(actor), email: 'admin@trustcar.vn' });
     expect(item.target).toEqual({ model: 'Car', id: String(car), code: 'TC-2026-0001' });
     expect(item.summary).toBe('Price changed');
