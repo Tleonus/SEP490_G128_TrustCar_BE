@@ -31,6 +31,9 @@ import {
 
 // ── Constants & Lookup Tables ────────────────────────────────────────────────
 
+export const CHAT_AI_DISCLAIMER =
+  'Lưu ý: Nội dung từ Trợ lý AI chỉ mang tính chất tham khảo nhanh và có thể sai sót. Quý khách vui lòng đối chiếu thông số niêm yết trên trang chi tiết xe hoặc liên hệ Hotline Showroom TrustCar để được xác nhận chính xác.';
+
 const BRAND_PATTERNS = [
   { brand: 'Toyota', regex: /\b(toyota)\b/i },
   { brand: 'Honda', regex: /\b(honda)\b/i },
@@ -818,7 +821,7 @@ export const buildDeterministicReply = ({
     if (alternativeCars.length > 0) {
       return [
         summaryText
-          ? `Hiện tại trong kho chưa có mẫu xe khớp chính xác 100% với tiêu chí (${summaryText}). Tuy nhiên, TrustCar gợi ý ${alternativeCars.length} mẫu xe chất lượng đang có sẵn gần với nhu cầu của bạn:`
+          ? `Hiện tại trong kho chưa có mẫu xe trùng khớp hoàn toàn với tiêu chí (${summaryText}). Tuy nhiên, TrustCar gợi ý ${alternativeCars.length} mẫu xe chất lượng đang có sẵn gần với nhu cầu của bạn:`
           : `Hiện tại TrustCar đang có sẵn các mẫu xe tiêu biểu sau tại Showroom:`,
         ...alternativeCars.map(describeCarLine),
         `Bạn có thể để lại số điện thoại để TrustCar báo ngay khi có xe đúng cấu hình về kho!`,
@@ -967,6 +970,7 @@ export const processPublicChatMessage = async (payload = {}, context = {}) => {
       actions,
       followUps,
       leadCaptured: null,
+      disclaimer: CHAT_AI_DISCLAIMER,
       source: 'security-guard',
     };
   }
@@ -1156,6 +1160,7 @@ export const processPublicChatMessage = async (payload = {}, context = {}) => {
           leadCode: capturedLead?.leadCode || null,
         }
       : null,
+    disclaimer: CHAT_AI_DISCLAIMER,
     source: llmResult ? 'hybrid-llm' : 'hybrid-grounded',
   };
 };

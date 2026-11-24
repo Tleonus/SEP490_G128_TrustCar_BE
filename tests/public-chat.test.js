@@ -245,6 +245,8 @@ describe('processPublicChatMessage', () => {
     expect(res.cars[0].vin).toBeUndefined();
     expect(res.cars[0].internalNotes).toBeUndefined();
     expect(res.reply).toContain('CX-5');
+    expect(res.disclaimer).toMatch(/AI/i);
+    expect(res.disclaimer).toMatch(/sai sót|tham khảo/i);
     expect(res.source).toBe('hybrid-grounded');
 
     // Persisted in ChatConversation & ChatMessage
