@@ -293,24 +293,25 @@ describe('PUT /api/v1/users/:id/roles', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('permission union across roles', () => {
-  test('SALES_STAFF holds the inspection permissions seeded for it', () => {
-    expect(ROLE_PERMISSIONS[Roles.SALES_STAFF]).toEqual(expect.arrayContaining([
-      Permissions.INSPECTION_READ, Permissions.INSPECTION_WRITE,
-    ]));
+  test('SALES_STAFF has exactly read and submit in its inspection permissions', () => {
+    const inspection = ROLE_PERMISSIONS[Roles.SALES_STAFF].filter((permission) => permission.startsWith('inspection:'));
+    expect(inspection).toEqual([Permissions.INSPECTION_READ, Permissions.INSPECTION_SUBMIT]);
   });
 
   test('INSPECTOR holds inspection permissions but not sales ones', () => {
     const perms = ROLE_PERMISSIONS[Roles.INSPECTOR];
     expect(perms).toEqual(expect.arrayContaining([
-      Permissions.INSPECTION_READ, Permissions.INSPECTION_WRITE, Permissions.CAR_READ,
+      Permissions.INSPECTION_READ, Permissions.INSPECTION_WRITE, Permissions.INSPECTION_SUBMIT, Permissions.CAR_READ,
     ]));
     expect(perms).not.toContain(Permissions.INSPECTION_ADMIN);
     expect(perms).not.toContain(Permissions.LEAD_CREATE);
     expect(perms).not.toContain(Permissions.USER_CREATE);
   });
 
-  test('ADMIN holds inspection:admin', () => {
-    expect(ROLE_PERMISSIONS[Roles.ADMIN]).toContain(Permissions.INSPECTION_ADMIN);
+  test('ADMIN holds inspection administration and submit permissions', () => {
+    expect(ROLE_PERMISSIONS[Roles.ADMIN]).toEqual(expect.arrayContaining([
+      Permissions.INSPECTION_ADMIN, Permissions.INSPECTION_SUBMIT,
+    ]));
   });
 
   test('a user with both SALES_STAFF and INSPECTOR gets the union', async () => {

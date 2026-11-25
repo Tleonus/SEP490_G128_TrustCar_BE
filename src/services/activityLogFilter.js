@@ -1,12 +1,13 @@
 /**
  * @file activityLogFilter.js
  * @description Pure helpers that turn the validated admin query of the activity-log list
- * into a MongoDB filter (KAN-40). No database access here, so every rule is unit-testable.
+ * into a MongoDB filter (KAN-40, KAN-92). No database access here, so every rule is unit-testable.
  *
  * Ref: .sdd/features/system-audit-logs/SPEC.md (REQ-004, REQ-006; C4, C5, C7)
  */
 
 import mongoose from 'mongoose';
+import { eventTypesOf } from '../constants/auditActions.js';
 import { parseDateKey, vnInstant } from './appointmentSlotRules.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -41,21 +42,35 @@ export const dayRange = (from, to) => {
 export const sortDirection = (query = {}) => (query.sort === 'asc' ? 1 : -1);
 
 /**
+ * `eventType` condition. `action` (KAN-92) becomes `$in` of its event types; combined with an explicit
+ * `eventType` the two are AND-ed: a type outside the action matches nothing (`$in: []`).
+ */
+const eventTypeCondition = (eventType, action) => {
+  if (!action) return eventType || undefined;
+  const allowed = eventTypesOf(action);
+  if (!eventType) return { $in: allowed };
+  return allowed.includes(eventType) ? eventType : { $in: [] };
+};
+
+/**
  * MongoDB filter for the list. All given filters are combined with AND.
  * `actorEmail` is a whole-string, case-insensitive match against the e-mail snapshot stored with
  * the log entry (some entries store the address exactly as typed, e.g. LOGIN_FAILED).
+ * `actorId` (KAN-92) matches the account id in `performedBy`.
  *
  * @ears .sdd/features/system-audit-logs/SPEC.md#REQ-004
- * @param {object} [query] Validated query (`eventType`, `targetModel`, `targetId`, `targetCode`, `actorEmail`, `from`, `to`)
+ * @param {object} [query] Validated query (`eventType`, `action`, `targetModel`, `targetId`, `targetCode`, `actorEmail`, `actorId`, `from`, `to`)
  * @returns {object}
  */
 export const buildFilter = (query = {}) => {
   const filter = {};
-  if (query.eventType) filter.eventType = query.eventType;
+  const eventType = eventTypeCondition(query.eventType, query.action);
+  if (eventType !== undefined) filter.eventType = eventType;
   if (query.targetModel) filter.targetModel = query.targetModel;
   if (query.targetId) filter.targetId = new mongoose.Types.ObjectId(String(query.targetId));
   if (query.targetCode) filter.targetCode = query.targetCode;
   if (query.actorEmail) filter.performedByEmail = new RegExp(`^${escapeRegex(String(query.actorEmail).trim())}$`, 'i');
+  if (query.actorId) filter.performedBy = new mongoose.Types.ObjectId(String(query.actorId));
 
   const range = dayRange(query.from, query.to);
   if (Object.keys(range).length > 0) filter.createdAt = range;

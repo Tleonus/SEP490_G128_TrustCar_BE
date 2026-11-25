@@ -38,6 +38,7 @@ import leadPublicRoutes     from './leadPublicRoutes.js';
 import leadRoutes           from './leadRoutes.js';
 import emailLogRoutes       from './emailLogRoutes.js';
 import activityLogRoutes    from './activityLogRoutes.js';
+import auditLogRoutes       from './auditLogRoutes.js';
 import marketingRoutes      from './marketingRoutes.js';
 import loanSettingsRoutes   from './loanSettingsRoutes.js';
 import publicChatRoutes     from './publicChatRoutes.js';
@@ -62,6 +63,9 @@ router.use('/users', userRoutes);
 
 // ── Protected Inventory Management (Staff & Admin) ─────────────────────────
 router.use('/manage/cars', carRoutes);
+
+// ── Audit Log Explorer (Admin only, read-only) – KAN-92 ─────────────────────
+router.use('/manage/audit-logs', auditLogRoutes);
 
 // ── Public Catalog (No Auth) ───────────────────────────────────────────────
 router.use('/public/cars', publicCarRoutes);
