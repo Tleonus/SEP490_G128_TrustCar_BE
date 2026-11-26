@@ -100,6 +100,12 @@ router.use('/manage/leads', leadRoutes);
 // KAN-100 — Admin analytics dashboard
 router.use('/manage/analytics', analyticsRoutes);
 
+// Alias: FE /admin/sales (salesCrmApi.js) gọi /manage/appointments?status=COMPLETED.
+// Mount cùng router với /appointments (verifyToken + requirePermission APPOINTMENT_READ)
+// để Promise.all([listLeads, listCompletedAppointments]) không reject và pipeline Sale
+// hết rơi về demoCrmStore. Cùng pattern đã dùng cho /manage/leads ở KAN-97.
+router.use('/manage/appointments', appointmentRoutes);
+
 // ── Marketing Tooling (Admin & Sales staff) ────────────────────────────────
 router.use('/marketing', marketingRoutes);
 
