@@ -7,6 +7,7 @@ import {
   mergeDraftAnswers, reconcileDraftAnswers, selectInspectionTemplate,
 } from '../../domain/inspection/draftAnswers.js';
 import { QuestionType } from '../../domain/inspection/formDefinition.js';
+import { findDraftTemplate, isCertifiedForReinspection, isCriteriaTemplate } from './criteriaInspection.js';
 
 const inspectableStatuses = [CarStatus.DRAFT, CarStatus.INCOMING, CarStatus.REJECTED, CarStatus.UNDER_INSPECTION];
 const vehicleFields = ['make', 'model', 'variant', 'color', 'year', 'mileage'];
@@ -53,6 +54,34 @@ async function findCar(cars, id) {
   const car = await cars.findById(id);
   if (!car) throw inspectionError('CAR_NOT_FOUND', 'Car not found.');
   return car;
+}
+
+async function updateCriteriaDraft({ writer, results, record, actorId, patch, template, isInspectionImageUrl }) {
+  const errors = [];
+  for (const field of ['answers', 'vehicleInfo', 'overviewPhotos', 'groups']) {
+    if (Object.hasOwn(patch, field)) errors.push({ field, message: 'This field is only used by questionnaire drafts.' });
+  }
+  if (patch.odo !== undefined && (!Number.isSafeInteger(patch.odo) || patch.odo < 0)) {
+    errors.push({ field: 'odo', message: 'Expected a non-negative odometer reading.' });
+  }
+  for (const [index, row] of (patch.results ?? []).entries()) {
+    for (const [position, url] of (row.evidenceImages ?? []).entries()) {
+      if (isInspectionImageUrl?.(url, record.id) !== true) {
+        errors.push({
+          field: `results.${index}.evidenceImages.${position}`,
+          message: 'Image must be uploaded to this inspection folder.',
+        });
+      }
+    }
+  }
+  if (errors.length) throw inspectionError('VALIDATION_ERROR', 'Invalid criterion results or evidence.', errors);
+
+  if (patch.results?.length) await results.saveDraftResults(record.id, template.revision, patch.results);
+  const updated = await writer.updateIfCurrent(record.id, {
+    status: InspectionStatus.DRAFT, templateRevision: template.revision,
+  }, { updatedBy: actorId, ...(patch.odo === undefined ? {} : { odo: patch.odo }) });
+  if (!updated) throw inspectionError('INSPECTION_LOCKED', 'This inspection is locked.');
+  return { ...updated, template, results: await results.findByInspectionId(record.id) };
 }
 
 async function projectAnswers(templates, record, template) {
@@ -129,8 +158,17 @@ function validateImages(patch, template, inspectionId, isInspectionImageUrl) {
     .map(({ field }) => ({ field, message: 'Image must be uploaded to this inspection folder.' }));
 }
 
-export function createInspectionDraftUseCases({ templates, records, unitOfWork, isInspectionImageUrl }) {
+export function createInspectionDraftUseCases({ templates, records, results, cars, unitOfWork, isInspectionImageUrl }) {
   return {
+    /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-050 */
+    async getCurrentCertificate(carId) {
+      assertObjectId(carId, 'id');
+      const car = await findCar(cars, carId);
+      const record = car.cpoCertificateId ? await records.findCertifyingRecord(carId, car.cpoCertificateId) : null;
+      if (!record) throw inspectionError('CPO_CERTIFICATE_NOT_FOUND', 'No current CPO certificate found.');
+
+      return { cpoCertificateId: car.cpoCertificateId, ...record };
+    },
     /**
      * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-001
      * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-002
@@ -144,7 +182,8 @@ export function createInspectionDraftUseCases({ templates, records, unitOfWork, 
       assertObjectId(carId, 'carId');
       return unitOfWork.run(async ({ cars, records: writer, templates: reader, audit }) => {
         const car = await findCar(cars, carId);
-        if (!inspectableStatuses.includes(car.status)) {
+        const reinspection = isCertifiedForReinspection(car);
+        if (!inspectableStatuses.includes(car.status) && !reinspection) {
           requireNoOpenRecord(await writer.findOpenByCarId(carId));
           throw inspectionError('INVALID_CAR_STATUS', 'Car cannot be inspected in its current status.');
         }
@@ -155,20 +194,30 @@ export function createInspectionDraftUseCases({ templates, records, unitOfWork, 
         const selection = selectInspectionTemplate(claimed.fuelType);
         if (selection.code) throw templateUnavailable();
         const template = await findCurrentTemplate(reader, selection.templateKey);
-        const original = Object.fromEntries(vehicleFields.map((field) => [field, claimed[field] ?? null]));
-        const record = await writer.insert({
+        const compact = isCriteriaTemplate(template);
+        if (reinspection && !compact) {
+          throw inspectionError('INVALID_CAR_STATUS', 'Reinspection requires a criteria template.');
+        }
+        const draft = {
           carId, status: InspectionStatus.DRAFT, source: InspectionSource.STAFF,
-          templateKey: template.templateKey, templateRevision: template.revision, answers: [], archivedAnswers: [],
-          createdBy: actorId, updatedBy: actorId, vehicleInfo: { original, confirmed: { ...original } },
-          overviewPhotos: Object.fromEntries(OVERVIEW_POSITIONS.map((pos) => [pos, null])),
-          groups: template.groups.map(({ key }) => ({ groupKey: key, photos: [], minorDefects: [] })),
-        });
+          templateKey: template.templateKey, templateRevision: template.revision,
+          createdBy: actorId, updatedBy: actorId,
+        };
+        if (!compact) {
+          const original = Object.fromEntries(vehicleFields.map((field) => [field, claimed[field] ?? null]));
+          Object.assign(draft, {
+            answers: [], archivedAnswers: [], vehicleInfo: { original, confirmed: { ...original } },
+            overviewPhotos: Object.fromEntries(OVERVIEW_POSITIONS.map((pos) => [pos, null])),
+            groups: template.groups.map(({ key }) => ({ groupKey: key, photos: [], minorDefects: [] })),
+          });
+        }
+        const record = await writer.insert(draft);
         await audit.append({
           eventType: ActivityEventType.INSPECTION_DRAFT_CREATED, performedBy: actorId,
           targetModel: 'InspectionRecord', targetId: record.id, summary: 'Inspection draft created',
           metadata: { carId },
         });
-        if (claimed.status !== CarStatus.UNDER_INSPECTION) {
+        if (!reinspection && claimed.status !== CarStatus.UNDER_INSPECTION) {
           const next = await cars.updateIfCurrent(carId, claimed, { status: CarStatus.UNDER_INSPECTION });
           if (!next) throw inspectionError('INVALID_CAR_STATUS', 'Car changed before inspection could start.');
           await audit.append({
@@ -178,7 +227,7 @@ export function createInspectionDraftUseCases({ templates, records, unitOfWork, 
             summary: 'Inspection started', metadata: { inspectionId: record.id },
           });
         }
-        return { ...record, template };
+        return { ...record, template, ...(compact ? { results: [] } : {}) };
       });
     },
 
@@ -190,8 +239,17 @@ export function createInspectionDraftUseCases({ templates, records, unitOfWork, 
     async getInspection(inspectionId) {
       assertObjectId(inspectionId, 'id');
       const record = await findInspection(records, inspectionId);
-      if (record.status !== InspectionStatus.DRAFT || record.templateKey == null) return record;
-      const template = await findCurrentTemplate(templates, record.templateKey);
+      if (record.templateKey == null) return record;
+      if (record.status !== InspectionStatus.DRAFT) {
+        if (record.templateSnapshot != null || !Number.isSafeInteger(record.templateRevision)) return record;
+        const template = await templates.findRevision(record.templateKey, record.templateRevision);
+        return isCriteriaTemplate(template)
+          ? { ...record, template, results: await results.findByInspectionId(inspectionId) }
+          : record;
+      }
+      const template = await findDraftTemplate(templates, record);
+      if (!template) throw templateUnavailable();
+      if (isCriteriaTemplate(template)) return { ...record, template, results: await results.findByInspectionId(inspectionId) };
       const projected = await projectAnswers(templates, record, template);
       return { ...record, ...projected, templateRevision: template.revision, template };
     },
@@ -206,7 +264,7 @@ export function createInspectionDraftUseCases({ templates, records, unitOfWork, 
      */
     async updateDraft(inspectionId, actorId, patch) {
       assertObjectId(inspectionId, 'id');
-      return unitOfWork.run(async ({ cars, records: writer, templates: reader }) => {
+      return unitOfWork.run(async ({ cars, records: writer, templates: reader, results: resultWriter }) => {
         const record = await findInspection(writer, inspectionId);
         if (record.status !== InspectionStatus.DRAFT) {
           throw inspectionError('INSPECTION_LOCKED', 'This inspection is locked.');
@@ -215,13 +273,25 @@ export function createInspectionDraftUseCases({ templates, records, unitOfWork, 
         const selection = selectInspectionTemplate(car.fuelType, record.templateKey);
         if (selection.code) throw inspectionError(selection.code, 'The car does not match the saved inspection template.');
         if (record.templateKey == null) throw templateUnavailable();
-        const template = await findCurrentTemplate(reader, selection.templateKey);
+        const template = await findDraftTemplate(reader, record);
+        if (!template) throw templateUnavailable();
         if (!Number.isSafeInteger(patch.baseRevision) || patch.baseRevision < 1) {
           throw inspectionError('VALIDATION_ERROR', 'Invalid base revision.', [
             { field: 'baseRevision', message: 'Expected a positive base revision.' },
           ]);
         }
         if (template.revision !== patch.baseRevision) throw revisionConflict();
+        if (isCriteriaTemplate(template)) {
+          if (car.status !== CarStatus.UNDER_INSPECTION && !isCertifiedForReinspection(car)) {
+            throw inspectionError('INVALID_CAR_STATUS', 'Car cannot be inspected in its current status.');
+          }
+          return updateCriteriaDraft({
+            writer, results: resultWriter, record, actorId, patch, template, isInspectionImageUrl,
+          });
+        }
+        if (patch.results !== undefined || patch.odo !== undefined) {
+          throw inspectionError('VALIDATION_ERROR', 'Use questionnaire answers for this inspection.');
+        }
         if (patch.answers != null && !Array.isArray(patch.answers)) {
           throw inspectionError('VALIDATION_ERROR', 'Invalid draft answers.', [
             { field: 'answers', message: 'Expected a list of answers.' },

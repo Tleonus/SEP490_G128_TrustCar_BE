@@ -1,6 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 import { getChecklist } from '../src/config/inspectionChecklist.js';
 import { CPO_CRITERIA, evaluateCpo } from '../src/domain/inspection/criteria.js';
+import { collectCriterionDefinitionIssues } from '../src/domain/inspection/criterionDefinition.js';
 import {
   collectDefinitionIssues, deriveDetailedCriteria, validateQuestionAnswer,
 } from '../src/domain/inspection/formDefinition.js';
@@ -19,6 +20,24 @@ const form = () => ({
 });
 
 const passingAnswers = () => CPO_CRITERIA.map(({ key }) => ({ questionId: key, value: 'pass' }));
+
+describe('Flat CPO criterion definitions', () => {
+  test('allows a sixth criterion and a new label for an existing key', () => {
+    const groups = CPO_CRITERIA.map(({ key, label }) => ({ key, label, required: true }));
+    groups[0].label = 'Khung gầm';
+    groups.push({ key: 'BODYWORK', label: 'Thân vỏ', required: false });
+    expect(collectCriterionDefinitionIssues(groups)).toEqual([]);
+  });
+
+  test('rejects duplicate keys, malformed keys, and a form without a required criterion', () => {
+    const criterion = { key: 'BODYWORK', label: 'Thân vỏ', required: true };
+    expect(collectCriterionDefinitionIssues([criterion, criterion])).toMatchObject([{ field: 'groups.1.key' }]);
+    expect(collectCriterionDefinitionIssues([{ ...criterion, key: 'BODYWORK\n' }])).toMatchObject([
+      { field: 'groups.0.key' },
+    ]);
+    expect(collectCriterionDefinitionIssues([{ ...criterion, required: false }])).toMatchObject([{ field: 'groups' }]);
+  });
+});
 
 describe('CPO form rules (KAN-52)', () => {
   test('keeps the existing keys, order and labels for both form types', () => {

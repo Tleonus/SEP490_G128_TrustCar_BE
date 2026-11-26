@@ -1,7 +1,7 @@
 /**
  * @file cpoCertificatePdf.js
  * @description Renders the public CPO inspection report (SPEC KAN-15 §5, built by
- * inspectionReportMapper) as a single-page A4 certificate with a QR code.
+ * inspectionReportMapper) as an A4 certificate with a QR code.
  *
  * No PDF or QR dependency: the page is drawn with miniPdf (built-in Helvetica,
  * WinAnsi) and the QR matrix comes from qrMatrix. Vietnamese tone marks have no
@@ -66,6 +66,19 @@ const drawQr = (pdf, matrix, x, y, moduleSize) => {
 export const renderCertificatePdf = (report, { idOrCode }) => {
   const pdf = createPdf({ width: PAGE_W, height: PAGE_H });
   const vehicle = report.vehicle || {};
+  const matrix = makeQrMatrix(certificateQrTarget(idOrCode), { ecc: 'M' });
+  const qrModuleSize = 3;
+  const tableFloor = 98 + (matrix.size + 2) * qrModuleSize;
+
+  const ensureSpace = (cursor, needed) => {
+    if (cursor - needed >= tableFloor) return cursor;
+    pdf.newPage();
+    pdf.rect(0, PAGE_H - 40, PAGE_W, 40, NAVY);
+    pdf.text(`TRUSTCAR - ${report.certificateId || '-'}`, MARGIN, PAGE_H - 25, {
+      fontSize: 11, bold: true, color: [1, 1, 1],
+    });
+    return PAGE_H - 62;
+  };
 
   // Header band.
   pdf.rect(0, PAGE_H - 78, PAGE_W, 78, NAVY);
@@ -97,17 +110,19 @@ export const renderCertificatePdf = (report, { idOrCode }) => {
 
   // Criteria table.
   y -= 96;
-  pdf.text('KET QUA 5 NHOM TIEU CHI', MARGIN, y, { fontSize: 10, bold: true, color: NAVY });
+  pdf.text('KET QUA KIEM DINH', MARGIN, y, { fontSize: 10, bold: true, color: NAVY });
   y -= 8;
   pdf.line(MARGIN, y, PAGE_W - MARGIN, y, GOLD, 1);
   y -= 20;
 
   const groups = report.groups || [];
   groups.forEach((group, index) => {
-    const rowH = 26;
-    if (index % 2 === 0) pdf.rect(MARGIN, y - 7, CONTENT_W, rowH, LIGHT);
+    const lines = wrapText(group.label || group.key, 10, CONTENT_W - 125);
+    const rowH = 26 + (lines.length - 1) * 12;
+    y = ensureSpace(y, rowH);
+    if (index % 2 === 0) pdf.rect(MARGIN, y + 19 - rowH, CONTENT_W, rowH, LIGHT);
     pdf.text(String(index + 1).padStart(2, '0'), MARGIN + 10, y, { fontSize: 10, bold: true, color: GOLD });
-    pdf.text(group.label || group.key, MARGIN + 36, y, { fontSize: 10, color: INK });
+    lines.forEach((line, i) => pdf.text(line, MARGIN + 36, y - i * 12, { fontSize: 10, color: INK }));
     const verdict = group.passed ? 'DAT' : 'KHONG DAT';
     pdf.text(verdict, PAGE_W - MARGIN - 12, y, { fontSize: 10, bold: true, color: group.passed ? GREEN : RED, align: 'right' });
     y -= rowH;
@@ -115,7 +130,8 @@ export const renderCertificatePdf = (report, { idOrCode }) => {
 
   // Minor defects, FULL reports only.
   if (report.level === ReportLevel.FULL) {
-    const defects = groups.flatMap((g) => (g.minorDefects || []).map((d) => ({ group: g.label, ...d })));
+    const defects = groups.flatMap((g) => g.minorDefects || []).slice(0, 6);
+    y = ensureSpace(y, 34 + Math.max(defects.length, 1) * 16);
     y -= 12;
     pdf.text('KHUYET DIEM NHO', MARGIN, y, { fontSize: 10, bold: true, color: NAVY });
     y -= 16;
@@ -123,7 +139,7 @@ export const renderCertificatePdf = (report, { idOrCode }) => {
       pdf.text('Khong ghi nhan khuyet diem nho.', MARGIN, y, { fontSize: 9, color: MUTED });
       y -= 16;
     } else {
-      defects.slice(0, 6).forEach((d) => {
+      defects.forEach((d) => {
         const line = `- ${d.label}${d.location ? ` (${d.location})` : ''}`;
         pdf.text(line, MARGIN, y, { fontSize: 9, color: INK });
         y -= 14;
@@ -132,16 +148,16 @@ export const renderCertificatePdf = (report, { idOrCode }) => {
   }
 
   // Scope note.
+  const scopeLines = wrapText(report.scopeNote || '', 8, CONTENT_W);
+  y = ensureSpace(y, 8 + scopeLines.length * 11);
   y -= 8;
-  wrapText(report.scopeNote || '', 8, CONTENT_W).forEach((line) => {
+  scopeLines.forEach((line) => {
     pdf.text(line, MARGIN, y, { fontSize: 8, color: MUTED });
     y -= 11;
   });
 
   // QR block, bottom-right.
-  const target = certificateQrTarget(idOrCode);
-  const matrix = makeQrMatrix(target, { ecc: 'M' });
-  const qrSide = drawQr(pdf, matrix, PAGE_W - MARGIN - 150, 78, 3);
+  const qrSide = drawQr(pdf, matrix, PAGE_W - MARGIN - 150, 78, qrModuleSize);
   pdf.text('Quet ma de xem chung nhan goc', PAGE_W - MARGIN - qrSide / 2, 66, { fontSize: 7, color: MUTED, align: 'center' });
 
   // Footer: level, inspector, disclaimer.

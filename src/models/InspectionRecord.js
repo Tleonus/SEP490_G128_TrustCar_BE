@@ -31,6 +31,26 @@ function requiredForPendingApproval() {
   return this.status === pendingApproval;
 }
 
+// Resolve format from the revision in the use cases. Synchronous model validation
+// accepts the compact shape without storing a second format field.
+function hasCompactForm() {
+  return this.source === InspectionSource.STAFF && inspectionTemplateKeys.includes(this.templateKey) &&
+    /^[1-9]\d*$/.test(this.checklistVersion ?? '') && this.checklistSnapshot == null &&
+    this.vehicleInfo == null && this.answers == null && this.groups == null;
+}
+
+function requiredForLegacyVerdict() {
+  return requiredForVerdict.call(this) && !hasCompactForm.call(this);
+}
+
+function requiredForSnapshot() {
+  return requiredForPendingApproval.call(this) && !hasCompactForm.call(this);
+}
+
+function requiredForOdo() {
+  return requiredForVerdict.call(this) || (requiredForPendingApproval.call(this) && hasCompactForm.call(this));
+}
+
 function requiredForFormVersion() {
   return requiredForPendingApproval.call(this) || this.templateKey != null;
 }
@@ -149,21 +169,21 @@ const InspectionRecordSchema = new mongoose.Schema(
     },
     criteria: {
       type: CriteriaSchema,
-      required: requiredForVerdict,
+      required: requiredForLegacyVerdict,
     },
     odo: {
       type: Number,
-      required: requiredForVerdict,
+      required: requiredForOdo,
       min: 0,
     },
     notes: {
       type: String,
       trim: true,
-      default: '',
+      default() { return hasCompactForm.call(this) ? undefined : ''; },
     },
     evidenceImages: {
       type: [String],
-      default: [],
+      default() { return hasCompactForm.call(this) ? undefined : []; },
     },
     result: {
       type: String,
@@ -187,7 +207,7 @@ const InspectionRecordSchema = new mongoose.Schema(
     },
     templateKey: { type: String, enum: inspectionTemplateKeys, required: requiredForPendingApproval },
     checklistVersion: { type: String, required: requiredForFormVersion },
-    checklistSnapshot: { type: ChecklistSnapshotSchema, required: requiredForPendingApproval },
+    checklistSnapshot: { type: ChecklistSnapshotSchema, required: requiredForSnapshot },
     answers: { type: [AnswerSchema], default: undefined },
     archivedAnswers: { type: [ArchivedAnswerSchema], default: undefined },
     createdBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

@@ -39,6 +39,63 @@ Với nháp xăng 1.0, ID câu hỏi là `<groupKey>.<itemKey>`. Kết quả cũ
 4. Dùng tài khoản SALES_STAFF để kiểm xem/nộp được và tạo, sửa, ký ảnh, kiểm định nhanh đều nhận 403. Kiểm tài khoản kiêm INSPECTOR có quyền ghi. Kiểm ADMIN khác người nộp có thể duyệt và ADMIN tự duyệt nhận 403. Gửi payload nộp có trường dư phải nhận 422 và giữ nguyên nháp.
 5. Xác minh tạo nháp cho cả hai mẫu, thao tác trên nháp đã chuyển đổi, lưu phiên bản mới của một mẫu, kiểm định nhanh bị chặn khi có hồ sơ mở, và dữ liệu năm tiêu chí trên biên bản đã duyệt. Đối chiếu KAN-15 với xe có chứng nhận hợp lệ và dữ liệu lịch sử. Chỉ mở lưu lượng sau khi người phụ trách xác nhận các kiểm tra đạt.
 
+## Chuyển một mẫu sang tiêu chí tổng quát
+
+### Xử lý dữ liệu đã lưu trước khi đổi mẫu
+
+Đổi backend hoặc công bố mẫu mới chỉ thay cách xử lý các lần kiểm định tiếp theo. Các tài liệu cũ trong MongoDB giữ nguyên nội dung. Chọn phương án theo mục đích của database.
+
+| Dữ liệu hiện có | Xử lý trên database có lịch sử sử dụng |
+| --- | --- |
+| Phiếu đã chốt, kể cả bản ghi lịch sử thiếu `status` | Giữ phiếu, ảnh, snapshot và revision gốc. Đối chiếu chứng nhận hiện hành bằng cặp `cars._id + cars.cpoCertificateId` với phiếu đạt đã chốt. Giữ mã và hash xác minh cho đến khi một lượt tái kiểm định mới được duyệt đạt. |
+| Phiếu đang chờ duyệt | Duyệt hoặc trả về sửa theo mẫu đã nộp. Nếu cần đánh giá tiêu chí mới, mở một lượt kiểm định riêng sau khi xử lý xong phiếu đang mở và xe đủ điều kiện. |
+| Nháp bảng câu hỏi đã gắn revision | Đối chiếu revision đó thực sự tồn tại và đúng loại nhiên liệu. Nháp có thể hoàn tất theo mẫu cũ sau khi công bố mẫu tiêu chí phẳng. |
+| Nháp cũ thiếu mẫu, phiếu thiếu xe hoặc xe có nhiều phiếu mở | Đưa vào danh sách đối soát. `previewInspectionDraftUpgrade` hiện lập kế hoạch nâng nháp cũ sang **mẫu bảng câu hỏi**. Mẫu `CRITERIA` và các dòng `inspection_results` cần luồng chấm tương ứng. |
+| Xe đang giữ chỗ, đã bán hoặc có mã CPO thiếu phiếu cấp | Giữ trạng thái kinh doanh và các liên kết hiện có, xác minh từng trường hợp. Chỉ nhánh tái kiểm định trên xe đang hoạt động, có mã, ở `APPROVED_CPO` hoặc `AVAILABLE` mới được dùng quy trình cấp lại hiện hành. |
+
+**Bước kiểm kê chỉ đọc.** Trên đúng database đã xác nhận, truy vấn dưới đây cho biết số phiếu theo trạng thái, loại mẫu và phiên bản đã ghi. Nhãn `(thiếu)` giúp phát hiện hồ sơ cần đối chiếu. Hai mẫu cùng số revision có thể khác định dạng, cần tra `format` theo cả `templateKey` và `revision`. Truy vấn trả số lượng, không xuất nội dung phiếu.
+
+```javascript
+db.getCollection("inspectionrecords").aggregate([
+  {
+    $group: {
+      _id: {
+        status: { $ifNull: ["$status", "(thiếu)"] },
+        templateKey: { $ifNull: ["$templateKey", "(thiếu)"] },
+        checklistVersion: { $ifNull: ["$checklistVersion", "(thiếu)"] }
+      },
+      count: { $sum: 1 }
+    }
+  },
+  { $sort: { "_id.templateKey": 1, "_id.checklistVersion": 1, "_id.status": 1 } }
+])
+```
+
+Trước khi áp dụng, đối chiếu thêm con trỏ mẫu với các revision thực có, các xe có hơn một phiếu mở, các mã chứng nhận không tìm thấy phiếu cấp, các phiếu thiếu xe và các dòng kết quả thiếu phiếu. Sao lưu và thử khôi phục trước khi ghi. Script `cpoCertificateBackfill.js` tạo chứng nhận lịch sử với năm cờ đạt cho xe đủ điều kiện của script. Việc chuyển sang mẫu mới cần dựa vào kết quả chấm thực tế của từng tiêu chí.
+
+**Nếu mục đích là demo từ đầu**, dùng một database riêng, kiểm tra tên đích, chuẩn bị collection và chỉ mục, khởi tạo revision đầu cùng head cho loại nhiên liệu có nội dung đã duyệt. API đề xuất cần có revision cơ sở. Tạo tài khoản và xe thử, dùng API để có một phiếu nháp, một phiếu chờ duyệt và một xe được cấp CPO. Với kịch bản v1 → v2, duyệt v2 khi xe vẫn giữ chứng nhận v1, rồi chấm và duyệt lại xe để kiểm chứng thời điểm đổi chứng nhận. Cách này giữ nguyên kho xe, đặt cọc và lịch sử đang dùng ở database hiện tại.
+
+### Làm sạch CPO ngay trên database hiện tại
+
+1. Ghi tên database và môi trường. Khi kiểm kê, so khớp tên đích được chỉ định với tên database của kết nối trước truy vấn đầu tiên. Ghi số lượng theo trạng thái phiếu, phiên bản mẫu, số xe có mã CPO, số xe có hash QR và số phiếu thiếu xe.
+2. Chốt danh sách phiếu dự kiến dọn. Với mỗi xe liên quan, đối chiếu mã chứng nhận hiện hành, các phiếu khác của chính xe và trạng thái kinh doanh. Kiểm các tham chiếu từ `appointments.car`, `deposits.carId` và `sale_records.carId`. Thống kê riêng số xe có ít nhất một liên kết để tránh đếm trùng.
+3. Trình số lượng sẽ thay đổi và tác động đến báo cáo/QR cho người phụ trách trước khi ghi. Mặc định bảo toàn phiếu cấp chứng nhận đang sử dụng, mẫu lịch sử được tham chiếu và nhật ký. Việc thu hồi chứng nhận cần quyết định cụ thể cho các xe bị ảnh hưởng.
+4. Sau khi có bản sao đã kiểm tra khả năng khôi phục, áp dụng trên các ID đã duyệt. Trước mỗi lần ghi, kiểm lại trạng thái phiếu, xe và mã chứng nhận. Nếu dữ liệu đã đổi từ lúc kiểm kê, dừng xử lý bản ghi đó để đối soát. Cùng một lần dọn phải xử lý nhất quán phiếu và các dòng kết quả liên quan.
+5. Đối chiếu số lượng trước/sau, xác minh báo cáo và QR của các xe giữ chứng nhận, kiểm phiếu mở, mẫu hiện hành và dữ liệu lịch hẹn/đặt cọc. Thử mở phiếu theo mẫu mới trên một xe đủ điều kiện sau khi hệ thống đã sẵn sàng.
+
+### Công bố và xác minh
+
+Triển khai bản đọc được cả hai định dạng trước khi phát hành revision `CRITERIA` đầu tiên. Với mỗi loại nhiên liệu, đối chiếu head, revision cơ sở và các phiếu đang mở. Mẫu cần có revision cơ sở để nhân viên lập đề xuất. Việc khởi tạo mẫu điện sử dụng nội dung do showroom duyệt.
+
+| Thao tác trên môi trường đã có checkpoint C5 | Dấu hiệu đạt |
+| --- | --- |
+| Chuẩn bị hai collection `inspection_form_template_proposals` và `inspection_results`. Kiểm chỉ mục unique trên `(inspectionId, criterionId)` và unique có điều kiện trên `publishedRevisionId` kiểu ObjectId. | Chỉ mục thực tế khớp schema. Hai model có `autoCreate: false` và `autoIndex: false`. |
+| Kiểm tra giao dịch nhiều tài liệu, chỉ mục duy nhất của head, cặp revision và phiếu mở theo xe. Kiểm bản sao lưu gồm cả hai collection mới và `activity_logs`. | Có thể phục hồi đúng head, đề xuất, các dòng chấm, phiếu và mã CPO tương ứng. |
+| Nhân viên mở mẫu hiện hành, soạn danh sách tiêu chí rồi gửi. Admin trả về để sửa hoặc duyệt trong hàng chờ. | Trước khi duyệt, head và chứng nhận hiện hành giữ phiên bản cũ. Sau duyệt, mẫu mới có đúng tiêu chí và một sự kiện `INSPECTION_TEMPLATE_PUBLISHED`. |
+| Mở phiếu mới và tái kiểm định một xe đã có CPO bằng các tài khoản kiểm thử. Đối chiếu báo cáo công khai với revision đã cấp. | Duyệt phiếu tái kiểm định đạt mới thay chứng nhận. Các tiêu chí và ảnh nội bộ được xử lý theo hợp đồng báo cáo của KAN-15. |
+
+Nếu cần ngưng phát hành, khóa các tuyến ghi liên quan và tiếp tục phục vụ bằng bản đọc hỗ trợ cả hai định dạng. Dùng quy trình công bố revision tiếp theo để hiệu chỉnh tiêu chí cho phiếu mới. Phiếu và chứng nhận đã cấp tiếp tục tham chiếu revision gốc.
+
 ## Hoàn tác
 
 1. Khóa luồng và dừng bản mới trước khi quay lại bản trước. Giữ lại backup, nhật ký, các phiên bản mẫu và danh sách hồ sơ bị tác động.

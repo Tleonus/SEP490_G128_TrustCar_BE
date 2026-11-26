@@ -6,24 +6,11 @@
 
 import request from 'supertest';
 import { setupInspectionHarness } from './helpers/fakeInspectionModels.js';
-import { getChecklist, PUBLIC_REPORT_SCOPE_NOTE } from '../src/config/inspectionChecklist.js';
+import {
+  CRITERIA_REPORT_SCOPE_NOTE, getChecklist, PUBLIC_REPORT_SCOPE_NOTE,
+} from '../src/config/inspectionChecklist.js';
 
 const h = await setupInspectionHarness();
-
-// Extend the shared fake for the report selector. Projection and sort arguments
-// are covered by the repository suite. Return raw fixtures to test the HTTP allowlist.
-const findOneRecord = h.InspectionRecord.findOne.getMockImplementation();
-h.InspectionRecord.findOne.mockImplementation((filter, projection) => {
-  if (!filter.$or) return findOneRecord(filter, projection);
-  const query = {
-    sort: () => query,
-    lean: async () => [...h.records.values()].find((record) =>
-      String(record.carId) === filter.carId && record.cpoCertificateId === filter.cpoCertificateId &&
-      record.result === filter.result && filter.$or.some(({ status }) => (record.status ?? null) === status),
-    ) ?? null,
-  };
-  return query;
-});
 
 const api = () => request(h.app);
 const CLOUD = process.env.CLOUDINARY_CLOUD_NAME;
@@ -88,6 +75,93 @@ beforeEach(async () => {
   h.reset();
   const { id } = await h.createUser({ roleName: 'SALES_STAFF', fullName: 'Nguyễn Văn An' });
   inspector = { id };
+});
+
+describe('Public documents for a certified criteria revision', () => {
+  function criteriaCar(revision) {
+    return certifiedCar({ vehicleCode: 'TC-2026-0042', make: 'Toyota', model: 'Vios' }, {
+      templateKey: 'GASOLINE', checklistVersion: String(revision), checklistSnapshot: undefined,
+      criteria: undefined, vehicleInfo: undefined, groups: undefined,
+    });
+  }
+
+  const oldGroup = { key: 'BODY', label: 'Than vo luc cap', required: true };
+  const newGroup = { key: 'EXTRA', label: 'Tieu chi bo sung', required: false };
+  const missingGroup = { key: 'OPTIONAL', label: 'Khong cong khai ket qua', required: false };
+  const privateValue = 'CHI NOi BO';
+
+  test.each([1, 2])('uses the exact certifying revision %s for JSON, certificate PDF and history PDF', async (revision) => {
+    const { carId, recordId } = criteriaCar(revision);
+    const published = {
+      1: [oldGroup, missingGroup],
+      2: [{ ...oldGroup, label: 'Than vo theo v2' }, newGroup, missingGroup],
+    };
+    const { headRead, aggregate } = h.mockCertificateRevisionRead(async (pipeline) => {
+      const [selector] = pipeline;
+      const groups = published[selector.$match.revision];
+      if (!groups) return [];
+      const outcomeJoin = pipeline.find((stage) => stage.$lookup?.as === 'passedResults').$lookup;
+      const { inspectionId, outcome } = outcomeJoin.pipeline[0].$match;
+      expect(String(inspectionId)).toBe(recordId);
+      expect(outcome).toBe('PASS');
+      return [{
+        format: 'CRITERIA',
+        groups: groups.map((group) => ({ ...group, note: privateValue })),
+        passedResults: [
+          ...(revision === 2 ? [{ criterionId: newGroup.key }] : []),
+          { criterionId: oldGroup.key, note: privateValue, evidenceImages: [privateValue] },
+          { criterionId: 'ORPHANED' },
+        ],
+        ...(pipeline.some((stage) => stage.$lookup?.as === 'inspectors')
+          ? { inspectors: [{ fullName: 'Nguyễn Văn An', email: privateValue }] } : {}),
+      }];
+    });
+    try {
+      const expected = published[revision].filter(({ key }) => key !== missingGroup.key).map(({ key, label }) => ({
+        key, label, passed: true, items: [], photos: [], minorDefects: [],
+      }));
+      const json = await report(carId);
+      expect(json.status).toBe(200);
+      expect(json.body.data).toMatchObject({
+        groups: expected, vehicle: { make: 'TOYOTA', model: 'Vios', mileage: 50000 },
+        inspector: 'N.V.A.', scopeNote: CRITERIA_REPORT_SCOPE_NOTE, overviewPhotos: null, photos: [],
+      });
+      expect(json.body.data.groups).toStrictEqual(expected);
+      expect(aggregate).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(json.body)).not.toContain(privateValue);
+
+      for (const path of [
+        `/api/v1/public/cars/${carId}/cpo-certificate.pdf`, '/api/v1/public/history/TC-2026-0042/pdf',
+      ]) {
+        const pdf = await api().get(path);
+        expect(pdf.status).toBe(200);
+        const bytes = pdf.body.toString('latin1');
+        expected.forEach(({ label }) => expect(bytes).toContain(label));
+        expect(bytes).not.toContain(privateValue);
+        expect(bytes).not.toContain(missingGroup.label);
+        expect(bytes).not.toContain(revision === 1 ? newGroup.label : oldGroup.label);
+      }
+      expect(aggregate).toHaveBeenCalledTimes(3);
+      for (const [pipeline] of aggregate.mock.calls) {
+        expect(pipeline[0]).toEqual({ $match: { templateKey: 'GASOLINE', revision } });
+      }
+      expect(headRead).not.toHaveBeenCalled();
+    } finally {
+      aggregate.mockRestore();
+    }
+  });
+
+  test('returns the public not-found response if a referenced revision is absent', async () => {
+    const { carId } = criteriaCar(2);
+    const { aggregate } = h.mockCertificateRevisionRead(async () => []);
+    try {
+      const result = await report(carId);
+      expect(result.status).toBe(404);
+      expect(result.body).toMatchObject(reportNotFound);
+    } finally {
+      aggregate.mockRestore();
+    }
+  });
 });
 
 describe('GET /api/v1/public/cars/:id/inspection-report', () => {

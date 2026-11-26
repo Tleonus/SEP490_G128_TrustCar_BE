@@ -88,8 +88,9 @@ test('queries only passing and finalized or legacy records and selects the newes
     carId, cpoCertificateId: certificateId, result: 'PASSED',
     $or: [{ status: InspectionStatus.SUBMITTED }, { status: null }],
   }, {
-    _id: 0, carId: 1, cpoCertificateId: 1, status: 1, source: 1, result: 1,
+    _id: 1, carId: 1, cpoCertificateId: 1, status: 1, source: 1, result: 1,
     odo: 1, submittedAt: 1, createdAt: 1, submittedBy: 1, inspectorId: 1,
+    templateKey: 1, checklistVersion: 1, 'checklistSnapshot.revision': 1,
     'criteria.noMajorAccident': 1,
     'criteria.noWaterDamage': 1,
     'criteria.engineGearboxIntact': 1,

@@ -33,7 +33,8 @@ export function createRejectInspection({ unitOfWork, now = () => new Date() }) {
       if (record.status !== pendingApprovalStatus) throw notPending();
 
       const updated = await records.updateIfCurrent(inspectionId, { status: pendingApprovalStatus }, {
-        status: InspectionStatus.DRAFT, templateSnapshot: null,
+        status: InspectionStatus.DRAFT,
+        ...(record.templateSnapshot == null ? {} : { templateSnapshot: null }),
         rejectedReason: trimmed, rejectedByUserId: actorId, rejectedAt: now(), updatedBy: actorId,
       });
       if (!updated) throw notPending();

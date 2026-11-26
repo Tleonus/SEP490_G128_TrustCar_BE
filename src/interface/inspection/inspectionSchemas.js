@@ -3,6 +3,7 @@ import { FuelType } from '../../constants/appConstants.js';
 import { INSPECTION_LIMITS as limits, OVERVIEW_POSITIONS } from '../../config/inspectionChecklist.js';
 import { CPO_CRITERIA, InspectionResult } from '../../domain/inspection/criteria.js';
 import { QuestionType } from '../../domain/inspection/formDefinition.js';
+import { criterionKeyMaxLength, criterionKeyPattern, TemplateProposalStatus } from '../../domain/inspection/criterionDefinition.js';
 
 const revision = Joi.number().integer().min(1).strict().required();
 const photo = Joi.string().trim().uri({ scheme: ['https'] }).max(500);
@@ -10,9 +11,28 @@ const note = Joi.string().trim().allow('').max(limits.NOTE_MAX_LENGTH);
 const vehicleText = Joi.string().trim().allow('', null).max(limits.VEHICLE_TEXT_MAX_LENGTH);
 const groupKeys = CPO_CRITERIA.map(({ key }) => key);
 
-export const templateKeyParams = Joi.object({
-  templateKey: Joi.string().valid(FuelType.ELECTRIC, FuelType.GASOLINE).required(),
+const templateKey = Joi.string().valid(FuelType.ELECTRIC, FuelType.GASOLINE);
+export const templateKeyParams = Joi.object({ templateKey: templateKey.required() }).required();
+
+export const proposalDraftBody = Joi.object({
+  baseRevision: revision,
+  groups: Joi.array().min(1).unique('key').items(Joi.object({
+    key: Joi.string().pattern(criterionKeyPattern).max(criterionKeyMaxLength).required(),
+    label: Joi.string().required(),
+    required: Joi.boolean().required(),
+  })).required(),
 }).required();
+export const proposalCreateBody = proposalDraftBody.keys({ templateKey: templateKey.required() });
+export const proposalListQuery = Joi.object({
+  templateKey,
+  status: Joi.string().valid(...Object.values(TemplateProposalStatus)),
+  before: Joi.string().hex().length(24),
+  limit: Joi.number().integer().min(1).max(100).default(20),
+});
+export const proposalReturnBody = Joi.object({
+  reason: Joi.string().pattern(/\S/u).max(limits.NOTE_MAX_LENGTH).required(),
+}).required();
+export const emptyProposalAction = Joi.object({});
 
 /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-046 */
 export const submitBody = Joi.object({ baseRevision: revision }).required();
@@ -36,6 +56,13 @@ const minorDefect = Joi.object({
 /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-009 */
 export const draftPatch = Joi.object({
   baseRevision: revision,
+  odo: Joi.number().integer().min(0).strict(),
+  results: Joi.array().unique('criterionId').items(Joi.object({
+    criterionId: Joi.string().pattern(criterionKeyPattern).max(criterionKeyMaxLength).required(),
+    outcome: Joi.string().valid(...Object.values(InspectionResult)).required(),
+    note,
+    evidenceImages: Joi.array().items(photo).max(limits.ITEM_PHOTOS_MAX),
+  })),
   answers: Joi.array().items(Joi.object({
     questionId: Joi.string().required(),
     value: Joi.alternatives().try(Joi.string().allow(''), Joi.number().strict(), Joi.array().items(photo))

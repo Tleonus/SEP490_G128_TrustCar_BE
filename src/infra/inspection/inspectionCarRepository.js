@@ -29,7 +29,7 @@ function toCar(document) {
 export function createInspectionCarRepository({ session, model = Car } = {}) {
   async function updateIfCurrent(id, expected, changes) {
     if (!session?.inTransaction()) throw new Error('Inspection car writes require an active transaction.');
-    const { status, fuelType, updatedAt } = expected ?? {};
+    const { status, fuelType, updatedAt, cpoCertificateId } = expected ?? {};
     const previousTime = updatedAt === null ? 0 : updatedAt instanceof Date ? updatedAt.getTime() : NaN;
     if (!mongoose.isObjectIdOrHexString(id) || !carStatuses.includes(status) ||
         (fuelType !== null && !fuelTypes.includes(fuelType)) || !Number.isFinite(previousTime)) {
@@ -42,7 +42,7 @@ export function createInspectionCarRepository({ session, model = Car } = {}) {
     // Always make a real write, including two requests in the same millisecond.
     fields.updatedAt = new Date(Math.max(Date.now(), previousTime + 1));
     return toCar(await model.findOneAndUpdate(
-      { _id: id, status, fuelType, updatedAt },
+      { _id: id, status, fuelType, updatedAt, ...(typeof cpoCertificateId === 'string' ? { cpoCertificateId } : {}) },
       { $set: fields },
       { session, new: true, runValidators: true, timestamps: false, projection: carFields },
     ).lean());

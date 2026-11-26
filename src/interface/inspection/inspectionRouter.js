@@ -3,7 +3,10 @@ import { Permissions } from '../../constants/appConstants.js';
 import { requireAdmin, requirePermission } from '../../middlewares/roleMiddleware.js';
 import { objectIdParamSchema } from '../../middlewares/validateMiddleware.js';
 import { quickInspectSchema, rejectInspectionSchema } from '../../routes/inspectionSchemas.js';
-import { draftPatch, submitBody, templateBody, templateKeyParams } from './inspectionSchemas.js';
+import {
+  draftPatch, emptyProposalAction, proposalCreateBody, proposalDraftBody, proposalListQuery,
+  proposalReturnBody, submitBody, templateBody, templateKeyParams,
+} from './inspectionSchemas.js';
 import { inspectionResponse, result, sendInspectionError, verdictResponse } from './inspectionResponses.js';
 
 // T023 adds the permission to the default role matrix when this router is mounted.
@@ -62,6 +65,33 @@ export function createInspectionRouter({ useCases, authenticate }) {
     { message: 'Inspection form template saved.' },
   ));
 
+  const proposals = '/form-template-proposals';
+  const proposalAccess = requirePermission(Permissions.INSPECTION_WRITE, Permissions.INSPECTION_ADMIN);
+  router.get(proposals, proposalAccess, validate(proposalListQuery, 'query'), handle(
+    (req) => useCases.listTemplateProposals(actor(req), req.query), { message: 'Template proposals retrieved.' },
+  ));
+  router.get(`${proposals}/:id`, proposalAccess, byId, handle(
+    (req) => useCases.getTemplateProposal(req.params.id, actor(req)), { message: 'Template proposal retrieved.' },
+  ));
+  router.post(proposals, write, strictBody(proposalCreateBody), handle(
+    (req) => useCases.createTemplateProposal(req.userId, req.body), { status: 201, message: 'Template proposal created.' },
+  ));
+  router.put(`${proposals}/:id`, write, byId, strictBody(proposalDraftBody), handle(
+    (req) => useCases.updateTemplateProposal(req.params.id, req.userId, req.body), { message: 'Template proposal saved.' },
+  ));
+  router.post(`${proposals}/:id/submit`, write, byId, strictBody(emptyProposalAction), handle(
+    (req) => useCases.submitTemplateProposal(req.params.id, req.userId), { message: 'Template proposal submitted.' },
+  ));
+  router.post(`${proposals}/:id/return`, admin, byId, strictBody(proposalReturnBody), handle(
+    (req) => useCases.returnTemplateProposal(req.params.id, req.userId, req.body.reason), { message: 'Template proposal returned.' },
+  ));
+  router.post(`${proposals}/:id/approve`, admin, byId, strictBody(emptyProposalAction), handle(
+    (req) => useCases.approveTemplateProposal(req.params.id, req.userId), { message: 'Template revision published.' },
+  ));
+
+  router.get('/cars/:id/current-certificate', read, byId, handle(
+    (req) => useCases.getCurrentCertificate(req.params.id), { message: 'Current CPO certificate retrieved.' },
+  ));
   router.post('/cars/:id/draft', write, byId, handle(
     (req) => useCases.createDraft(req.params.id, req.userId),
     { status: 201, message: 'Inspection draft created.', project: inspectionResponse },

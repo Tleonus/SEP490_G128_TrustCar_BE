@@ -1,6 +1,7 @@
 import { FuelType } from '../../constants/appConstants.js';
 import { trackTemplateIds } from '../../domain/inspection/draftAnswers.js';
 import { collectDefinitionIssues } from '../../domain/inspection/formDefinition.js';
+import { isCriteriaTemplate } from './criteriaInspection.js';
 
 const templateKeys = [FuelType.ELECTRIC, FuelType.GASOLINE];
 
@@ -49,6 +50,9 @@ export function createFormTemplateUseCases({ templates, unitOfWork }) {
       return unitOfWork.run(async ({ templates: writer }) => {
         const current = await writer.findCurrent(templateKey);
         if (!current) throw templateUnavailable();
+        if (isCriteriaTemplate(current)) {
+          throw Object.assign(new Error('This template requires the proposal workflow.'), { code: 'FORM_REVISION_CONFLICT' });
+        }
         if (current.revision !== baseRevision) throw revisionConflict();
 
         const next = { templateKey, revision: baseRevision + 1, groups };
