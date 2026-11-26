@@ -4,6 +4,7 @@ import { InspectionResult } from '../../domain/inspection/criteria.js';
 import { reconcileDraftAnswers, selectInspectionTemplate } from '../../domain/inspection/draftAnswers.js';
 import { collectDefinitionIssues, QuestionType, validateQuestionAnswer } from '../../domain/inspection/formDefinition.js';
 import { collectSubmitViolations } from '../../services/inspectionSubmitRules.js';
+import { assessCriterionResults, findDraftTemplate, isCertifiedForReinspection, isCriteriaTemplate } from './criteriaInspection.js';
 
 export const pendingApprovalStatus = 'PENDING_APPROVAL';
 const evidenceChecklist = getChecklist().map((group) => ({ ...group, items: [] }));
@@ -19,6 +20,18 @@ function locked() {
 
 function revisionConflict() {
   return submitError('FORM_REVISION_CONFLICT', 'The template revision has changed.');
+}
+
+function checkCriteriaSubmission(record, car, template, results) {
+  const violations = assessCriterionResults(template, results).missing.map(({ key }) => ({
+    field: `results.${key}`, code: 'REQUIRED', message: 'The criterion needs an outcome.',
+  }));
+  if (!Number.isSafeInteger(record.odo) || record.odo < 0) {
+    violations.push({ field: 'odo', code: 'REQUIRED', message: 'Provide a valid odometer reading.' });
+  } else if (record.odo < (car.mileage ?? 0)) {
+    violations.push({ field: 'odo', code: 'MILEAGE_DECREASE', message: 'Mileage cannot be lower than the recorded mileage.' });
+  }
+  return violations;
 }
 
 function checkConfirmedValues(confirmed = {}, now) {
@@ -165,33 +178,47 @@ export function createSubmitInspection({ unitOfWork, isInspectionImageUrl, now =
       ]);
     }
 
-    return unitOfWork.run(async ({ cars, records, templates, audit }) => {
+    return unitOfWork.run(async ({ cars, records, templates, results, audit }) => {
       const record = await records.findById(inspectionId);
       if (!record) throw submitError('INSPECTION_NOT_FOUND', 'Inspection not found.');
       if (record.status !== InspectionStatus.DRAFT) throw locked();
 
       const car = await cars.findById(record.carId);
       if (!car) throw submitError('CAR_NOT_FOUND', 'Car not found.');
-      if (car.status !== CarStatus.UNDER_INSPECTION) {
+      const reinspection = isCertifiedForReinspection(car);
+      if (car.status !== CarStatus.UNDER_INSPECTION && !reinspection) {
         throw submitError('INVALID_CAR_STATUS', 'Car is no longer under inspection.');
       }
       const selection = selectInspectionTemplate(car.fuelType, record.templateKey);
       if (selection.code) throw submitError(selection.code, 'The car does not match the saved inspection template.');
-      const template = record.templateKey != null ? await templates.findCurrent(selection.templateKey) : null;
+      const template = record.templateKey != null ? await findDraftTemplate(templates, record) : null;
       if (!template) throw submitError('INSPECTION_TEMPLATE_NOT_AVAILABLE', 'No inspection template is available.');
+      const compact = isCriteriaTemplate(template);
+      if (reinspection && !compact) throw submitError('INVALID_CAR_STATUS', 'Car is no longer under inspection.');
       if (template.revision !== baseRevision) throw revisionConflict();
 
       const submittedAt = now();
-      const isValidImageUrl = (url) => typeof url === 'string' && isInspectionImageUrl?.(url, inspectionId) === true;
-      const projected = await answersForSubmission(record, template, templates);
-      const violations = checkSubmission({ ...record, ...projected }, car, template, isValidImageUrl, submittedAt);
+      let fields;
+      let submittedResults;
+      let violations;
+      const expected = { status: InspectionStatus.DRAFT };
+      if (compact) {
+        submittedResults = await results.findByInspectionId(inspectionId);
+        violations = checkCriteriaSubmission(record, car, template, submittedResults);
+        fields = { odo: record.odo };
+        Object.assign(expected, { templateRevision: template.revision, updatedAt: record.updatedAt });
+      } else {
+        const isValidImageUrl = (url) => typeof url === 'string' && isInspectionImageUrl?.(url, inspectionId) === true;
+        const projected = await answersForSubmission(record, template, templates);
+        violations = checkSubmission({ ...record, ...projected }, car, template, isValidImageUrl, submittedAt);
+        fields = { templateSnapshot: template, ...projected };
+      }
       if (violations.length) throw submitError('INSPECTION_INCOMPLETE', 'The inspection is incomplete.', violations);
 
-      const updated = await records.updateIfCurrent(inspectionId, { status: InspectionStatus.DRAFT }, {
+      const updated = await records.updateIfCurrent(inspectionId, expected, {
         status: pendingApprovalStatus,
         templateRevision: template.revision,
-        templateSnapshot: template,
-        ...projected,
+        ...fields,
         inspectorId: actorId, submittedBy: actorId, submittedAt, updatedBy: actorId,
       });
       if (!updated) throw locked();
@@ -203,7 +230,7 @@ export function createSubmitInspection({ unitOfWork, isInspectionImageUrl, now =
           templateRevision: template.revision,
         },
       });
-      return updated;
+      return compact ? { ...updated, template, results: submittedResults } : updated;
     });
   };
 }

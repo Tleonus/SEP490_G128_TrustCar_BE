@@ -57,6 +57,23 @@ export function createInspectionRecordRepository({ session, model = InspectionRe
         { carId, status: { $in: [...openInspectionStatuses] } }, null, { session },
       ).lean());
     },
+    async findCertifyingRecord(carId, cpoCertificateId) {
+      if (!mongoose.isObjectIdOrHexString(carId) || !cpoCertificateId) return null;
+      const record = await model.findOne({
+        carId, cpoCertificateId, result: 'PASSED',
+        $or: [{ status: InspectionStatus.SUBMITTED }, { status: null }],
+      }, '_id templateKey checklistVersion checklistSnapshot.templateKey checklistSnapshot.revision', { session })
+        .sort({ createdAt: -1, _id: -1 }).lean();
+      if (!record) return null;
+      const version = record.checklistSnapshot?.revision ?? record.checklistVersion;
+      const revision = version === '1.0' ? 1 : Number(version);
+      const hasRevision = (version === '1.0' || /^[1-9]\d*$/.test(String(version))) && Number.isSafeInteger(revision);
+      return {
+        inspectionId: String(record._id),
+        templateKey: record.checklistSnapshot?.templateKey ?? record.templateKey ?? null,
+        templateRevision: hasRevision ? revision : null,
+      };
+    },
     async insert(record) {
       requireTransaction();
       const [saved] = await model.create([toDocument(record)], { session });

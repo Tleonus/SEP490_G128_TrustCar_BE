@@ -4,6 +4,7 @@ import { CPO_CRITERIA } from '../../domain/inspection/criteria.js';
 import Car from '../../models/Car.js';
 import InspectionRecord from '../../models/InspectionRecord.js';
 import User from '../../models/User.js';
+import { readCertificateCriteria } from './certificateCriteriaReader.js';
 
 const reportableStatuses = [CarStatus.APPROVED_CPO, CarStatus.AVAILABLE];
 const criteriaFields = CPO_CRITERIA.map(({ criteriaKey }) => criteriaKey);
@@ -13,8 +14,9 @@ const carProjection = {
   make: 1, model: 1, variant: 1, year: 1, 'specifications.color': 1,
 };
 const recordProjection = {
-  _id: 0, carId: 1, cpoCertificateId: 1, status: 1, source: 1, result: 1,
+  _id: 1, carId: 1, cpoCertificateId: 1, status: 1, source: 1, result: 1,
   odo: 1, submittedAt: 1, createdAt: 1, submittedBy: 1, inspectorId: 1,
+  templateKey: 1, checklistVersion: 1, 'checklistSnapshot.revision': 1,
   ...Object.fromEntries(criteriaFields.map((field) => [`criteria.${field}`, 1])),
   ...Object.fromEntries(confirmedFields.map((field) => [`vehicleInfo.confirmed.${field}`, 1])),
 };
@@ -37,7 +39,9 @@ function lookupFilter(lookup) {
 }
 
 /** @returns {import('../../usecase/inspection-report/ports/inspectionReportPort.js').InspectionReportReader} */
-export function createInspectionReportRepository({ carModel = Car, recordModel = InspectionRecord, userModel = User } = {}) {
+export function createInspectionReportRepository({
+  carModel = Car, recordModel = InspectionRecord, userModel = User, readCriteria = readCertificateCriteria,
+} = {}) {
   return {
     /** @ears .sdd/features/kan-15-cpo-certificate-json-api/SPEC.md#REQ-002 */
     async findCar(lookup) {
@@ -77,6 +81,7 @@ export function createInspectionReportRepository({ carModel = Car, recordModel =
       if (!record) return null;
 
       const confirmed = record.vehicleInfo?.confirmed;
+      const certificateCriteria = await readCriteria(record, { includeInspector: true });
       return {
         carId: idAsString(record.carId),
         cpoCertificateId: record.cpoCertificateId,
@@ -90,6 +95,7 @@ export function createInspectionReportRepository({ carModel = Car, recordModel =
         createdAt: record.createdAt,
         submittedBy: idAsString(record.submittedBy),
         inspectorId: idAsString(record.inspectorId),
+        ...certificateCriteria,
       };
     },
 

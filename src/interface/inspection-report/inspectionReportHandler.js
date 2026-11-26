@@ -5,7 +5,7 @@ import { AppError, sendSuccess } from '../../utils/apiResponse.js';
  * @ears .sdd/features/kan-15-cpo-certificate-json-api/SPEC.md#REQ-010
  * @ears .sdd/features/kan-15-cpo-certificate-json-api/SPEC.md#REQ-011
  */
-function publicReport({ certificateId, issuedAt, level, inspector, vehicle, groups }) {
+function publicReport({ certificateId, issuedAt, level, inspector, vehicle, groups, scopeNote = PUBLIC_REPORT_SCOPE_NOTE }) {
   const { make, model, variant, color, year, mileage } = vehicle;
   return {
     certificateId,
@@ -18,7 +18,7 @@ function publicReport({ certificateId, issuedAt, level, inspector, vehicle, grou
       key, label, passed, items: [], photos: [], minorDefects: [],
     })),
     photos: [],
-    scopeNote: PUBLIC_REPORT_SCOPE_NOTE,
+    scopeNote,
   };
 }
 

@@ -1,6 +1,7 @@
 import { withTransaction } from '../../utils/withTransaction.js';
 import { createFormTemplateRepository } from './formTemplateRepository.js';
 import { createInspectionAuditRepository } from './inspectionAuditRepository.js';
+import { createInspectionResultRepository } from './inspectionResultRepository.js';
 
 /**
  * Bind the available inspection repositories to one MongoDB transaction.
@@ -11,17 +12,22 @@ export function createInspectionUnitOfWork({
   runTransaction = withTransaction,
   bindTemplates = (session) => createFormTemplateRepository({ session }),
   bindAudit = (session) => createInspectionAuditRepository({ session }),
+  bindResults = (session, templates) => createInspectionResultRepository({ session, templates }),
   bindRecords,
   bindCars,
 } = {}) {
   return {
     async run(action) {
-      const execute = () => runTransaction((session) => action({
-        templates: bindTemplates(session),
-        audit: bindAudit(session),
-        records: bindRecords?.(session),
-        cars: bindCars?.(session),
-      }));
+      const execute = () => runTransaction((session) => {
+        const templates = bindTemplates(session);
+        return action({
+          templates,
+          audit: bindAudit(session),
+          results: bindResults(session, templates),
+          records: bindRecords?.(session),
+          cars: bindCars?.(session),
+        });
+      });
       try {
         return await execute();
       } catch (error) {

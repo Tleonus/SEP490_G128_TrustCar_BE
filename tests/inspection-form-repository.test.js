@@ -1,13 +1,19 @@
 import { describe, expect, jest, test } from '@jest/globals';
 import mongoose from 'mongoose';
 import { CPO_CRITERIA } from '../src/domain/inspection/criteria.js';
+import ActivityLog from '../src/models/ActivityLog.js';
 import {
-  FormTemplateAudit, FormTemplateHead, FormTemplateRevision, templatePublishedEvent,
+  FormTemplateAudit, FormTemplateHead, FormTemplateProposal, FormTemplateRevision, templatePublishedEvent,
 } from '../src/infra/inspection/formTemplateModel.js';
 import { createFormTemplateRepository } from '../src/infra/inspection/formTemplateRepository.js';
 import { createInspectionUnitOfWork } from '../src/infra/inspection/inspectionUnitOfWork.js';
 
 const actorId = '000000000000000000000001';
+const reviewerId = '000000000000000000000002';
+const criteria = [
+  ...CPO_CRITERIA.map(({ key, label }) => ({ key, label, required: true })),
+  { key: 'BODYWORK', label: 'Thân vỏ', required: false },
+];
 const template = (templateKey, revision, label = 'Kết quả') => ({
   templateKey,
   revision,
@@ -26,6 +32,8 @@ function createRepositoryHarness() {
     heads: { ELECTRIC: 1, GASOLINE: 1 },
     revisions: [template('ELECTRIC', 1), template('GASOLINE', 1)],
     events: [],
+    proposals: [],
+    activities: [],
   };
   let transactions = Promise.resolve();
   const state = (session) => session?.state ?? committed;
@@ -47,9 +55,13 @@ function createRepositoryHarness() {
       lean: async () => state(session).revisions.find((record) =>
         record.templateKey === templateKey && record.revision === revision) ?? null,
     })),
+    findById: jest.fn((id, _projection, { session }) => ({
+      lean: async () => state(session).revisions.find(({ _id }) => _id === id) ?? null,
+    })),
     create: jest.fn(async ([record], { session }) => {
-      session.state.revisions.push(record);
-      return [{ toObject: () => record }];
+      const saved = { _id: new mongoose.Types.ObjectId().toHexString(), ...record };
+      session.state.revisions.push(saved);
+      return [{ toObject: () => saved }];
     }),
   };
   const auditModel = {
@@ -57,7 +69,35 @@ function createRepositoryHarness() {
       session.state.events.push(event);
     }),
   };
-  const bindTemplates = (session) => createFormTemplateRepository({ session, headModel, revisionModel, auditModel });
+  const match = (row, filter) => Object.entries(filter).every(([key, value]) => row[key] === value);
+  const proposalModel = {
+    create: jest.fn(async ([proposal], { session }) => {
+      const saved = { _id: new mongoose.Types.ObjectId().toHexString(), ...proposal };
+      state(session).proposals.push(saved);
+      return [{ toObject: () => saved }];
+    }),
+    findOne: jest.fn((filter, _projection, { session }) => ({
+      lean: async () => state(session).proposals.find((row) => match(row, filter)) ?? null,
+    })),
+    findById: jest.fn((id, _projection, { session }) => ({
+      lean: async () => state(session).proposals.find(({ _id }) => _id === id) ?? null,
+    })),
+    findOneAndUpdate: jest.fn((filter, { $set }, { session }) => ({
+      lean: async () => {
+        const proposal = state(session).proposals.find((row) => match(row, filter));
+        return proposal ? Object.assign(proposal, $set) : null;
+      },
+    })),
+  };
+  const activityModel = {
+    create: jest.fn(async ([activity], { session }) => {
+      await new ActivityLog(activity).validate();
+      state(session).activities.push(activity);
+    }),
+  };
+  const bindTemplates = (session) => createFormTemplateRepository({
+    session, headModel, revisionModel, auditModel, proposalModel, activityModel,
+  });
   const runTransaction = (action) => {
     const work = transactions.then(async () => {
       const session = { state: structuredClone(committed), inTransaction: () => true };
@@ -69,7 +109,7 @@ function createRepositoryHarness() {
     return work;
   };
   return {
-    headModel, revisionModel, auditModel, bindTemplates, runTransaction,
+    headModel, revisionModel, auditModel, activityModel, proposalModel, bindTemplates, runTransaction,
     readers: bindTemplates(),
     unitOfWork: createInspectionUnitOfWork({ runTransaction, bindTemplates }),
   };
@@ -150,6 +190,92 @@ describe('Inspection template persistence', () => {
   });
 });
 
+describe('Criteria template proposals', () => {
+  async function createProposal(h, { submit = true } = {}) {
+    const draft = await h.unitOfWork.run(({ templates }) => templates.createProposal({
+      templateKey: 'ELECTRIC', baseRevision: 1, groups: criteria, submittedBy: actorId,
+    }));
+    if (submit) {
+      await h.unitOfWork.run(({ templates }) => templates.submitProposal(draft._id, actorId));
+    }
+    return draft._id;
+  }
+
+  test('matches the ERD for proposals and keeps the format optional on old revisions', async () => {
+    const draft = new FormTemplateProposal({
+      templateKey: 'ELECTRIC', baseRevision: 1, groups: criteria, submittedBy: actorId,
+    });
+    await expect(draft.validate()).resolves.toBeUndefined();
+    expect(draft.groups[0]._id).toBeUndefined();
+    expect(draft.status).toBe('DRAFT');
+    expect(FormTemplateProposal.schema.indexes()).toContainEqual([
+      { publishedRevisionId: 1 },
+      expect.objectContaining({ unique: true, partialFilterExpression: { publishedRevisionId: { $type: 'objectId' } } }),
+    ]);
+    expect(FormTemplateRevision.schema.path('format').options).toMatchObject({ immutable: true });
+    expect(new FormTemplateRevision(template('ELECTRIC', 1)).format).toBeUndefined();
+  });
+
+  test('locks edits after submission, restricts draft edits to the author, and allows return to draft', async () => {
+    const h = createRepositoryHarness();
+    const id = await createProposal(h, { submit: false });
+    await expect(h.unitOfWork.run(({ templates }) => templates.submitProposal(id, reviewerId))).resolves.toBeNull();
+    await expect(h.unitOfWork.run(({ templates }) => templates.submitProposal(id, actorId))).resolves.toMatchObject(
+      { status: 'PENDING_APPROVAL', submittedAt: expect.any(Date) },
+    );
+    const edits = { baseRevision: 1, groups: criteria };
+    await expect(h.unitOfWork.run(({ templates }) =>
+      templates.updateProposalDraft(id, actorId, edits))).resolves.toBeNull();
+    await expect(h.unitOfWork.run(({ templates }) =>
+      templates.returnProposal(id, reviewerId, 'Rà lại tiêu chí'))).resolves.toMatchObject({
+      status: 'DRAFT', reviewedBy: reviewerId, reviewNote: 'Rà lại tiêu chí',
+    });
+    await expect(h.unitOfWork.run(({ templates }) =>
+      templates.updateProposalDraft(id, actorId, edits))).resolves.toMatchObject({ status: 'DRAFT' });
+    expect(await h.readers.findCurrent('ELECTRIC')).toEqual(template('ELECTRIC', 1));
+  });
+
+  test('publishes one immutable revision per proposal, logs once and rejects a competing base revision', async () => {
+    const h = createRepositoryHarness();
+    const id = await createProposal(h);
+    const competingId = await createProposal(h);
+    const approve = (proposalId) => h.unitOfWork.run(({ templates }) =>
+      templates.publishProposal(proposalId, reviewerId));
+
+    const [winner, loser] = await Promise.allSettled([approve(id), approve(competingId)]);
+    expect(winner.value).toMatchObject({ format: 'CRITERIA', groups: criteria, revision: 2 });
+    expect(loser.reason).toMatchObject({ code: 'FORM_REVISION_CONFLICT' });
+    await expect(approve(id)).resolves.toEqual(winner.value);
+    expect(await h.readers.findCurrent('ELECTRIC')).toEqual(winner.value);
+    expect(await h.readers.findRevision('ELECTRIC', 1)).toEqual(template('ELECTRIC', 1));
+
+    expect(h.activityModel.create).toHaveBeenCalledTimes(1);
+    const [[entry], { session }] = h.activityModel.create.mock.calls[0];
+    expect(entry).toEqual({
+      eventType: templatePublishedEvent, performedBy: reviewerId, targetModel: 'InspectionFormTemplateRevision',
+      targetId: session.state.proposals.find(({ _id }) => _id === id).publishedRevisionId,
+      targetCode: 'ELECTRIC', changes: { before: { revision: 1 }, after: { revision: 2 } },
+      createdAt: expect.any(Date),
+    });
+    expect(h.headModel.updateOne.mock.calls[0][2].session).toBe(session);
+    expect(h.revisionModel.create.mock.calls[0][1].session).toBe(session);
+    expect(session.state.proposals.find(({ _id }) => _id === competingId).status).toBe('PENDING_APPROVAL');
+    expect(h.auditModel.create).not.toHaveBeenCalled();
+  });
+
+  test('aborts all proposal publication writes on activity log failure', async () => {
+    const h = createRepositoryHarness();
+    const id = await createProposal(h);
+    h.activityModel.create.mockRejectedValueOnce(new Error('Activity write failed.'));
+    const approve = () => h.unitOfWork.run(({ templates }) => templates.publishProposal(id, reviewerId));
+    await expect(approve()).rejects.toThrow('Activity write failed.');
+    await expect(h.readers.findCurrent('ELECTRIC')).resolves.toEqual(template('ELECTRIC', 1));
+    await expect(h.readers.findRevision('ELECTRIC', 2)).resolves.toBeNull();
+    await expect(approve()).resolves.toMatchObject({ revision: 2 });
+    expect(h.activityModel.create.mock.calls[1][1].session.state.activities).toHaveLength(1);
+  });
+});
+
 describe('Inspection unit of work', () => {
   test('uses a fresh transaction after a transient conflict and returns a stale publish result', async () => {
     const h = createRepositoryHarness();
@@ -188,13 +314,15 @@ describe('Inspection unit of work', () => {
     const bindAudit = jest.fn();
     const bindRecords = jest.fn();
     const bindCars = jest.fn();
+    const bindResults = jest.fn();
     try {
-      const unitOfWork = createInspectionUnitOfWork({ bindTemplates, bindAudit, bindRecords, bindCars });
+      const unitOfWork = createInspectionUnitOfWork({ bindTemplates, bindAudit, bindRecords, bindCars, bindResults });
       await expect(unitOfWork.run(async () => { throw new Error('Failed write.'); })).rejects.toThrow('Failed write.');
       expect(startSession).toHaveBeenCalledTimes(1);
       for (const bind of [bindTemplates, bindAudit, bindRecords, bindCars]) {
         expect(bind).toHaveBeenCalledWith(session);
       }
+      expect(bindResults).toHaveBeenCalledWith(session, undefined);
       expect(session.abortTransaction).toHaveBeenCalledTimes(1);
       expect(session.commitTransaction).not.toHaveBeenCalled();
       expect(session.endSession).toHaveBeenCalledTimes(1);

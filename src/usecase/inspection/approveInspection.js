@@ -1,6 +1,7 @@
 import { ActivityEventType, CarStatus, InspectionStatus, Permissions, Roles } from '../../constants/appConstants.js';
 import { CPO_CRITERIA, evaluateCpo } from '../../domain/inspection/criteria.js';
 import { collectDefinitionIssues, deriveDetailedCriteria, QuestionType } from '../../domain/inspection/formDefinition.js';
+import { assessCriterionResults, isCertifiedForReinspection, isCriteriaTemplate } from './criteriaInspection.js';
 
 const PENDING_APPROVAL = 'PENDING_APPROVAL';
 const MAX_CERTIFICATE_ATTEMPTS = 3;
@@ -67,6 +68,14 @@ function buildVerdict(record, listRecordImages) {
   };
 }
 
+function buildCriteriaVerdict(record, template, results) {
+  const { missing, passed } = assessCriterionResults(template, results);
+  if (missing.length || !Number.isSafeInteger(record.odo) || record.odo < 0) {
+    throw approvalError('INSPECTION_INCOMPLETE', 'The inspection is incomplete.');
+  }
+  return { passed, recordChanges: { odo: record.odo, result: passed ? 'PASSED' : 'FAILED' } };
+}
+
 /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-028 */
 async function appendApprovalEvents(audit, record, beforeCar, afterCar, actorId) {
   const { id: inspectionId, result, cpoCertificateId } = record;
@@ -78,13 +87,24 @@ async function appendApprovalEvents(audit, record, beforeCar, afterCar, actorId)
     summary: `Inspection approved: ${result}`,
     metadata: { ...metadata, action: 'APPROVE', fromStatus: PENDING_APPROVAL, toStatus: InspectionStatus.SUBMITTED },
   });
-  await audit.append({
-    eventType: ActivityEventType.CAR_STATUS_CHANGED,
-    performedBy: actorId, targetModel: 'Car', targetId: afterCar.id, targetCode: afterCar.vehicleCode ?? null,
-    changes: { before: { status: beforeCar.status }, after: { status: afterCar.status } },
-    summary: `Inspection ${result}`,
-    metadata,
-  });
+  if (beforeCar.status !== afterCar.status) {
+    await audit.append({
+      eventType: ActivityEventType.CAR_STATUS_CHANGED,
+      performedBy: actorId, targetModel: 'Car', targetId: afterCar.id, targetCode: afterCar.vehicleCode ?? null,
+      changes: { before: { status: beforeCar.status }, after: { status: afterCar.status } },
+      summary: `Inspection ${result}`, metadata,
+    });
+  } else if (cpoCertificateId && beforeCar.cpoCertificateId !== cpoCertificateId) {
+    await audit.append({
+      eventType: ActivityEventType.CAR_UPDATED,
+      performedBy: actorId, targetModel: 'Car', targetId: afterCar.id, targetCode: afterCar.vehicleCode ?? null,
+      changes: {
+        before: { cpoCertificateId: beforeCar.cpoCertificateId },
+        after: { cpoCertificateId },
+      },
+      summary: 'CPO certificate renewed', metadata,
+    });
+  }
 }
 
 /**
@@ -94,7 +114,7 @@ async function appendApprovalEvents(audit, record, beforeCar, afterCar, actorId)
  * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-036
  * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-038
  */
-async function finalizeInspection({ records, cars, audit }, {
+async function finalizeInspection({ records, cars, templates, results, audit }, {
   inspectionId, actorId, getCertificateId, buildHistoryVerifyHash, listRecordImages, now,
 }) {
   const record = await records.findById(inspectionId);
@@ -106,26 +126,37 @@ async function finalizeInspection({ records, cars, audit }, {
 
   const car = await cars.findById(record.carId);
   if (!car) throw approvalError('CAR_NOT_FOUND', 'Car not found.');
-  if (car.status !== CarStatus.UNDER_INSPECTION) throw invalidCarStatus();
+  const template = record.templateSnapshot == null && Number.isSafeInteger(record.templateRevision)
+    ? await templates.findRevision(record.templateKey, record.templateRevision)
+    : null;
+  const compact = isCriteriaTemplate(template);
+  const reinspection = compact && isCertifiedForReinspection(car);
+  if (car.status !== CarStatus.UNDER_INSPECTION && !reinspection) throw invalidCarStatus();
 
-  const { passed, recordChanges } = buildVerdict(record, listRecordImages);
+  const scores = compact ? await results.findByInspectionId(record.id) : null;
+  const { passed, recordChanges } = compact
+    ? buildCriteriaVerdict(record, template, scores)
+    : buildVerdict(record, listRecordImages);
   const cpoCertificateId = passed ? getCertificateId() : null;
+  if (reinspection && cpoCertificateId === car.cpoCertificateId) {
+    throw approvalError('CPO_CERTIFICATE_ALREADY_IN_USE', 'Generate a different certificate for reinspection.');
+  }
   const inspectionRecord = await records.updateIfCurrent(record.id, { status: PENDING_APPROVAL }, {
     ...recordChanges, cpoCertificateId, status: InspectionStatus.SUBMITTED,
     approvedBy: actorId, approvedAt: now(), updatedBy: actorId,
   });
   if (!inspectionRecord) throw notPending();
 
-  const updatedCar = await cars.updateIfCurrent(car.id, car, {
-    status: passed ? CarStatus.APPROVED_CPO : CarStatus.REJECTED,
-    mileage: Math.max(car.mileage ?? 0, recordChanges.odo),
-    cpoCertificateId,
+  const carChanges = reinspection && !passed ? {} : {
+    status: reinspection ? car.status : passed ? CarStatus.APPROVED_CPO : CarStatus.REJECTED,
+    mileage: Math.max(car.mileage ?? 0, recordChanges.odo), cpoCertificateId,
     historyVerifyHash: passed ? buildHistoryVerifyHash(car.id, cpoCertificateId) : null,
-  });
+  };
+  const updatedCar = await cars.updateIfCurrent(car.id, car, carChanges);
   if (!updatedCar) throw invalidCarStatus();
 
   await appendApprovalEvents(audit, inspectionRecord, car, updatedCar, actorId);
-  return { car: updatedCar, inspectionRecord };
+  return { car: updatedCar, inspectionRecord: compact ? { ...inspectionRecord, template, results: scores } : inspectionRecord };
 }
 
 /**
@@ -152,7 +183,7 @@ export function createApproveInspection({
         }));
       } catch (error) {
         // A duplicate write aborts the MongoDB transaction. Start a fresh one.
-        if (!candidate || !isCertificateCollision(error)) throw error;
+        if (!candidate || (error.code !== 'CPO_CERTIFICATE_ALREADY_IN_USE' && !isCertificateCollision(error))) throw error;
       }
     }
 

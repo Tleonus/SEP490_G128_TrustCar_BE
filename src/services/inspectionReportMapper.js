@@ -9,7 +9,7 @@
  */
 
 import {
-  CHECKLIST_VERSION, OVERVIEW_POSITIONS, PUBLIC_REPORT_SCOPE_NOTE, getChecklist,
+  CHECKLIST_VERSION, CRITERIA_REPORT_SCOPE_NOTE, OVERVIEW_POSITIONS, PUBLIC_REPORT_SCOPE_NOTE, getChecklist,
 } from '../config/inspectionChecklist.js';
 import { InspectionSource } from '../constants/appConstants.js';
 import { isPublicImageUrl } from './inspectionMediaService.js';
@@ -75,8 +75,7 @@ const fullGroup = (def, group, passed) => {
  * @param {string|null} [params.inspectorName] - full name of the inspector, if known
  * @returns {object} public report (SPEC KAN-15 §5)
  */
-export const buildPublicReport = ({ car, record, inspectorName = null }) => {
-  const checklist = getChecklist(record.checklistVersion) || getChecklist(CHECKLIST_VERSION);
+export const buildPublicReport = ({ car, record, inspectorName = null, criteriaGroups }) => {
   const level = record.source === InspectionSource.STAFF ? ReportLevel.FULL : ReportLevel.MINIMAL;
   // The 5 booleans are what the certificate was issued on, for every kind of record.
   const passedOf = (def) => record.criteria?.[def.criteriaKey] === true;
@@ -88,6 +87,20 @@ export const buildPublicReport = ({ car, record, inspectorName = null }) => {
     inspector: toInitials(inspectorName),
   };
 
+  if (Array.isArray(criteriaGroups)) {
+    return {
+      ...base,
+      vehicle: vehicleFrom({ ...car, color: car?.specifications?.color }, record.odo),
+      overviewPhotos: null,
+      groups: criteriaGroups.map(({ key, label, passed }) => ({
+        key, label, passed, items: [], photos: [], minorDefects: [],
+      })),
+      photos: [],
+      scopeNote: CRITERIA_REPORT_SCOPE_NOTE,
+    };
+  }
+
+  const checklist = getChecklist(record.checklistVersion) || getChecklist(CHECKLIST_VERSION);
   if (level === ReportLevel.FULL) {
     return {
       ...base,

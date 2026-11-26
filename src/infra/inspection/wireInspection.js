@@ -6,6 +6,7 @@ import { buildHistoryVerifyHash } from '../../services/vehicleHistoryService.js'
 import { createApproveInspection } from '../../usecase/inspection/approveInspection.js';
 import { createInspectionDraftUseCases } from '../../usecase/inspection/manageDrafts.js';
 import { createFormTemplateUseCases } from '../../usecase/inspection/manageTemplates.js';
+import { createTemplateProposalUseCases } from '../../usecase/inspection/manageTemplateProposals.js';
 import { createQuickInspection } from '../../usecase/inspection/quickInspection.js';
 import { createRejectInspection } from '../../usecase/inspection/rejectInspection.js';
 import { createInspectionUploadSigning } from '../../usecase/inspection/signInspectionUpload.js';
@@ -14,6 +15,7 @@ import { createFormTemplateRepository } from './formTemplateRepository.js';
 import { createInspectionCarRepository } from './inspectionCarRepository.js';
 import { createInspectionMediaAdapter } from './inspectionMediaAdapter.js';
 import { createInspectionRecordRepository } from './inspectionRecordRepository.js';
+import { createInspectionResultRepository } from './inspectionResultRepository.js';
 import { createInspectionUnitOfWork } from './inspectionUnitOfWork.js';
 
 /** Compose the ports for the inspection module. The application's router owns mounting. */
@@ -27,6 +29,7 @@ export function wireInspection({
 } = {}) {
   const templates = makeTemplates();
   const records = makeRecords();
+  const results = createInspectionResultRepository();
   const cars = makeCars();
   const unitOfWork = createInspectionUnitOfWork({
     bindTemplates: (session) => makeTemplates({ session }),
@@ -43,7 +46,8 @@ export function wireInspection({
 
   return {
     ...createFormTemplateUseCases({ templates, unitOfWork }),
-    ...createInspectionDraftUseCases({ templates, records, unitOfWork, isInspectionImageUrl }),
+    ...createTemplateProposalUseCases({ templates, unitOfWork }),
+    ...createInspectionDraftUseCases({ templates, records, results, cars, unitOfWork, isInspectionImageUrl }),
     ...createInspectionUploadSigning({ records, cars, media }),
     submitInspection: createSubmitInspection({ unitOfWork, isInspectionImageUrl }),
     rejectInspection: createRejectInspection({ unitOfWork }),
