@@ -1,4 +1,6 @@
 import { ActivityEventType, CarStatus, InspectionSource, InspectionStatus, Permissions } from '../../constants/appConstants.js';
+import { selectInspectionTemplate } from '../../domain/inspection/draftAnswers.js';
+import { isCriteriaTemplate } from './criteriaInspection.js';
 import { INSPECTION_LIMITS } from '../../config/inspectionChecklist.js';
 import { CPO_CRITERIA, evaluateCpo } from '../../domain/inspection/criteria.js';
 
@@ -99,10 +101,14 @@ async function appendEvents(audit, car, updatedCar, record, actorId) {
  * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-021
  * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-026
  */
-async function finalizeQuickInspection({ cars, records, audit }, {
+async function finalizeQuickInspection({ cars, records, templates, audit }, {
   carId, actorId, input, getCertificateId, buildHistoryVerifyHash, now,
 }) {
   const car = await claimInspectableCar(cars, records, carId);
+  const { templateKey } = selectInspectionTemplate(car.fuelType);
+  if (templateKey && isCriteriaTemplate(await templates?.findCurrent(templateKey))) {
+    throw quickError('INSPECTION_CRITERIA_REQUIRED', 'Use a detailed inspection for the current criteria template.');
+  }
   if (input.odo < (car.mileage ?? 0)) {
     throw quickError('MILEAGE_DECREASE', 'Odometer reading cannot be lower than the recorded mileage.');
   }

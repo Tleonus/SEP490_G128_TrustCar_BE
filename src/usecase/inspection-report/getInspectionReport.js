@@ -1,5 +1,6 @@
 import { CarStatus, InspectionSource, InspectionStatus } from '../../constants/appConstants.js';
 import { CPO_CRITERIA } from '../../domain/inspection/criteria.js';
+import { CRITERIA_REPORT_SCOPE_NOTE } from '../../config/inspectionChecklist.js';
 
 const reportableStatuses = new Set([CarStatus.APPROVED_CPO, CarStatus.AVAILABLE]);
 const objectIdPattern = /^[a-f0-9]{24}$/i;
@@ -76,15 +77,20 @@ export function createGetInspectionReport({ reader }) {
         record.result !== 'PASSED') throw reportNotFound();
 
     const inspectorId = isObjectId(record.submittedBy) ? record.submittedBy : record.inspectorId;
-    const inspector = isObjectId(inspectorId) ? initials(await reader.findInspectorName(inspectorId)) : null;
+    const inspector = Object.hasOwn(record, 'inspectorName')
+      ? initials(record.inspectorName)
+      : isObjectId(inspectorId) ? initials(await reader.findInspectorName(inspectorId)) : null;
     const full = record.source === InspectionSource.STAFF;
+    const criteriaBased = Array.isArray(record.criteriaGroups);
+    const confirmed = full && !criteriaBased;
     return {
       certificateId: record.cpoCertificateId,
       issuedAt: isoDate(record.submittedAt) ?? isoDate(record.createdAt),
       level: full ? 'FULL' : 'MINIMAL',
       inspector,
-      vehicle: full ? vehicleInfo(record.confirmedVehicle, record.confirmedVehicle?.mileage) : vehicleInfo(car, record.odo),
-      groups: passedCriteria(record.criteria),
+      vehicle: confirmed ? vehicleInfo(record.confirmedVehicle, record.confirmedVehicle?.mileage) : vehicleInfo(car, record.odo),
+      groups: criteriaBased ? record.criteriaGroups : passedCriteria(record.criteria),
+      ...(criteriaBased ? { scopeNote: CRITERIA_REPORT_SCOPE_NOTE } : {}),
     };
   };
 }

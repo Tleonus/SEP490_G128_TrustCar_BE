@@ -14,13 +14,17 @@ const errorsByCode = new Map([
   ['INSPECTION_SELF_APPROVAL', [403, 'The person who submitted the inspection cannot approve it.']],
   ['CAR_NOT_FOUND', [404, 'Car not found.']],
   ['INSPECTION_NOT_FOUND', [404, 'Inspection not found.']],
+  ['CPO_CERTIFICATE_NOT_FOUND', [404, 'No current CPO certificate found.']],
   ['INSPECTION_DRAFT_EXISTS', [409, 'The car already has a draft inspection.']],
   ['INSPECTION_PENDING_APPROVAL', [409, 'The car already has an inspection awaiting approval.']],
   ['INSPECTION_LOCKED', [409, 'This inspection is locked.']],
   ['INSPECTION_NOT_PENDING_APPROVAL', [409, 'The inspection is not awaiting approval.']],
   ['FORM_REVISION_CONFLICT', [409, 'The template revision has changed.']],
+  ['TEMPLATE_PROPOSAL_NOT_FOUND', [404, 'Template proposal not found.']],
+  ['TEMPLATE_PROPOSAL_STATE_CONFLICT', [409, 'Proposal cannot be changed in this state.']],
   ['INSPECTION_TEMPLATE_NOT_AVAILABLE', [409, 'No inspection template is available.']],
   ['INSPECTION_FORM_TYPE_MISMATCH', [409, 'The car does not match the saved inspection template.']],
+  ['INSPECTION_CRITERIA_REQUIRED', [409, 'Use a detailed inspection for the current criteria template.']],
   ['CPO_CODE_GENERATION_FAILED', [500, 'Could not generate a unique CPO certificate code.']],
   ['UPLOAD_NOT_CONFIGURED', [503, 'Image upload is not configured.']],
 ]);
@@ -62,7 +66,7 @@ export function sendInspectionError(res, error, { conflictingCarStatus = false }
 
 const recordFields = [
   'carId', 'inspectorId', 'criteria', 'odo', 'notes', 'evidenceImages', 'result', 'cpoCertificateId', 'status',
-  'source', 'templateKey', 'checklistVersion', 'templateRevision', 'template', 'answers', 'archivedAnswers',
+  'source', 'templateKey', 'checklistVersion', 'templateRevision', 'template', 'results', 'answers', 'archivedAnswers',
   'createdBy', 'updatedBy', 'submittedBy', 'submittedAt', 'approvedBy', 'approvedAt',
   'rejectedReason', 'rejectedByUserId', 'rejectedAt', 'vehicleInfo', 'overviewPhotos', 'groups', 'createdAt', 'updatedAt',
 ];

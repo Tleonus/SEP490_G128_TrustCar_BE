@@ -21,6 +21,8 @@
  * @property {string|null} [source]
  * @property {string} result
  * @property {Partial<Record<string, boolean>>} [criteria] The five fixed result fields.
+ * @property {{key: string, label: string, passed: true}[]} [criteriaGroups] Passed criteria from the certifying revision.
+ * @property {string|null} [inspectorName] Present when the revision query already loaded the inspector.
  * @property {ReportVehicleInfo|null} [confirmedVehicle]
  * @property {number|null} [odo]
  * @property {Date|string|null} [submittedAt]

@@ -109,19 +109,21 @@ const drawVehicleBlock = (pdf, vehicle, y) => {
 };
 
 const drawCriteriaTable = (pdf, groups, startY) => {
-  let y = startY;
-  pdf.text('KET QUA 5 NHOM TIEU CHI', MARGIN, y, { fontSize: 10, bold: true, color: NAVY });
+  let y = ensureSpace(pdf, startY, 50);
+  pdf.text('KET QUA KIEM DINH', MARGIN, y, { fontSize: 10, bold: true, color: NAVY });
   y -= 8;
   pdf.line(MARGIN, y, PAGE_W - MARGIN, y, GOLD, 1);
   y -= 18;
 
   (groups || []).forEach((group, index) => {
-    const rowH = 22;
-    if (index % 2 === 0) pdf.rect(MARGIN, y - 6, CONTENT_W, rowH, LIGHT);
+    const lines = wrapText(group.label || group.key, 10, CONTENT_W - 125);
+    const rowH = 22 + (lines.length - 1) * 12;
+    y = ensureSpace(pdf, y, rowH);
+    if (index % 2 === 0) pdf.rect(MARGIN, y + 16 - rowH, CONTENT_W, rowH, LIGHT);
     pdf.text(String(index + 1).padStart(2, '0'), MARGIN + 10, y, {
       fontSize: 10, bold: true, color: GOLD,
     });
-    pdf.text(group.label || group.key, MARGIN + 36, y, { fontSize: 10, color: INK });
+    lines.forEach((line, i) => pdf.text(line, MARGIN + 36, y - i * 12, { fontSize: 10, color: INK }));
     const verdict = group.passed ? 'DAT' : 'KHONG DAT';
     pdf.text(verdict, PAGE_W - MARGIN - 12, y, {
       fontSize: 10, bold: true, color: group.passed ? GREEN : RED, align: 'right',

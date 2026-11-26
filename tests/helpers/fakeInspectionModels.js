@@ -55,6 +55,7 @@ const clone = (v) => {
 const norm = (v) => (v instanceof mongoose.Types.ObjectId ? v.toString() : v instanceof Date ? v.getTime() : v);
 
 const matches = (doc, filter = {}) => Object.entries(filter).every(([path, cond]) => {
+  if (path === '$or') return cond.some((branch) => matches(doc, branch));
   const actual = norm(getPath(doc, path));
   if (cond && typeof cond === 'object' && !(cond instanceof mongoose.Types.ObjectId) && '$in' in cond) {
     return cond.$in.map(norm).includes(actual);
@@ -62,6 +63,7 @@ const matches = (doc, filter = {}) => Object.entries(filter).every(([path, cond]
   if (cond && typeof cond === 'object' && !(cond instanceof mongoose.Types.ObjectId) && '$ne' in cond) {
     return actual !== norm(cond.$ne);
   }
+  if (cond && typeof cond === 'object' && '$lt' in cond) return actual < norm(cond.$lt);
   return cond === null ? actual == null : actual === norm(cond);
 });
 
@@ -97,13 +99,16 @@ export const setupInspectionHarness = async () => {
   const { default: ActivityLog } = await import('../../src/models/ActivityLog.js');
   const { default: User } = await import('../../src/models/User.js');
   const { signAccessToken } = await import('../../src/utils/authTokens.js');
-  const { FormTemplateHead, FormTemplateRevision, FormTemplateAudit } =
+  const { FormTemplateHead, FormTemplateRevision, FormTemplateAudit, FormTemplateProposal } =
     await import('../../src/infra/inspection/formTemplateModel.js');
+  const { default: CriterionResult } = await import('../../src/infra/inspection/inspectionResultModel.js');
 
   const cars = new Map();
   const records = new Map();
+  const criterionResults = new Map();
   const formHeads = new Map();
   const formRevisions = new Map();
+  const formProposals = new Map();
   const formAudit = [];
   const activity = [];
   const faults = { carSaves: [], cpoCollisions: 0, recordUpdates: 0 };
@@ -117,15 +122,17 @@ export const setupInspectionHarness = async () => {
     copied.forEach((value, key) => map.set(key, value));
   };
   const snapshot = () => ({
-    cars: copyMap(cars), records: copyMap(records),
-    formHeads: copyMap(formHeads), formRevisions: copyMap(formRevisions),
+    cars: copyMap(cars), records: copyMap(records), criterionResults: copyMap(criterionResults),
+    formHeads: copyMap(formHeads), formRevisions: copyMap(formRevisions), formProposals: copyMap(formProposals),
     activity: activity.length, formAudit: formAudit.length,
   });
   const restore = (snap) => {
     restoreMap(cars, snap.cars);
     restoreMap(records, snap.records);
+    restoreMap(criterionResults, snap.criterionResults);
     restoreMap(formHeads, snap.formHeads);
     restoreMap(formRevisions, snap.formRevisions);
+    restoreMap(formProposals, snap.formProposals);
     activity.length = snap.activity;
     formAudit.length = snap.formAudit;
   };
@@ -216,6 +223,24 @@ export const setupInspectionHarness = async () => {
     fakeQuery(InspectionRecord, () => records.get(String(id)) || null));
   jest.spyOn(InspectionRecord, 'findOne').mockImplementation((filter) =>
     fakeQuery(InspectionRecord, () => recordList(filter)[0] || null));
+  jest.spyOn(InspectionRecord, 'updateOne').mockImplementation(async (filter, { $set }) => {
+    const raw = recordList(filter)[0];
+    if (!raw) return { matchedCount: 0 };
+    Object.assign(raw, clone($set));
+    return { matchedCount: 1 };
+  });
+  jest.spyOn(CriterionResult, 'find').mockImplementation((filter) =>
+    fakeQuery(CriterionResult, () => [...criterionResults.values()].filter((row) => matches(row, filter))));
+  jest.spyOn(CriterionResult, 'findOneAndUpdate').mockImplementation((filter, { $set }) =>
+    fakeQuery(CriterionResult, () => {
+      const key = `${filter.inspectionId}:${filter.criterionId}`;
+      const doc = new CriterionResult({ ...criterionResults.get(key), ...filter, ...$set });
+      const issue = doc.validateSync();
+      if (issue) throw issue;
+      const raw = doc.toObject();
+      criterionResults.set(key, raw);
+      return raw;
+    }));
   // KAN-98: returns every matching record, chainable with .sort().lean().
   jest.spyOn(InspectionRecord, 'find').mockImplementation((filter) => {
     const list = recordList(filter);
@@ -294,6 +319,41 @@ export const setupInspectionHarness = async () => {
     fakeQuery(FormTemplateHead, () => formHeads.get(filter.templateKey)));
   jest.spyOn(FormTemplateRevision, 'findOne').mockImplementation((filter) =>
     fakeQuery(FormTemplateRevision, () => formRevisions.get(templateId(filter.templateKey, filter.revision))));
+  jest.spyOn(FormTemplateRevision, 'findById').mockImplementation((id) =>
+    fakeQuery(FormTemplateRevision, () => [...formRevisions.values()].find((row) => String(row._id) === String(id))));
+  jest.spyOn(FormTemplateProposal, 'create').mockImplementation(async ([entry]) => {
+    const doc = new FormTemplateProposal(entry);
+    await doc.validate();
+    formProposals.set(String(doc._id), doc.toObject());
+    return [doc];
+  });
+  const proposalFor = (filter) => [...formProposals.values()].find((row) => matches(row, filter));
+  jest.spyOn(FormTemplateProposal, 'findOne').mockImplementation((filter) =>
+    fakeQuery(FormTemplateProposal, () => proposalFor(filter)));
+  jest.spyOn(FormTemplateProposal, 'findById').mockImplementation((id) =>
+    fakeQuery(FormTemplateProposal, () => formProposals.get(String(id))));
+  jest.spyOn(FormTemplateProposal, 'findOneAndUpdate').mockImplementation((filter, update) =>
+    fakeQuery(FormTemplateProposal, () => {
+      const row = proposalFor(filter);
+      return row ? Object.assign(row, clone(update.$set)) : null;
+    }));
+  jest.spyOn(FormTemplateProposal, 'find').mockImplementation((filter, projection) => {
+    let rows = [...formProposals.values()].filter((row) => matches(row, filter));
+    return {
+      sort({ _id: direction }) {
+        rows.sort((a, b) => direction * String(a._id).localeCompare(String(b._id)));
+        return this;
+      },
+      limit(count) { rows = rows.slice(0, count); return this; },
+      async lean() {
+        return rows.map((row) => {
+          const result = clone(row);
+          if (projection === '-groups') delete result.groups;
+          return result;
+        });
+      },
+    };
+  });
   jest.spyOn(FormTemplateHead, 'updateOne').mockImplementation(async (filter, update) => {
     const head = formHeads.get(filter.templateKey);
     if (!head || !matches(head, filter)) return { matchedCount: 0, modifiedCount: 0 };
@@ -362,13 +422,34 @@ export const setupInspectionHarness = async () => {
     formAudit,
     sessionStats,
 
+    useCriteriaTemplate(revision = 2) {
+      const templateKey = 'GASOLINE';
+      const groups = [
+        ...CPO_CRITERIA.map(({ key, label }) => ({ key, label, required: true })),
+        { key: 'G6_BODYWORK', label: 'Thân vỏ', required: true },
+        ...(revision > 2 ? [{ key: 'G7_EXTRA', label: 'Hạng mục bổ sung', required: true }] : []),
+      ];
+      formHeads.set(templateKey, { templateKey, revision });
+      formRevisions.set(templateId(templateKey, revision), { templateKey, revision, format: 'CRITERIA', groups });
+      return groups;
+    },
+
+    mockCertificateRevisionRead(read) {
+      const headRead = FormTemplateHead.findOne;
+      headRead.mockClear();
+      formHeads.set('GASOLINE', { templateKey: 'GASOLINE', revision: 2 });
+      return { headRead, aggregate: jest.spyOn(FormTemplateRevision, 'aggregate').mockImplementation(read) };
+    },
+
     reset() {
       auth.reset();
       cars.clear();
       records.clear();
+      criterionResults.clear();
       activity.length = 0;
       formHeads.clear();
       formRevisions.clear();
+      formProposals.clear();
       formAudit.length = 0;
       ['GASOLINE', 'ELECTRIC'].forEach(seedTemplate);
       faults.carSaves.length = 0;
