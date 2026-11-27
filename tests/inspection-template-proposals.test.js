@@ -64,10 +64,9 @@ test('a returned proposal can be revised and published; a certified car moves to
   await patch(groups).expect(200);
   await submit().expect(400);
   await patch([extended.at(-1)]).expect(200);
-  await submit().expect(200);
   expect(h.car(carId).cpoCertificateId).toBe('CPO-V1');
   expect((await certificate().expect(200)).body.data.templateRevision).toBe(1);
-  await api().post(record + '/approve').set('Authorization', admin.auth).expect(200);
+  await submit().expect(200);
   expect(h.car(carId).cpoCertificateId).not.toBe('CPO-V1');
   expect(h.car(carId).status).toBe('AVAILABLE');
   expect((await certificate().expect(200)).body.data).toMatchObject({

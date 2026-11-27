@@ -30,9 +30,8 @@ beforeEach(() => h.reset());
 
 test.each(['GASOLINE', 'ELECTRIC'])('publishes only the approved CPO result for a %s form', async (fuelType) => {
   const inspector = await h.loginAs('INSPECTOR');
-  const staff = await h.loginAs('SALES_STAFF');
   const admin = await h.loginAs('ADMIN');
-  h.stored(staff.id).fullName = 'Nguyễn Văn An';
+  h.stored(inspector.id).fullName = 'Nguyễn Văn An';
   const templateUrl = `${inspections}/form-templates/${fuelType}`;
   const { body: { data: initial } } = await api().get(templateUrl).set('Authorization', admin.auth).expect(200);
   const imageQuestion = {
@@ -72,19 +71,16 @@ test.each(['GASOLINE', 'ELECTRIC'])('publishes only the approved CPO result for 
     }).expect(200);
   expect(filled.answers).toContainEqual(imageAnswer);
 
-  const { body: { data: pending } } = await api().post(`${inspectionUrl}/submit`).set('Authorization', staff.auth)
+  await publicReport(carId).expect(404);
+  const { body: { data: issued } } = await api().post(`${inspectionUrl}/submit`).set('Authorization', inspector.auth)
     .send({ baseRevision: form.revision }).expect(200);
-  expect(pending).toMatchObject({ status: 'PENDING_APPROVAL', submittedBy: staff.id, cpoCertificateId: null });
-  const awaitingApproval = await publicReport(carId).expect(404);
-  expect(awaitingApproval.body.code).toBe('INSPECTION_REPORT_NOT_FOUND');
-
-  const { body: { data: issued } } = await api().post(`${inspectionUrl}/approve`).set('Authorization', admin.auth).expect(200);
+  expect(issued.car.status).toBe('AVAILABLE');
   const certificateId = issued.car.cpoCertificateId;
   expect(certificateId).toMatch(/^CPO-/);
   expect(issued.inspectionRecord).toMatchObject({
     status: 'SUBMITTED',
     result: 'PASSED',
-    cpoCertificateId: certificateId,
+    cpoCertificateId: certificateId, submittedBy: inspector.id,
     checklistSnapshot: { templateKey: fuelType, revision: form.revision },
   });
 
@@ -94,7 +90,7 @@ test.each(['GASOLINE', 'ELECTRIC'])('publishes only the approved CPO result for 
     message: 'Inspection report retrieved successfully.',
     data: {
       certificateId,
-      issuedAt: pending.submittedAt,
+      issuedAt: issued.inspectionRecord.submittedAt,
       level: 'FULL',
       inspector: 'N.V.A.',
       vehicle: confirmed,

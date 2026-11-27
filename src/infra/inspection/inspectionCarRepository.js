@@ -2,10 +2,10 @@ import mongoose from 'mongoose';
 import { CarStatus, FuelType } from '../../constants/appConstants.js';
 import Car from '../../models/Car.js';
 
-const carFields = 'vehicleCode status fuelType updatedAt make model variant year mileage specifications.color cpoCertificateId historyVerifyHash isActive';
+const carFields = 'vehicleCode status fuelType updatedAt make model variant year mileage specifications.color cpoCertificateId historyVerifyHash isActive listedDate';
 const carStatuses = Object.values(CarStatus);
 const fuelTypes = Object.values(FuelType);
-const mutableFields = ['status', 'mileage', 'cpoCertificateId', 'historyVerifyHash'];
+const mutableFields = ['status', 'mileage', 'cpoCertificateId', 'historyVerifyHash', 'listedDate'];
 
 function toCar(document) {
   if (!document) return null;

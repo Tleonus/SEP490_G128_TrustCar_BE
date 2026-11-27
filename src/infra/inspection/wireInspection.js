@@ -17,12 +17,14 @@ import { createInspectionMediaAdapter } from './inspectionMediaAdapter.js';
 import { createInspectionRecordRepository } from './inspectionRecordRepository.js';
 import { createInspectionResultRepository } from './inspectionResultRepository.js';
 import { createInspectionUnitOfWork } from './inspectionUnitOfWork.js';
+import { createInspectionListingRepository } from './inspectionListingRepository.js';
 
 /** Compose the ports for the inspection module. The application's router owns mounting. */
 export function wireInspection({
   makeTemplates = createFormTemplateRepository,
   makeRecords = createInspectionRecordRepository,
   makeCars = createInspectionCarRepository,
+  listings = createInspectionListingRepository(),
   bindAudit,
   runTransaction,
   media = createInspectionMediaAdapter(),
@@ -47,9 +49,9 @@ export function wireInspection({
   return {
     ...createFormTemplateUseCases({ templates, unitOfWork }),
     ...createTemplateProposalUseCases({ templates, unitOfWork }),
-    ...createInspectionDraftUseCases({ templates, records, results, cars, unitOfWork, isInspectionImageUrl }),
+    ...createInspectionDraftUseCases({ templates, records, results, cars, listings, unitOfWork, isInspectionImageUrl }),
     ...createInspectionUploadSigning({ records, cars, media }),
-    submitInspection: createSubmitInspection({ unitOfWork, isInspectionImageUrl }),
+    submitInspection: createSubmitInspection({ ...verdictDependencies, isInspectionImageUrl, listRecordImages }),
     rejectInspection: createRejectInspection({ unitOfWork }),
     approveInspection: createApproveInspection({ ...verdictDependencies, listRecordImages }),
     inspectCar: createQuickInspection({

@@ -77,9 +77,10 @@ test('returns 404 for an unknown record and 422 for an invalid ID', async () => 
   await reject('not-an-id', { reason: REASON }).expect(422);
 });
 
-test('sales staff can read the rejected draft and its reason', async () => {
+test('inspector can read the returned draft and its reason', async () => {
   const { recordId } = seedPending();
   await reject(recordId, { reason: REASON }).expect(200);
-  const read = await api().get(`${BASE}/${recordId}`).set('Authorization', sale.auth).expect(200);
+  const inspector = await h.loginAs('INSPECTOR');
+  const read = await api().get(`${BASE}/${recordId}`).set('Authorization', inspector.auth).expect(200);
   expect(read.body.data).toMatchObject({ status: 'DRAFT', rejectedReason: REASON });
 });
