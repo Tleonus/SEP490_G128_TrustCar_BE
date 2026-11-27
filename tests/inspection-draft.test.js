@@ -18,10 +18,10 @@ const photo = (inspectionId, name = 'p') =>
 let staff;
 beforeEach(async () => {
   h.reset();
-  staff = await h.loginAs('SALES_STAFF');
+  staff = await h.loginAs('INSPECTOR');
 });
 
-const createDraft = async (carId, who = staff) =>
+const createDraft = (carId, who = staff) =>
   api().post(`${BASE}/cars/${carId}/draft`).set('Authorization', who.auth);
 
 describe('POST /inspections/cars/:id/draft', () => {
@@ -32,14 +32,15 @@ describe('POST /inspections/cars/:id/draft', () => {
 
     expect(res.status).toBe(201);
     const record = res.body.data;
-    expect(record).toMatchObject({ status: 'DRAFT', source: 'STAFF', checklistVersion: '1.0' });
+    expect(record).toMatchObject({ status: 'DRAFT', source: 'STAFF', checklistVersion: '1', templateKey: 'GASOLINE' });
     const car = h.car(carId); // Car normalises some fields (e.g. make upper-case)
     expect(record.vehicleInfo.original).toEqual({
       make: car.make, model: car.model, variant: '1.5G', color: 'Trắng', year: 2020, mileage: 42000,
     });
     expect(record.vehicleInfo.confirmed).toEqual(record.vehicleInfo.original);
     expect(record.groups).toHaveLength(5);
-    expect(record.groups.flatMap((g) => g.items).every((i) => i.result === null)).toBe(true);
+    expect(record.answers).toEqual([]);
+    expect(record.template.groups.every((group) => group.questions.length)).toBe(true);
     expect(h.car(carId).status).toBe('UNDER_INSPECTION');
     expect(h.activity.map((a) => a.eventType)).toEqual(['INSPECTION_DRAFT_CREATED', 'CAR_STATUS_CHANGED']);
   });
@@ -99,19 +100,25 @@ describe('PATCH /inspections/:id', () => {
     carId = h.createCar();
     id = (await createDraft(carId)).body.data._id;
   });
-  const patch = (body, who = staff) => api().patch(`${BASE}/${id}`).set('Authorization', who.auth).send(body);
+  const patch = (body, who = staff) => api().patch(`${BASE}/${id}`).set('Authorization', who.auth)
+    .send({ baseRevision: 1, ...body });
 
   test('replaces only the group sent; other sections keep their values', async () => {
-    await patch({ overviewPhotos: { FRONT: photo(id, 'front') } });
+    await patch({
+      overviewPhotos: { FRONT: photo(id, 'front') },
+      groups: [{ groupKey: 'G2_FLOOD', note: 'Saved flood note' }],
+    }).expect(200);
 
     const res = await patch({
-      groups: [{ groupKey: 'G1_BODY_FRAME', items: [{ itemKey: 'PILLARS', result: 'PASS' }], photos: [photo(id)] }],
+      answers: [{ questionId: 'GASOLINE-G1_BODY_FRAME', value: 'pass' }],
+      groups: [{ groupKey: 'G1_BODY_FRAME', photos: [photo(id)] }],
     });
 
     expect(res.status).toBe(200);
     const g1 = res.body.data.groups.find((g) => g.groupKey === 'G1_BODY_FRAME');
-    expect(g1.items).toEqual([{ itemKey: 'PILLARS', result: 'PASS', note: '', photos: [] }]);
-    expect(res.body.data.groups.find((g) => g.groupKey === 'G2_FLOOD').items).toHaveLength(5);
+    expect(g1.photos).toEqual([photo(id)]);
+    expect(res.body.data.answers).toEqual([{ questionId: 'GASOLINE-G1_BODY_FRAME', value: 'pass' }]);
+    expect(res.body.data.groups.find((g) => g.groupKey === 'G2_FLOOD').note).toBe('Saved flood note');
     expect(res.body.data.overviewPhotos.FRONT).toBe(photo(id, 'front'));
     expect(String(h.record(id).updatedBy)).toBe(staff.id);
   });
@@ -125,7 +132,7 @@ describe('PATCH /inspections/:id', () => {
 
   test.each([
     ['minor defect in the flood group', { groups: [{ groupKey: 'G2_FLOOD', minorDefects: [{ type: 'DENT_MINOR' }] }] }],
-    ['unknown item key', { groups: [{ groupKey: 'G1_BODY_FRAME', items: [{ itemKey: 'WINGS' }] }] }],
+    ['unknown question ID', { answers: [{ questionId: 'UNKNOWN', value: 'pass' }] }],
     ['unknown group key', { groups: [{ groupKey: 'G9' }] }],
     ['note over 1000 characters', { groups: [{ groupKey: 'G1_BODY_FRAME', note: 'x'.repeat(1001) }] }],
     ['year out of range', { vehicleInfo: { confirmed: { year: 1970 } } }],
@@ -167,8 +174,8 @@ describe('PATCH /inspections/:id', () => {
     expect(h.record(id).vehicleInfo.original.make).toBe(h.car(carId).make);
   });
 
-  test('a submitted record is locked → 409 for PATCH and upload signature', async () => {
-    h.records.get(id).status = 'SUBMITTED';
+  test.each(['PENDING_APPROVAL', 'SUBMITTED'])('%s is locked for PATCH and upload signature', async (status) => {
+    h.records.get(id).status = status;
 
     expect((await patch({ vehicleInfo: { confirmed: { make: 'X' } } })).body.code).toBe('INSPECTION_LOCKED');
     const sig = await api().post(`${BASE}/${id}/upload-signature`).set('Authorization', staff.auth);
@@ -185,7 +192,7 @@ describe('GET /inspections/:id and upload signature', () => {
     const draft = await api().get(`${BASE}/${id}`).set('Authorization', staff.auth);
     const legacy = await api().get(`${BASE}/${legacyId}`).set('Authorization', staff.auth);
     const patchLegacy = await api().patch(`${BASE}/${legacyId}`).set('Authorization', staff.auth)
-      .send({ vehicleInfo: { confirmed: { make: 'X' } } });
+      .send({ baseRevision: 1, vehicleInfo: { confirmed: { make: 'X' } } });
 
     expect(draft.body.data.status).toBe('DRAFT');
     expect(legacy.body.data).toMatchObject({ status: 'SUBMITTED', source: 'LEGACY' });
@@ -228,13 +235,17 @@ describe('authorization', () => {
   });
 
   test('ADMIN can create drafts too', async () => {
-    expect((await createDraft(h.createCar(), await h.loginAs('ADMIN'))).status).toBe(201);
+    expect((await createDraft(h.createCar(), await h.loginAs('ADMIN', ['ADMIN', 'INSPECTOR']))).status).toBe(201);
   });
 
-  // KAN-54: SALES_STAFF is now an inspection writer (INSPECTOR merged into SALES_STAFF)
-  test('SALES_STAFF can create, edit, sign and submit (KAN-54)', async () => {
+  test('SALES_STAFF can read drafts and receives 403 for create, edit and sign', async () => {
     const sales = await h.loginAs('SALES_STAFF');
-    expect((await createDraft(h.createCar(), sales)).status).toBe(201);
+    const carId = h.createCar();
+    const id = (await createDraft(carId).expect(201)).body.data._id;
+    await createDraft(h.createCar(), sales).expect(403);
+    await api().get(`${BASE}/${id}`).set('Authorization', sales.auth).expect(403);
+    await api().patch(`${BASE}/${id}`).set('Authorization', sales.auth).send({ baseRevision: 1 }).expect(403);
+    await api().post(`${BASE}/${id}/upload-signature`).set('Authorization', sales.auth).expect(403);
   });
 
   test('CUSTOMER cannot create, edit, sign or submit', async () => {

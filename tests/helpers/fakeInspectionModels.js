@@ -1,9 +1,8 @@
 /**
  * @file fakeInspectionModels.js
  * @description Test harness for inspection integration tests. Runs the REAL
- * Express app (routes → Joi → controllers → services → models) on top of the
- * auth harness, replacing only persistence for Car, InspectionRecord and
- * ActivityLog with in-memory Maps.
+ * Express app and inspection adapters on top of the auth harness, with
+ * in-memory persistence for cars, inspections, forms, and audit.
  *
  * Emulated database behaviour (keep in sync with what the inspection code uses):
  * - Transactions: `mongoose.startSession()` returns a fake session. Sessions are
@@ -15,7 +14,7 @@
  *   chainable .session() .select() .populate() .lean(); Model.create([docs], opts);
  *   doc.save(opts); ActivityLog.create([docs], opts).
  * - Fault injection: `failNextCarSaves(n, error)` makes the next n Car saves throw;
- *   `forceCpoCollisions(n)` makes the next n CPO-code checks (`Car.exists`) report a clash.
+ *   `forceCpoCollisions(n)` makes the next n certificate writes report a clash.
  *
  * Usage (top of a test file):
  *   import { setupInspectionHarness } from './helpers/fakeInspectionModels.js';
@@ -26,6 +25,7 @@
 import { jest } from '@jest/globals';
 import mongoose from 'mongoose';
 import { setupAuthHarness } from './fakeAuthModels.js';
+import { CPO_CRITERIA, InspectionResult } from '../../src/domain/inspection/criteria.js';
 
 process.env.CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || 'trustcar-test';
 process.env.CLOUDINARY_API_KEY    = process.env.CLOUDINARY_API_KEY || 'test-key';
@@ -55,6 +55,7 @@ const clone = (v) => {
 const norm = (v) => (v instanceof mongoose.Types.ObjectId ? v.toString() : v instanceof Date ? v.getTime() : v);
 
 const matches = (doc, filter = {}) => Object.entries(filter).every(([path, cond]) => {
+  if (path === '$or') return cond.some((branch) => matches(doc, branch));
   const actual = norm(getPath(doc, path));
   if (cond && typeof cond === 'object' && !(cond instanceof mongoose.Types.ObjectId) && '$in' in cond) {
     return cond.$in.map(norm).includes(actual);
@@ -62,7 +63,8 @@ const matches = (doc, filter = {}) => Object.entries(filter).every(([path, cond]
   if (cond && typeof cond === 'object' && !(cond instanceof mongoose.Types.ObjectId) && '$ne' in cond) {
     return actual !== norm(cond.$ne);
   }
-  return actual === norm(cond);
+  if (cond && typeof cond === 'object' && '$lt' in cond) return actual < norm(cond.$lt);
+  return cond === null ? actual == null : actual === norm(cond);
 });
 
 const duplicateKeyError = (index, keyValue) => Object.assign(
@@ -97,24 +99,42 @@ export const setupInspectionHarness = async () => {
   const { default: ActivityLog } = await import('../../src/models/ActivityLog.js');
   const { default: User } = await import('../../src/models/User.js');
   const { signAccessToken } = await import('../../src/utils/authTokens.js');
+  const { FormTemplateHead, FormTemplateRevision, FormTemplateAudit, FormTemplateProposal } =
+    await import('../../src/infra/inspection/formTemplateModel.js');
+  const { default: CriterionResult } = await import('../../src/infra/inspection/inspectionResultModel.js');
 
   const cars = new Map();
   const records = new Map();
+  const criterionResults = new Map();
+  const formHeads = new Map();
+  const formRevisions = new Map();
+  const formProposals = new Map();
+  const formAudit = [];
   const activity = [];
-  const faults = { carSaves: [], cpoCollisions: 0 };
+  const faults = { carSaves: [], cpoCollisions: 0, recordUpdates: 0 };
   const reads = { carFindOne: 0 };
 
   // ── Transactions: serialised fake sessions with snapshot/rollback ────────
   let lock = Promise.resolve();
+  const copyMap = (map) => new Map([...map].map(([k, v]) => [k, clone(v)]));
+  const restoreMap = (map, copied) => {
+    map.clear();
+    copied.forEach((value, key) => map.set(key, value));
+  };
   const snapshot = () => ({
-    cars: new Map([...cars].map(([k, v]) => [k, clone(v)])),
-    records: new Map([...records].map(([k, v]) => [k, clone(v)])),
-    activity: activity.length,
+    cars: copyMap(cars), records: copyMap(records), criterionResults: copyMap(criterionResults),
+    formHeads: copyMap(formHeads), formRevisions: copyMap(formRevisions), formProposals: copyMap(formProposals),
+    activity: activity.length, formAudit: formAudit.length,
   });
   const restore = (snap) => {
-    cars.clear(); snap.cars.forEach((v, k) => cars.set(k, v));
-    records.clear(); snap.records.forEach((v, k) => records.set(k, v));
+    restoreMap(cars, snap.cars);
+    restoreMap(records, snap.records);
+    restoreMap(criterionResults, snap.criterionResults);
+    restoreMap(formHeads, snap.formHeads);
+    restoreMap(formRevisions, snap.formRevisions);
+    restoreMap(formProposals, snap.formProposals);
     activity.length = snap.activity;
+    formAudit.length = snap.formAudit;
   };
   const sessionStats = { started: 0, committed: 0, aborted: 0 };
 
@@ -142,6 +162,21 @@ export const setupInspectionHarness = async () => {
   jest.spyOn(Car, 'findById').mockImplementation((id) => fakeQuery(Car, () => cars.get(String(id)) || null));
   jest.spyOn(Car, 'findOne').mockImplementation((filter) =>
     fakeQuery(Car, () => { reads.carFindOne += 1; return [...cars.values()].find((c) => matches(c, filter)) || null; }));
+  jest.spyOn(Car, 'findOneAndUpdate').mockImplementation((filter, update, options = {}) => fakeQuery(Car, () => {
+    const raw = [...cars.values()].find((car) => matches(car, filter));
+    if (!raw) return null;
+    const fields = update.$set;
+    if (Object.hasOwn(fields, 'status') && faults.carSaves.length) throw faults.carSaves.shift();
+    if (fields.cpoCertificateId && faults.cpoCollisions > 0) {
+      faults.cpoCollisions -= 1;
+      throw duplicateKeyError('cpoCertificateId_1', { cpoCertificateId: fields.cpoCertificateId });
+    }
+    const next = clone(raw);
+    Object.entries(fields).forEach(([path, value]) => setPath(next, path, clone(value)));
+    assertCarUnique(next);
+    cars.set(String(next._id), next);
+    return options.new ? next : raw;
+  }));
   jest.spyOn(Car, 'exists').mockImplementation((filter) => {
     const forced = filter.cpoCertificateId && faults.cpoCollisions > 0;
     if (forced) faults.cpoCollisions -= 1;
@@ -188,6 +223,24 @@ export const setupInspectionHarness = async () => {
     fakeQuery(InspectionRecord, () => records.get(String(id)) || null));
   jest.spyOn(InspectionRecord, 'findOne').mockImplementation((filter) =>
     fakeQuery(InspectionRecord, () => recordList(filter)[0] || null));
+  jest.spyOn(InspectionRecord, 'updateOne').mockImplementation(async (filter, { $set }) => {
+    const raw = recordList(filter)[0];
+    if (!raw) return { matchedCount: 0 };
+    Object.assign(raw, clone($set));
+    return { matchedCount: 1 };
+  });
+  jest.spyOn(CriterionResult, 'find').mockImplementation((filter) =>
+    fakeQuery(CriterionResult, () => [...criterionResults.values()].filter((row) => matches(row, filter))));
+  jest.spyOn(CriterionResult, 'findOneAndUpdate').mockImplementation((filter, { $set }) =>
+    fakeQuery(CriterionResult, () => {
+      const key = `${filter.inspectionId}:${filter.criterionId}`;
+      const doc = new CriterionResult({ ...criterionResults.get(key), ...filter, ...$set });
+      const issue = doc.validateSync();
+      if (issue) throw issue;
+      const raw = doc.toObject();
+      criterionResults.set(key, raw);
+      return raw;
+    }));
   // KAN-98: returns every matching record, chainable with .sort().lean().
   jest.spyOn(InspectionRecord, 'find').mockImplementation((filter) => {
     const list = recordList(filter);
@@ -223,6 +276,10 @@ export const setupInspectionHarness = async () => {
   // Synchronous match + write: atomic with respect to other requests (MongoDB
   // single-document atomicity), which is what the "only one submit wins" rule relies on.
   jest.spyOn(InspectionRecord, 'findOneAndUpdate').mockImplementation((filter, update, options = {}) => {
+    if (faults.recordUpdates > 0) {
+      faults.recordUpdates -= 1;
+      return fakeQuery(InspectionRecord, () => { throw new Error('Simulated inspection update failure'); });
+    }
     const raw = recordList(filter)[0];
     let result = null;
     if (raw) {
@@ -237,6 +294,85 @@ export const setupInspectionHarness = async () => {
       result = options.new ? raw : before;
     }
     return fakeQuery(InspectionRecord, () => result);
+  });
+
+  // Both templates are fixtures. These models back the actual repository used by the app.
+  const templateId = (key, rev) => `${key}:${rev}`;
+  function seedTemplate(key) {
+    const groups = CPO_CRITERIA.map((criterion) => ({
+      ...criterion,
+      questions: [{
+        id: `${key}-${criterion.key}`, label: 'Kết quả', type: 'SINGLE_CHOICE', required: true,
+        config: { options: [
+          { id: 'pass', label: 'Đạt', result: InspectionResult.PASS },
+          { id: 'fail', label: 'Không đạt', result: InspectionResult.FAIL },
+          { id: 'unchecked', label: 'Chưa kiểm tra', result: InspectionResult.NOT_CHECKABLE },
+        ] },
+      }],
+    }));
+    formHeads.set(key, { templateKey: key, revision: 1 });
+    formRevisions.set(templateId(key, 1), {
+      templateKey: key, revision: 1, groups, retiredIds: { questions: [], options: [] },
+    });
+  }
+  jest.spyOn(FormTemplateHead, 'findOne').mockImplementation((filter) =>
+    fakeQuery(FormTemplateHead, () => formHeads.get(filter.templateKey)));
+  jest.spyOn(FormTemplateRevision, 'findOne').mockImplementation((filter) =>
+    fakeQuery(FormTemplateRevision, () => formRevisions.get(templateId(filter.templateKey, filter.revision))));
+  jest.spyOn(FormTemplateRevision, 'findById').mockImplementation((id) =>
+    fakeQuery(FormTemplateRevision, () => [...formRevisions.values()].find((row) => String(row._id) === String(id))));
+  jest.spyOn(FormTemplateProposal, 'create').mockImplementation(async ([entry]) => {
+    const doc = new FormTemplateProposal(entry);
+    await doc.validate();
+    formProposals.set(String(doc._id), doc.toObject());
+    return [doc];
+  });
+  const proposalFor = (filter) => [...formProposals.values()].find((row) => matches(row, filter));
+  jest.spyOn(FormTemplateProposal, 'findOne').mockImplementation((filter) =>
+    fakeQuery(FormTemplateProposal, () => proposalFor(filter)));
+  jest.spyOn(FormTemplateProposal, 'findById').mockImplementation((id) =>
+    fakeQuery(FormTemplateProposal, () => formProposals.get(String(id))));
+  jest.spyOn(FormTemplateProposal, 'findOneAndUpdate').mockImplementation((filter, update) =>
+    fakeQuery(FormTemplateProposal, () => {
+      const row = proposalFor(filter);
+      return row ? Object.assign(row, clone(update.$set)) : null;
+    }));
+  jest.spyOn(FormTemplateProposal, 'find').mockImplementation((filter, projection) => {
+    let rows = [...formProposals.values()].filter((row) => matches(row, filter));
+    return {
+      sort({ _id: direction }) {
+        rows.sort((a, b) => direction * String(a._id).localeCompare(String(b._id)));
+        return this;
+      },
+      limit(count) { rows = rows.slice(0, count); return this; },
+      async lean() {
+        return rows.map((row) => {
+          const result = clone(row);
+          if (projection === '-groups') delete result.groups;
+          return result;
+        });
+      },
+    };
+  });
+  jest.spyOn(FormTemplateHead, 'updateOne').mockImplementation(async (filter, update) => {
+    const head = formHeads.get(filter.templateKey);
+    if (!head || !matches(head, filter)) return { matchedCount: 0, modifiedCount: 0 };
+    Object.assign(head, update.$set);
+    return { matchedCount: 1, modifiedCount: 1 };
+  });
+  jest.spyOn(FormTemplateRevision, 'create').mockImplementation(async (entries) => {
+    const docs = entries.map((entry) => new FormTemplateRevision(entry));
+    for (const doc of docs) {
+      await doc.validate();
+      const key = templateId(doc.templateKey, doc.revision);
+      if (formRevisions.has(key)) throw duplicateKeyError('template_revision', { templateKey: doc.templateKey, revision: doc.revision });
+      formRevisions.set(key, doc.toObject());
+    }
+    return docs;
+  });
+  jest.spyOn(FormTemplateAudit, 'create').mockImplementation(async (entries) => {
+    formAudit.push(...entries.map(clone));
+    return entries;
   });
 
   // ── ActivityLog (transactional create + read for history report) ──────────
@@ -283,15 +419,42 @@ export const setupInspectionHarness = async () => {
     cars,
     records,
     activity,
+    formAudit,
     sessionStats,
+
+    useCriteriaTemplate(revision = 2) {
+      const templateKey = 'GASOLINE';
+      const groups = [
+        ...CPO_CRITERIA.map(({ key, label }) => ({ key, label, required: true })),
+        { key: 'G6_BODYWORK', label: 'Thân vỏ', required: true },
+        ...(revision > 2 ? [{ key: 'G7_EXTRA', label: 'Hạng mục bổ sung', required: true }] : []),
+      ];
+      formHeads.set(templateKey, { templateKey, revision });
+      formRevisions.set(templateId(templateKey, revision), { templateKey, revision, format: 'CRITERIA', groups });
+      return groups;
+    },
+
+    mockCertificateRevisionRead(read) {
+      const headRead = FormTemplateHead.findOne;
+      headRead.mockClear();
+      formHeads.set('GASOLINE', { templateKey: 'GASOLINE', revision: 2 });
+      return { headRead, aggregate: jest.spyOn(FormTemplateRevision, 'aggregate').mockImplementation(read) };
+    },
 
     reset() {
       auth.reset();
       cars.clear();
       records.clear();
+      criterionResults.clear();
       activity.length = 0;
+      formHeads.clear();
+      formRevisions.clear();
+      formProposals.clear();
+      formAudit.length = 0;
+      ['GASOLINE', 'ELECTRIC'].forEach(seedTemplate);
       faults.carSaves.length = 0;
       faults.cpoCollisions = 0;
+      faults.recordUpdates = 0;
       reads.carFindOne = 0;
       Object.keys(sessionStats).forEach((k) => { sessionStats[k] = 0; });
     },
@@ -300,7 +463,8 @@ export const setupInspectionHarness = async () => {
     createCar(overrides = {}) {
       const doc = new Car({
         make: 'Toyota', model: 'Vios', variant: '1.5G', year: 2020, mileage: 50000,
-        specifications: { color: 'Trắng' }, status: 'INCOMING', ...overrides,
+        specifications: { color: 'Trắng' }, status: 'INCOMING', fuelType: 'GASOLINE',
+        updatedAt: new Date(), ...overrides,
       });
       const raw = doc.toObject({ depopulate: true, virtuals: false });
       cars.set(String(doc._id), raw);
@@ -322,6 +486,27 @@ export const setupInspectionHarness = async () => {
       return { id, token, auth: `Bearer ${token}` };
     },
 
+    /** Simulates populated Role documents instead of the fallback ObjectIds. */
+    setPopulatedRoles(id, permissionsByRole) {
+      auth.stored(id).roles = Object.entries(permissionsByRole).map(([name, permissions]) => ({
+        _id: auth.roleIds[name], name, permissions: [...permissions],
+      }));
+    },
+
+    fillDraft(id, confirmed = {}) {
+      const record = records.get(String(id));
+      const definition = formRevisions.get(templateId(record.templateKey, Number(record.checklistVersion)));
+      const photo = (name) => `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload/v1/trustcar/inspections/${id}/${name}.jpg`;
+      record.vehicleInfo.confirmed = { ...record.vehicleInfo.original, ...confirmed };
+      record.overviewPhotos = Object.fromEntries(['FRONT', 'REAR', 'LEFT', 'RIGHT'].map((position) => [position, photo(position)]));
+      record.answers = definition.groups.map(({ questions }) => ({ questionId: questions[0].id, value: 'pass' }));
+      record.groups = definition.groups.map(({ key }) => ({
+        groupKey: key, note: key === 'G1_BODY_FRAME' ? 'Thân vỏ tốt' : '', photos: [photo(key)],
+        odometerPhoto: key === 'G4_ODOMETER' ? photo('odometer') : null, items: [], minorDefects: [], passed: null,
+      }));
+      return record;
+    },
+
     /** Makes the next `count` Car saves throw `error` (default: a generic write failure). */
     failNextCarSaves(count = 1, error = null) {
       for (let i = 0; i < count; i += 1) faults.carSaves.push(error || new Error('Simulated write failure'));
@@ -329,6 +514,7 @@ export const setupInspectionHarness = async () => {
 
     /** Makes the next `count` CPO-code uniqueness checks report the code as taken. */
     forceCpoCollisions(count) { faults.cpoCollisions = count; },
+    failNextInspectionUpdate() { faults.recordUpdates += 1; },
 
     duplicateKeyError,
     reads,

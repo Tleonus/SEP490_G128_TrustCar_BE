@@ -7,7 +7,8 @@
  * cpoCertificateId) is SUBMITTED and PASSED. Every other case answers the same
  * 404, so callers cannot tell "unknown car" from "no report".
  *
- * Reads at most 3 documents: the car, the certifying record, the inspector's name.
+ * Uses at most three queries. The criteria path joins the saved revision,
+ * passing results and inspector name in the last query.
  */
 
 import Car from '../models/Car.js';
@@ -15,6 +16,7 @@ import InspectionRecord from '../models/InspectionRecord.js';
 import User from '../models/User.js';
 import { CarStatus, InspectionStatus } from '../constants/appConstants.js';
 import { AppError } from '../utils/apiResponse.js';
+import { readCertificateCriteria } from '../infra/inspection-report/certificateCriteriaReader.js';
 import { buildPublicReport } from './inspectionReportMapper.js';
 
 const REPORTABLE_CAR_STATUSES = [CarStatus.APPROVED_CPO, CarStatus.AVAILABLE];
@@ -43,10 +45,15 @@ export const getPublicInspectionReport = async (idOrCode) => {
   const record = await InspectionRecord.findOne({
     carId: car._id,
     cpoCertificateId: car.cpoCertificateId,
-  }).lean();
+    result: 'PASSED',
+    $or: [{ status: InspectionStatus.SUBMITTED }, { status: null }],
+  }).sort({ createdAt: -1, _id: -1 }).lean();
   // Records without a status predate the digital checklist and were always final.
   const submitted = record && (record.status || InspectionStatus.SUBMITTED) === InspectionStatus.SUBMITTED;
   if (!submitted || record.result !== 'PASSED') throw reportNotFound();
+
+  const certificateCriteria = await readCertificateCriteria(record, { includeInspector: true });
+  if (certificateCriteria) return buildPublicReport({ car, record, ...certificateCriteria });
 
   const inspectorId = record.submittedBy || record.inspectorId;
   const inspector = inspectorId ? await User.findById(inspectorId).select('fullName').lean() : null;

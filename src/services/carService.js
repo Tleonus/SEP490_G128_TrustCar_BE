@@ -269,7 +269,14 @@ export const updateCar = async ({ carId, updates, userId, ipAddress }) => {
     'internalNotes', 'carModelRef', 'marketPrice',
   ];
   allowedFields.forEach((field) => {
-    if (updates[field] !== undefined) car[field] = updates[field];
+    if (updates[field] === undefined) return;
+    if (field === 'specifications' && updates.specifications && typeof updates.specifications === 'object') {
+      // Gộp thay vì ghi đè: cập nhật một phần (vd. chỉ màu / số chỗ) không được xoá các thông số đã lưu khác.
+      const current = car.specifications?.toObject ? car.specifications.toObject() : (car.specifications || {});
+      car.specifications = { ...current, ...updates.specifications };
+      return;
+    }
+    car[field] = updates[field];
   });
 
   car.updatedBy = userId;

@@ -24,6 +24,8 @@ export const ItemResult = Object.freeze({
 /** Scope line shown on the public inspection report (what was NOT verified). */
 export const PUBLIC_REPORT_SCOPE_NOTE = 'Báo cáo dựa trên kiểm tra ngoại quan và vận hành tại xưởng TrustCar theo 5 nhóm tiêu chí; '
   + 'chưa đối chiếu số khung/số máy (VIN) với cơ quan đăng kiểm.';
+export const CRITERIA_REPORT_SCOPE_NOTE = 'Báo cáo dựa trên kết quả kiểm định tại xưởng TrustCar theo mẫu được dùng khi cấp chứng nhận. '
+  + 'Chưa đối chiếu số khung/số máy (VIN) với cơ quan đăng kiểm.';
 
 /** Size limits for user-supplied checklist content. */
 export const INSPECTION_LIMITS = Object.freeze({

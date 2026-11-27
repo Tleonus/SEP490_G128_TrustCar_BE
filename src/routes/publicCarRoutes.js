@@ -10,6 +10,8 @@ import { Router } from 'express';
 import Joi from 'joi';
 import * as publicCarController from '../controllers/publicCarController.js';
 import * as carCompareController from '../controllers/carCompareController.js';
+import { wireInspectionReport } from '../infra/inspection-report/wireInspectionReport.js';
+import { createInspectionReportHandler } from '../interface/inspection-report/inspectionReportHandler.js';
 import { validate, validateQuery } from '../middlewares/validateMiddleware.js';
 import { compareQuerySchema, compareAiInsightBodySchema } from './carCompareSchemas.js';
 import { BodyType, FuelType, Transmission, DriveType, PAGINATION } from '../constants/appConstants.js';
@@ -126,7 +128,7 @@ router.get('/:id', publicCarController.getCarDetail);
  * @desc    Public CPO inspection report (APPROVED_CPO or AVAILABLE cars with a certificate).
  *          Any other case → 404 INSPECTION_REPORT_NOT_FOUND.
  */
-router.get('/:id/inspection-report', publicCarController.getInspectionReport);
+router.get('/:id/inspection-report', createInspectionReportHandler({ getInspectionReport: wireInspectionReport() }));
 
 /**
  * @route   GET /api/v1/public/cars/:id/cpo-certificate.pdf
