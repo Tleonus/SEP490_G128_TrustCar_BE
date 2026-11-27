@@ -142,15 +142,16 @@ import depositRoutes        from './depositRoutes.js';
 router.use('/deposits', depositRoutes);
 ```
 
-### 9.2 `src/server.js` (bắt buộc, để xe tự quay lại AVAILABLE)
+### 9.2 `src/server.js` (bắt buộc, để xe tự quay lại AVAILABLE) — ✅ đã nối
 ```js
-// cạnh import testDriveJob
+// trong khối import
 import { startDepositExpiryJob, stopDepositExpiryJob } from './jobs/depositExpiryJob.js';
-// ngay sau  startTestDriveJob();
+// sau bước seed admin, trước app.listen()
 startDepositExpiryJob();
-// trong shutdown(), ngay sau  stopTestDriveJob();
+// trong shutdown(), trước server.close()
 stopDepositExpiryJob();
 ```
+Lưu ý: repo không có `testDriveJob`/`startTestDriveJob` như bản nháp ban đầu giả định; job đặt cọc hiện là job nền duy nhất.
 
 ### 9.3 `src/models/index.js` (khuyến nghị)
 ```js
