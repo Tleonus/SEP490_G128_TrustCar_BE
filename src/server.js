@@ -5,8 +5,9 @@
  *   2. Connect to MongoDB (singleton)
  *   3. Configure Cloudinary (singleton)
  *   4. Seed default Roles and Admin account
- *   5. Start the HTTP server
- *   6. Graceful shutdown on SIGTERM / SIGINT
+ *   5. Start background jobs (deposit holds expiry)
+ *   6. Start the HTTP server
+ *   7. Graceful shutdown on SIGTERM / SIGINT
  *
  * This file is deliberately thin – all Express wiring lives in app.js.
  */
@@ -18,6 +19,7 @@ import { connectDB, disconnectDB } from './config/db.js';
 import { configureCloudinary } from './config/cloudinary.js';
 import Role from './models/Role.js';
 import { seedAdminAccount } from './seeders/adminSeeder.js';
+import { startDepositExpiryJob, stopDepositExpiryJob } from './jobs/depositExpiryJob.js';
 import { seedShowroomServices } from './seeders/showroomServiceSeeder.js';
 import { startLeadScoringJob, stopLeadScoringJob } from './jobs/leadScoringJob.js';
 import './models/index.js'; // Register the complete ERD model set before startup.
@@ -47,6 +49,11 @@ const startServer = async () => {
     // 4. Seed initial admin account if no admin exists
     await seedAdminAccount();
 
+    // 5. Start background jobs – deposit holds must expire (and the car return
+    //    to AVAILABLE) even when nobody calls the API, so this cannot live in app.js.
+    startDepositExpiryJob();
+
+    // 6. Start HTTP server
     // 5. Seed default showroom service packages (KAN-96)
     await seedShowroomServices();
 
@@ -68,6 +75,8 @@ const startServer = async () => {
     const shutdown = async (signal) => {
       console.log(`\n⏳  ${signal} received. Graceful shutdown initiated...`);
 
+      // Stop background jobs so no scan runs against a closing DB connection
+      stopDepositExpiryJob();
       // Stop background jobs (KAN-97)
       stopLeadScoringJob();
 

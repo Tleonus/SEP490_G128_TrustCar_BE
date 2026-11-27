@@ -50,6 +50,7 @@ export const runDepositExpiryOnce = async () => {
 };
 
 let timer = null;
+let kickoffTimer = null;
 let running = false;
 
 const tick = async () => {
@@ -68,13 +69,18 @@ export const startDepositExpiryJob = () => {
   timer = setInterval(tick, jobIntervalMs);
   timer.unref(); // Must not keep the process alive on its own.
   // Catch up on holds that expired while the server was stopped.
-  setTimeout(tick, 2_000).unref();
+  // Tracked so stop() can cancel it – an untracked catch-up tick would still fire
+  // during shutdown, after the HTTP server started closing.
+  kickoffTimer = setTimeout(tick, 2_000);
+  kickoffTimer.unref();
   logger.info(`[deposit-job] started (every ${Math.round(jobIntervalMs / 1000)}s).`);
 };
 
 export const stopDepositExpiryJob = () => {
   clearInterval(timer);
+  clearTimeout(kickoffTimer);
   timer = null;
+  kickoffTimer = null;
 };
 
 export default { runDepositExpiryOnce, startDepositExpiryJob, stopDepositExpiryJob };
