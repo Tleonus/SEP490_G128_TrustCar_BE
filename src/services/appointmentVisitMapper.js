@@ -68,11 +68,13 @@ const commonFields = (visit) => {
  * Customer view of a visit.
  * @param {{visitId, scheduledAt, rows}} visit
  * @param {Map<string, object>} carsById lean Car docs keyed by string id
- * @param {{ rescheduleCount?: number, canReschedule?: boolean }} [extras] Computed by the service.
+ * @param {{ rescheduleCount?: number, customerRescheduleCount?: number, canReschedule?: boolean }} [extras]
+ *   Computed by the service.
  */
 export const toCustomerVisit = (visit, carsById, extras = {}) => ({
   ...commonFields(visit),
   rescheduleCount: extras.rescheduleCount ?? 0,
+  customerRescheduleCount: extras.customerRescheduleCount ?? extras.rescheduleCount ?? 0,
   canReschedule: extras.canReschedule ?? false,
   appointments: visit.rows.map((row) => appointmentItem(row, carsById, false)),
 });
@@ -104,6 +106,7 @@ export const toStaffVisit = (visit, carsById, customersById, usersById, extras =
     needsReminderCall: extras.needsReminderCall ?? false,
     needsOutcome: extras.needsOutcome ?? false,
     isNewRequest: extras.isNewRequest ?? false,
+    needsStaff: extras.needsStaff ?? false, // open, upcoming and nobody at work assigned
     completedAt: iso(rows.find((row) => row.completedAt)?.completedAt),
     outcome: rows.find((row) => row.outcome)?.outcome ?? null,
     // KAN-96: present on SERVICE visits, null otherwise. The snapshot is frozen

@@ -43,7 +43,7 @@ function collectEvidence(template, answers, recordImages) {
  * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-026
  * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-033
  */
-function buildVerdict(record, listRecordImages) {
+export function buildVerdict(record, listRecordImages) {
   const { templateSnapshot, answers, submittedBy } = record;
   const odo = record.vehicleInfo?.confirmed?.mileage;
   if (!OBJECT_ID.test(submittedBy) || !Array.isArray(answers) ||
@@ -68,7 +68,7 @@ function buildVerdict(record, listRecordImages) {
   };
 }
 
-function buildCriteriaVerdict(record, template, results) {
+export function buildCriteriaVerdict(record, template, results) {
   const { missing, passed } = assessCriterionResults(template, results);
   if (missing.length || !Number.isSafeInteger(record.odo) || record.odo < 0) {
     throw approvalError('INSPECTION_INCOMPLETE', 'The inspection is incomplete.');
@@ -77,15 +77,16 @@ function buildCriteriaVerdict(record, template, results) {
 }
 
 /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-028 */
-async function appendApprovalEvents(audit, record, beforeCar, afterCar, actorId) {
+async function appendFinalizationEvents(audit, record, beforeCar, afterCar, actorId, fromStatus) {
   const { id: inspectionId, result, cpoCertificateId } = record;
   const metadata = { inspectionId, carId: afterCar.id, result, cpoCertificateId };
   // The existing event type records the transition into SUBMITTED.
   await audit.append({
     eventType: ActivityEventType.INSPECTION_SUBMITTED,
     performedBy: actorId, targetModel: 'InspectionRecord', targetId: inspectionId,
-    summary: `Inspection approved: ${result}`,
-    metadata: { ...metadata, action: 'APPROVE', fromStatus: PENDING_APPROVAL, toStatus: InspectionStatus.SUBMITTED },
+    summary: `Inspection finalized: ${result}`,
+    metadata: { ...metadata, templateRevision: record.templateRevision, action: fromStatus === PENDING_APPROVAL ? 'APPROVE' : 'SUBMIT',
+      fromStatus, toStatus: InspectionStatus.SUBMITTED },
   });
   if (beforeCar.status !== afterCar.status) {
     await audit.append({
@@ -105,6 +106,53 @@ async function appendApprovalEvents(audit, record, beforeCar, afterCar, actorId)
       summary: 'CPO certificate renewed', metadata,
     });
   }
+}
+
+/** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-052 */
+export async function commitInspectionVerdict({ records, cars, audit }, {
+  inspectionId, actorId, car, expected, submission, verdict, reinspection, getCertificateId,
+  buildHistoryVerifyHash, now, publishOnPass = false,
+}) {
+  const { passed, recordChanges } = verdict;
+  const cpoCertificateId = passed ? getCertificateId() : null;
+  if (reinspection && cpoCertificateId === car.cpoCertificateId) {
+    throw approvalError('CPO_CERTIFICATE_ALREADY_IN_USE', 'Generate a different certificate for reinspection.');
+  }
+  const inspectionRecord = await records.updateIfCurrent(inspectionId, expected, {
+    ...submission, ...recordChanges, cpoCertificateId, status: InspectionStatus.SUBMITTED, updatedBy: actorId,
+  });
+  if (!inspectionRecord) {
+    if (expected.status === PENDING_APPROVAL) throw notPending();
+    throw approvalError('INSPECTION_LOCKED', 'This inspection is locked.');
+  }
+
+  let carChanges = {};
+  if (passed || !reinspection) {
+    const status = passed
+      ? (publishOnPass ? CarStatus.AVAILABLE : reinspection ? car.status : CarStatus.APPROVED_CPO)
+      : CarStatus.REJECTED;
+    carChanges = {
+      status, mileage: Math.max(car.mileage ?? 0, recordChanges.odo), cpoCertificateId,
+      historyVerifyHash: passed ? buildHistoryVerifyHash(car.id, cpoCertificateId) : null,
+      ...(publishOnPass && passed && car.listedDate == null ? { listedDate: now() } : {}),
+    };
+  }
+  const updatedCar = await cars.updateIfCurrent(car.id, car, carChanges);
+  if (!updatedCar) throw invalidCarStatus();
+  await appendFinalizationEvents(audit, inspectionRecord, car, updatedCar, actorId, expected.status);
+  return { car: updatedCar, inspectionRecord };
+}
+
+export async function withInspectionCertificate({ unitOfWork, generateCpoCertificate, isCertificateCollision }, action) {
+  for (let attempt = 0; attempt < MAX_CERTIFICATE_ATTEMPTS; attempt += 1) {
+    let candidate;
+    try {
+      return await unitOfWork.run(repositories => action(repositories, () => (candidate ??= generateCpoCertificate())));
+    } catch (error) {
+      if (!candidate || (error.code !== 'CPO_CERTIFICATE_ALREADY_IN_USE' && !isCertificateCollision(error))) throw error;
+    }
+  }
+  throw approvalError('CPO_CODE_GENERATION_FAILED', 'Could not generate a unique CPO certificate code.');
 }
 
 /**
@@ -134,29 +182,12 @@ async function finalizeInspection({ records, cars, templates, results, audit }, 
   if (car.status !== CarStatus.UNDER_INSPECTION && !reinspection) throw invalidCarStatus();
 
   const scores = compact ? await results.findByInspectionId(record.id) : null;
-  const { passed, recordChanges } = compact
-    ? buildCriteriaVerdict(record, template, scores)
-    : buildVerdict(record, listRecordImages);
-  const cpoCertificateId = passed ? getCertificateId() : null;
-  if (reinspection && cpoCertificateId === car.cpoCertificateId) {
-    throw approvalError('CPO_CERTIFICATE_ALREADY_IN_USE', 'Generate a different certificate for reinspection.');
-  }
-  const inspectionRecord = await records.updateIfCurrent(record.id, { status: PENDING_APPROVAL }, {
-    ...recordChanges, cpoCertificateId, status: InspectionStatus.SUBMITTED,
-    approvedBy: actorId, approvedAt: now(), updatedBy: actorId,
+  const verdict = compact ? buildCriteriaVerdict(record, template, scores) : buildVerdict(record, listRecordImages);
+  const published = await commitInspectionVerdict({ records, cars, audit }, {
+    inspectionId, actorId, car, expected: { status: PENDING_APPROVAL }, verdict, reinspection,
+    submission: { approvedBy: actorId, approvedAt: now() }, getCertificateId, buildHistoryVerifyHash, now,
   });
-  if (!inspectionRecord) throw notPending();
-
-  const carChanges = reinspection && !passed ? {} : {
-    status: reinspection ? car.status : passed ? CarStatus.APPROVED_CPO : CarStatus.REJECTED,
-    mileage: Math.max(car.mileage ?? 0, recordChanges.odo), cpoCertificateId,
-    historyVerifyHash: passed ? buildHistoryVerifyHash(car.id, cpoCertificateId) : null,
-  };
-  const updatedCar = await cars.updateIfCurrent(car.id, car, carChanges);
-  if (!updatedCar) throw invalidCarStatus();
-
-  await appendApprovalEvents(audit, inspectionRecord, car, updatedCar, actorId);
-  return { car: updatedCar, inspectionRecord: compact ? { ...inspectionRecord, template, results: scores } : inspectionRecord };
+  return compact ? { ...published, inspectionRecord: { ...published.inspectionRecord, template, results: scores } } : published;
 }
 
 /**
@@ -174,19 +205,9 @@ export function createApproveInspection({
       throw approvalError('VALIDATION_ERROR', 'Invalid inspection ID.', [{ field: 'id', message: 'Expected an ObjectId.' }]);
     }
 
-    for (let attempt = 0; attempt < MAX_CERTIFICATE_ATTEMPTS; attempt += 1) {
-      let candidate;
-      try {
-        return await unitOfWork.run((repositories) => finalizeInspection(repositories, {
-          inspectionId, actorId: actor.id, now, buildHistoryVerifyHash, listRecordImages,
-          getCertificateId: () => (candidate ??= generateCpoCertificate()),
-        }));
-      } catch (error) {
-        // A duplicate write aborts the MongoDB transaction. Start a fresh one.
-        if (!candidate || (error.code !== 'CPO_CERTIFICATE_ALREADY_IN_USE' && !isCertificateCollision(error))) throw error;
-      }
-    }
-
-    throw approvalError('CPO_CODE_GENERATION_FAILED', 'Could not generate a unique CPO certificate code.');
+    return withInspectionCertificate({ unitOfWork, generateCpoCertificate, isCertificateCollision },
+      (repositories, getCertificateId) => finalizeInspection(repositories, {
+        inspectionId, actorId: actor.id, now, buildHistoryVerifyHash, listRecordImages, getCertificateId,
+      }));
   };
 }

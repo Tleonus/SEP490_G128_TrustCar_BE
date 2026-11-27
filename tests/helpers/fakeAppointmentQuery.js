@@ -37,7 +37,10 @@ const OPS = {
 export const matches = (doc, filter) =>
   Object.entries(filter).every(([key, cond]) => {
     if (key === '$or') return cond.some((alternative) => matches(doc, alternative));
-    if (!isOperatorObject(cond)) return norm(doc[key]) === norm(cond);
+    // Like MongoDB, equality against an array field matches when the array contains the value.
+    if (!isOperatorObject(cond)) return Array.isArray(doc[key]) && !Array.isArray(cond)
+      ? doc[key].map(norm).includes(norm(cond))
+      : norm(doc[key]) === norm(cond);
     return Object.entries(cond).every(([op, arg]) => op === '$options' || OPS[op](doc[key], arg, cond));
   });
 

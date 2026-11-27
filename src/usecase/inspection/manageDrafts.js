@@ -158,16 +158,41 @@ function validateImages(patch, template, inspectionId, isInspectionImageUrl) {
     .map(({ field }) => ({ field, message: 'Image must be uploaded to this inspection folder.' }));
 }
 
-export function createInspectionDraftUseCases({ templates, records, results, cars, unitOfWork, isInspectionImageUrl }) {
+export function createInspectionDraftUseCases({ templates, records, results, cars, listings, unitOfWork, isInspectionImageUrl }) {
+  async function findCurrentCertificate(carId) {
+    assertObjectId(carId, 'id');
+    const car = await findCar(cars, carId);
+    const record = car.cpoCertificateId ? await records.findCertifyingRecord(carId, car.cpoCertificateId) : null;
+    if (!record) throw inspectionError('CPO_CERTIFICATE_NOT_FOUND', 'No current CPO certificate found.');
+    return { car, record };
+  }
+
   return {
-    /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-050 */
-    async getCurrentCertificate(carId) {
+    /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-053 */
+    listQueue: query => listings.listQueue(query),
+    /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-053 */
+    listCertificates: query => listings.listCertificates(query),
+    /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-053 */
+    async getInspectionCar(carId) {
       assertObjectId(carId, 'id');
       const car = await findCar(cars, carId);
-      const record = car.cpoCertificateId ? await records.findCertifyingRecord(carId, car.cpoCertificateId) : null;
-      if (!record) throw inspectionError('CPO_CERTIFICATE_NOT_FOUND', 'No current CPO certificate found.');
-
+      const record = await records.findOpenByCarId(carId);
+      return { car, openInspection: record ? {
+        _id: record.id, status: record.status, templateKey: record.templateKey,
+        checklistVersion: record.checklistVersion,
+      } : null };
+    },
+    /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-050 */
+    async getCurrentCertificate(carId) {
+      const { car, record } = await findCurrentCertificate(carId);
       return { cpoCertificateId: car.cpoCertificateId, ...record };
+    },
+    /** @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-053 */
+    async getCertificateDetail(carId) {
+      const { car, record } = await findCurrentCertificate(carId);
+      const verificationPath = car.isActive && /^[a-f0-9]{24}$/.test(car.historyVerifyHash ?? '')
+        ? `/verify/${car.historyVerifyHash}` : null;
+      return { car, ...record, verificationPath };
     },
     /**
      * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-001

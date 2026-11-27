@@ -11,6 +11,8 @@
  * - GET   /slots        → slots
  * - GET   /customers    → customers
  * - POST  /             → createForCustomer
+ * - GET   /:id/assignees → assignees
+ * - PATCH /:id/assignee  → reassign
  *
  * Ref: .sdd/features/test-drive-booking/SPEC.md (REQ-018…021)
  */
@@ -19,6 +21,7 @@ import { listVisits, getVisit, changeVisitStatus } from '../services/appointment
 import { rescheduleVisitAsStaff } from '../services/appointmentRescheduleService.js';
 import { getStaffSlots } from '../services/appointmentStaffSlotService.js';
 import { searchCustomersForStaff, createVisitForCustomer } from '../services/appointmentStaffBookingService.js';
+import { listAssigneeOptions, reassignVisit } from '../services/appointmentAssigneeService.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 
 export const list = async (req, res, next) => {
@@ -93,4 +96,23 @@ export const createForCustomer = async (req, res, next) => {
   }
 };
 
-export default { list, getOne, changeStatus, reschedule, slots, customers, createForCustomer };
+export const assignees = async (req, res, next) => {
+  try {
+    const data = await listAssigneeOptions({ id: req.params.id });
+    return sendSuccess(res, 200, 'Staff options retrieved successfully.', data);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const reassign = async (req, res, next) => {
+  try {
+    await reassignVisit({ id: req.params.id, staffId: req.body.staffId, userId: req.userId, ipAddress: req.ip });
+    const visit = await getVisit({ id: req.params.id });
+    return sendSuccess(res, 200, 'Visit staff updated successfully.', { visit });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export default { list, getOne, changeStatus, reschedule, slots, customers, createForCustomer, assignees, reassign };

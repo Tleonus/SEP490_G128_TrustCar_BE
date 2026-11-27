@@ -105,10 +105,14 @@ export const staffListQuery = Joi.object({
   cancellationType: Joi.string().valid(...Object.values(CancellationType)),
   needsReminderCall: Joi.boolean(),
   needsOutcome: Joi.boolean(),
+  needsStaff: Joi.boolean(),
   sort: Joi.string().valid('asc', 'desc'),
   page,
   limit: page,
 });
+
+/** PATCH /appointments/:id/assignee — the sales staff member who goes with the customer. */
+export const assigneeSchema = Joi.object({ staffId: objectId.required() });
 
 export const statusSchema = Joi.object({
   status: Joi.string().valid(

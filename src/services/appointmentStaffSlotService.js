@@ -16,7 +16,7 @@
 
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
 import { SlotReason } from '../constants/appointmentRules.js';
-import { getSlotCapacity } from './appointmentCapacity.js';
+import { getDayCapacities } from './appointmentCapacity.js';
 import { fail } from './appointmentErrors.js';
 import { parseRange } from './appointmentSlotService.js';
 import { vnDateKey, slotStartsForDate, staffWindowReason, formatVnIso } from './appointmentSlotRules.js';
@@ -33,8 +33,10 @@ const carBrief = (car, carId) => ({
   model: car?.model ?? null,
 });
 
-const visitBrief = (visit, { carsById, customersById }) => {
+const visitBrief = (visit, { carsById, customersById, usersById }) => {
   const customer = customersById.get(idOf(visit.customer));
+  const assigned = visit.rows.find((row) => row.assignedTo)?.assignedTo;
+  const person = assigned ? usersById.get(idOf(assigned)) : null;
   return {
     visitId: visit.visitId,
     visitCode: visitCodeOf(visit.rows),
@@ -45,6 +47,7 @@ const visitBrief = (visit, { carsById, customersById }) => {
       phone: customer?.phone ?? null,
     },
     cars: visit.rows.map((row) => carBrief(carsById.get(idOf(row.car)), idOf(row.car))),
+    assignedTo: person ? { _id: idOf(person._id), fullName: person.fullName ?? null } : null,
   };
 };
 
@@ -70,7 +73,8 @@ const reasonFor = (start, { visits, wanted, now, capacity }) => {
  */
 export const getStaffSlots = async ({ from, to, carIds = [], excludeVisitId = null, now = new Date() }) => {
   const { first, days } = parseRange(from, to, now);
-  const capacity = await getSlotCapacity();
+  const dateKeys = Array.from({ length: days }, (_, i) => vnDateKey(new Date(first.getTime() + i * DAY_MS)));
+  const { capacityOn, staffing } = await getDayCapacities(dateKeys); // Admin ceiling and staff at work each day
   let rows = await findOpenInRangeWithCode(first, new Date(first.getTime() + days * DAY_MS));
   if (excludeVisitId) {
     const own = await findVisitRowsByAnyId(excludeVisitId);
@@ -89,8 +93,9 @@ export const getStaffSlots = async ({ from, to, carIds = [], excludeVisitId = nu
   const wanted = carIds.map(idOf);
 
   const result = [];
-  for (let i = 0; i < days; i += 1) {
-    const date = vnDateKey(new Date(first.getTime() + i * DAY_MS));
+  dateKeys.forEach((date) => {
+    const capacity = capacityOn(date);
+    const staffAtWork = staffing ? staffing.availableOn(date).length : null;
     const slots = slotStartsForDate(date).map((start) => {
       const there = bySlot.get(start.getTime()) ?? [];
       const { reason, carIds: busy } = reasonFor(start, { visits: there, wanted, now, capacity });
@@ -98,13 +103,14 @@ export const getStaffSlots = async ({ from, to, carIds = [], excludeVisitId = nu
         start: formatVnIso(start),
         available: reason === null,
         capacityRemaining: Math.max(0, capacity - there.length),
+        staffAtWork, // sales staff at work that day (null when not tracked)
         reason,
         ...(busy ? { carIds: busy } : {}),
         visits: there.map((visit) => visitBrief(visit, context)),
       };
     });
     result.push({ date, slots });
-  }
+  });
   return { days: result };
 };
 

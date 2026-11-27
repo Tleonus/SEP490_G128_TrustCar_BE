@@ -123,6 +123,23 @@ const AppointmentSchema = new mongoose.Schema(
       default: null,
     },
 
+    // ── Reschedule counters (test-drive-booking C17) ───────────────────
+    // Copied forward (+1) onto the new rows each time the visit is moved. Rows written before
+    // these fields existed have neither; their count is read from the RESCHEDULED: chain.
+    rescheduleCount: {
+      type:    Number,
+      min:     0,
+      default: 0,
+      // Every move: by the customer and by staff. Shown on every screen.
+    },
+
+    customerRescheduleCount: {
+      type:    Number,
+      min:     0,
+      default: 0,
+      // Moves the customer made online; at MAX_RESCHEDULES_PER_VISIT they must call the showroom.
+    },
+
     // ── Test-Drive Slot & Reminder ─────────────────────────────────────
     slotSeat: {
       type: Number,

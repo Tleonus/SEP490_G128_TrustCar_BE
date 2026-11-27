@@ -146,7 +146,8 @@ export const bookedAtOf = (rows) => new Date(Math.min(...rows.map((row) => timeO
  * NOT_ALLOWED outranks LIMIT. Exactly 12 hours before is still allowed.
  *
  * @param {{ scheduledAt: Date, rows: object[] }} visit
- * @param {number} count  Earlier reschedules of this visit (see `countReschedules`).
+ * @param {number} count  Earlier reschedules the CUSTOMER made themselves (`rescheduleCountsOf`
+ *   → `byCustomer`); moves made by staff never use up the customer's online moves.
  * @returns {'NOT_ALLOWED'|'LIMIT'|null}
  */
 export const rescheduleBlock = (visit, count, now = new Date()) => {
@@ -158,11 +159,20 @@ export const rescheduleBlock = (visit, count, now = new Date()) => {
 
 export const canSelfReschedule = (visit, count, now = new Date()) => rescheduleBlock(visit, count, now) === null;
 
-/** The two reschedule fields every customer visit carries (Spec section 5, 1.1.0). */
-export const customerExtras = (visit, count, now = new Date()) => ({
-  rescheduleCount: count,
-  canReschedule: canSelfReschedule(visit, count, now),
-});
+/**
+ * The reschedule fields every customer visit carries (Spec section 5): the total number of moves
+ * (shown, never capped), the customer's own moves and whether one more is allowed online.
+ *
+ * @param {number|{ total: number, byCustomer: number }} counts  A plain number = both.
+ */
+export const customerExtras = (visit, counts, now = new Date()) => {
+  const { total, byCustomer } = typeof counts === 'number' ? { total: counts, byCustomer: counts } : (counts ?? { total: 0, byCustomer: 0 });
+  return {
+    rescheduleCount: total,
+    customerRescheduleCount: byCustomer,
+    canReschedule: canSelfReschedule(visit, byCustomer, now),
+  };
+};
 
 // ── Staff reminders (C26) ─────────────────────────────────────────────────────
 

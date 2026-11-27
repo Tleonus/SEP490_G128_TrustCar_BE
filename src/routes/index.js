@@ -30,6 +30,7 @@ import customerCarRoutes from './customerCarRoutes.js';
 import customerAppointmentRoutes from './customerAppointmentRoutes.js';
 import serviceAppointmentRoutes from './serviceAppointmentRoutes.js';
 import appointmentRoutes from './appointmentRoutes.js';
+import staffAttendanceRoutes from './staffAttendanceRoutes.js';
 import baseSettingsRoutes   from './baseSettingsRoutes.js';
 import publicSettingsRoutes from './publicSettingsRoutes.js';
 import wishlistRoutes       from './wishlistRoutes.js';
@@ -115,6 +116,7 @@ router.use('/marketing', marketingRoutes);
 router.use('/customer/appointments/service', serviceAppointmentRoutes);
 router.use('/customer/appointments', customerAppointmentRoutes);
 router.use('/appointments', appointmentRoutes);
+router.use('/staff-attendance', staffAttendanceRoutes); // who is at work → test-drive staffing
 
 // ── Own profile & settings (signed-in account) ─────────────────────────────
 router.use('/profile', profileRoutes);

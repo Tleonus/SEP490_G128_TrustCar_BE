@@ -27,7 +27,7 @@ import { OPEN_STATUSES, SHOWROOM_LOCATION, VISIT_DURATION_MIN, SLOT_QUERY_MAX_DA
 import { AppError, parsePagination, buildPaginationMeta } from '../utils/apiResponse.js';
 import { withTransaction } from '../utils/withTransaction.js';
 import { assertBookableTime, slotStartsForDate, windowReason, parseDateKey, formatVnIso } from './appointmentSlotRules.js';
-import { getSlotCapacity } from './appointmentCapacity.js';
+import { getCapacityAt, getDayCapacities } from './appointmentCapacity.js';
 import { allocateCodes } from './appointmentWrite.js';
 import { findOpenAtSlot } from './appointmentQueries.js';
 import { groupIntoVisits } from './appointmentVisitRules.js';
@@ -149,8 +149,10 @@ export const listServiceSlots = async ({ customerId, from, to, now = new Date() 
   const rangeFrom = starts[0];
   const rangeTo   = new Date(starts[starts.length - 1].getTime() + 60 * 1000);
 
-  const [capacity, serviceCounts, ownServiceRows, tdRows] = await Promise.all([
-    getSlotCapacity(),
+  // Shared capacity: Admin ceiling and sales staff at work each day (appointmentCapacity.js).
+  const dayKeys = [...new Set(starts.map((start) => formatVnIso(start).slice(0, 10)))];
+  const [{ ceiling: capacity, capacityOn }, serviceCounts, ownServiceRows, tdRows] = await Promise.all([
+    getDayCapacities(dayKeys),
     countServiceInRange(rangeFrom, rangeTo),
     Appointment.find({
       ...OPEN_SERVICE_FILTER,
@@ -186,7 +188,7 @@ export const listServiceSlots = async ({ customerId, from, to, now = new Date() 
     if (!finalReason) {
       const serviceTaken = serviceCounts.get(key) || 0;
       const tdTaken = groupIntoVisits(tdBySlot.get(key) || []).length;
-      if (serviceTaken + tdTaken >= capacity) finalReason = 'CAPACITY_FULL';
+      if (serviceTaken + tdTaken >= capacityOn(dateKey)) finalReason = 'CAPACITY_FULL';
     }
     const slot = {
       start: formatVnIso(start),
@@ -219,7 +221,7 @@ export const createServiceAppointment = async ({
 }) => {
   assertBookableTime(scheduledAt, now);
   const service = await resolveBookableService(serviceId);
-  const capacity = await getSlotCapacity();
+  const { capacity } = await getCapacityAt(scheduledAt);
 
   const book = (session) => withTransaction(async (session) => {
     const touched = await Customer.updateOne(

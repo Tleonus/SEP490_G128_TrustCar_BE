@@ -28,7 +28,7 @@ describe('staff grid (REQ-035, AC-34)', () => {
     const result = await staff();
     expect(result.days.map((d) => d.date)).toEqual(['2026-11-08', '2026-11-09', '2026-11-10']);
     expect(slotAt(result, '2026-11-10', '10:00')).toEqual({
-      start: '2026-11-10T10:00:00+07:00', available: true, capacityRemaining: 2, reason: null, visits: [],
+      start: '2026-11-10T10:00:00+07:00', available: true, capacityRemaining: 2, staffAtWork: null, reason: null, visits: [],
     });
   });
 
@@ -42,6 +42,7 @@ describe('staff grid (REQ-035, AC-34)', () => {
       visitId: expect.any(String), visitCode: 'APT-0042', status: 'CONFIRMED',
       customer: { _id: String(an._id), fullName: 'Nguyễn An', phone: '0901000111' },
       cars: [{ _id: String(car._id), vehicleCode: car.vehicleCode, make: 'MAZDA', model: 'CX-5' }],
+      assignedTo: null,
     }]);
     expect(JSON.stringify(slot)).not.toMatch(/email|secret|VIN123|51A-000|internalNotes|floorPrice|publicId/);
   });
