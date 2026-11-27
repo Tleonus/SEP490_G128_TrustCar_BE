@@ -41,10 +41,11 @@ export const CAR_STATUS_TRANSITIONS = Object.freeze({
 });
 
 // ── Inspection Record Lifecycle ───────────────────────────────────────────────
-// A DRAFT record is editable; SUBMITTED is locked and carries the CPO verdict.
+// A draft is editable, a pending record awaits approval, and a submitted record carries the verdict.
 export const InspectionStatus = Object.freeze({
-  DRAFT:     'DRAFT',
-  SUBMITTED: 'SUBMITTED',
+  DRAFT:            'DRAFT',
+  PENDING_APPROVAL: 'PENDING_APPROVAL',
+  SUBMITTED:        'SUBMITTED',
 });
 
 /**
@@ -143,8 +144,9 @@ export const Permissions = Object.freeze({
 
   // ── Inspection (CPO checklist) — KAN-94 ──
   INSPECTION_READ:   'inspection:read',
-  INSPECTION_WRITE:  'inspection:write',  // create draft, update, submit
-  INSPECTION_ADMIN:  'inspection:admin',  // reject, approve-sale (ADMIN only)
+  INSPECTION_WRITE:  'inspection:write',  // create, edit, sign and quick inspect
+  INSPECTION_SUBMIT: 'inspection:submit',
+  INSPECTION_ADMIN:  'inspection:admin',  // manage templates, approve, reject, approve sale
 
   // ── Showroom Service (KAN-96) ──
   SERVICE_READ:      'service:read',
@@ -171,8 +173,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.APPOINTMENT_CREATE,
     Permissions.APPOINTMENT_UPDATE,
     Permissions.REPORT_VIEW,
-    Permissions.INSPECTION_READ,   // KAN-94
-    Permissions.INSPECTION_WRITE,  // KAN-94
+    Permissions.INSPECTION_READ,
+    Permissions.INSPECTION_SUBMIT,
     Permissions.SERVICE_READ,      // KAN-96: read service packages while consulting
   ],
 
@@ -180,6 +182,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.CAR_READ,
     Permissions.INSPECTION_READ,
     Permissions.INSPECTION_WRITE,
+    Permissions.INSPECTION_SUBMIT,
   ],
 
   [Roles.CUSTOMER]: [],
@@ -292,6 +295,7 @@ export const ActivityEventType = Object.freeze({
   INSPECTION_DRAFT_CREATED: 'INSPECTION_DRAFT_CREATED',
   INSPECTION_SUBMITTED:     'INSPECTION_SUBMITTED',
   INSPECTION_REJECTED:      'INSPECTION_REJECTED',
+  INSPECTION_TEMPLATE_PUBLISHED: 'INSPECTION_TEMPLATE_PUBLISHED',
 
   // Wishlist & Price Drop Alerts
   CAR_SAVED_WISHLIST:       'CAR_SAVED_WISHLIST',

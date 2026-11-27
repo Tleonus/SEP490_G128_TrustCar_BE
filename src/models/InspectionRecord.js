@@ -4,20 +4,55 @@
  * @description Model representing a vehicle inspection (CPO) performed on a car.
  * Each record is linked to a Car and the inspector (User).
  *
- * A record is either a DRAFT (digital checklist being filled in, editable) or
- * SUBMITTED (locked, carries the verdict). The 5 KAN-14 booleans, `odo`,
- * `result` and `cpoCertificateId` are derived on submit, so they are only
- * required once the record is no longer a draft. Records created before the
- * checklist existed have no `status`/`source` and are read as SUBMITTED/LEGACY.
+ * DRAFT is editable, PENDING_APPROVAL stores the submission for review, and
+ * SUBMITTED carries the final verdict. Records predating the digital checklist
+ * have no `status` or `source` and read as SUBMITTED/LEGACY.
  */
 
 import mongoose from 'mongoose';
-import { InspectionStatus, InspectionSource } from '../constants/appConstants.js';
+import { FuelType, InspectionStatus, InspectionSource } from '../constants/appConstants.js';
 import { ItemResult, OVERVIEW_POSITIONS } from '../config/inspectionChecklist.js';
 
-/** Verdict fields are mandatory for every record except a draft. */
-function requiredUnlessDraft() {
+// Keep existing route switches on their current status constants until activation.
+const pendingApproval = 'PENDING_APPROVAL';
+export const openInspectionStatuses = Object.freeze([InspectionStatus.DRAFT, pendingApproval]);
+const inspectionTemplateKeys = [FuelType.ELECTRIC, FuelType.GASOLINE];
+
+/** The submitter is known once a record leaves DRAFT. */
+function requiredForSubmittedRecord() {
   return this.status !== InspectionStatus.DRAFT;
+}
+
+function requiredForVerdict() {
+  return !openInspectionStatuses.includes(this.status);
+}
+
+function requiredForPendingApproval() {
+  return this.status === pendingApproval;
+}
+
+// Resolve format from the revision in the use cases. Synchronous model validation
+// accepts the compact shape without storing a second format field.
+function hasCompactForm() {
+  return this.source === InspectionSource.STAFF && inspectionTemplateKeys.includes(this.templateKey) &&
+    /^[1-9]\d*$/.test(this.checklistVersion ?? '') && this.checklistSnapshot == null &&
+    this.vehicleInfo == null && this.answers == null && this.groups == null;
+}
+
+function requiredForLegacyVerdict() {
+  return requiredForVerdict.call(this) && !hasCompactForm.call(this);
+}
+
+function requiredForSnapshot() {
+  return requiredForPendingApproval.call(this) && !hasCompactForm.call(this);
+}
+
+function requiredForOdo() {
+  return requiredForVerdict.call(this) || (requiredForPendingApproval.call(this) && hasCompactForm.call(this));
+}
+
+function requiredForFormVersion() {
+  return requiredForPendingApproval.call(this) || this.templateKey != null;
 }
 
 const CriteriaSchema = new mongoose.Schema(
@@ -97,6 +132,29 @@ const ChecklistGroupSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const answerFields = {
+  questionId: { type: String, required: true },
+  value: {
+    type: mongoose.Schema.Types.Mixed,
+    required: true,
+    validate: (value) => typeof value === 'string' || Number.isFinite(value) ||
+      (Array.isArray(value) && Array.from(value).every((url) => typeof url === 'string')),
+  },
+};
+
+const AnswerSchema = new mongoose.Schema(answerFields, { _id: false });
+const ArchivedAnswerSchema = new mongoose.Schema({
+  ...answerFields,
+  sourceRevision: { type: Number, min: 1, validate: Number.isSafeInteger, default: null },
+}, { _id: false });
+
+const ChecklistSnapshotSchema = new mongoose.Schema({
+  templateKey: { type: String, enum: inspectionTemplateKeys, required: true },
+  revision: { type: Number, min: 1, validate: Number.isSafeInteger, required: true },
+  groups: { type: [mongoose.Schema.Types.Mixed], required: true, default: undefined },
+  retiredIds: { type: mongoose.Schema.Types.Mixed },
+}, { _id: false });
+
 const InspectionRecordSchema = new mongoose.Schema(
   {
     carId: {
@@ -107,30 +165,30 @@ const InspectionRecordSchema = new mongoose.Schema(
     inspectorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: requiredUnlessDraft,
+      required: requiredForSubmittedRecord,
     },
     criteria: {
       type: CriteriaSchema,
-      required: requiredUnlessDraft,
+      required: requiredForLegacyVerdict,
     },
     odo: {
       type: Number,
-      required: requiredUnlessDraft,
+      required: requiredForOdo,
       min: 0,
     },
     notes: {
       type: String,
       trim: true,
-      default: '',
+      default() { return hasCompactForm.call(this) ? undefined : ''; },
     },
     evidenceImages: {
       type: [String],
-      default: [],
+      default() { return hasCompactForm.call(this) ? undefined : []; },
     },
     result: {
       type: String,
       enum: ['PASSED', 'FAILED'],
-      required: requiredUnlessDraft,
+      required: requiredForVerdict,
     },
     cpoCertificateId: {
       type: String,
@@ -141,17 +199,23 @@ const InspectionRecordSchema = new mongoose.Schema(
     // ── Digital checklist (no schema default: legacy records stay unset) ──
     status: {
       type: String,
-      enum: [InspectionStatus.DRAFT, InspectionStatus.SUBMITTED],
+      enum: [...openInspectionStatuses, InspectionStatus.SUBMITTED],
     },
     source: {
       type: String,
       enum: [InspectionSource.STAFF, InspectionSource.ADMIN_QUICK],
     },
-    checklistVersion: { type: String, default: undefined },
+    templateKey: { type: String, enum: inspectionTemplateKeys, required: requiredForPendingApproval },
+    checklistVersion: { type: String, required: requiredForFormVersion },
+    checklistSnapshot: { type: ChecklistSnapshotSchema, required: requiredForSnapshot },
+    answers: { type: [AnswerSchema], default: undefined },
+    archivedAnswers: { type: [ArchivedAnswerSchema], default: undefined },
     createdBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     updatedBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    submittedAt: { type: Date },
+    submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: requiredForPendingApproval },
+    submittedAt: { type: Date, required: requiredForPendingApproval },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    approvedAt: { type: Date },
 
     // ── Rejection trace (KAN-53) ────────────────────────────────────────────
     // Admin may reject a SUBMITTED record back to DRAFT; the three fields
@@ -189,6 +253,16 @@ InspectionRecordSchema.index(
     partialFilterExpression: { status: InspectionStatus.DRAFT },
   }
 );
+
+// T021 installs this index after checking cluster support and duplicate open rows.
+export const openInspectionIndex = {
+  key: { carId: 1 },
+  options: {
+    unique: true,
+    name: 'uniq_open_inspection_per_car',
+    partialFilterExpression: { status: { $in: [...openInspectionStatuses] } },
+  },
+};
 
 /**
  * Returns a plain copy of a record with the lifecycle defaults applied to

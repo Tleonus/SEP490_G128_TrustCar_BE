@@ -26,6 +26,7 @@ import {
   ActivityEventType, CarStatus, InspectionStatus,
 } from '../constants/appConstants.js';
 import { buildPublicReport } from './inspectionReportMapper.js';
+import { readCertificateCriteria } from '../infra/inspection-report/certificateCriteriaReader.js';
 import { buildVehicleHistoryReport } from './vehicleHistoryReport.js';
 
 export const HISTORY_HASH_LENGTH = 24;
@@ -125,7 +126,10 @@ const loadInspections = async (car) => {
     .sort({ submittedAt: 1 }).lean();
   const records = all.filter((r) => (r.status || InspectionStatus.SUBMITTED) === InspectionStatus.SUBMITTED);
 
-  const certRaw = records.find((r) => r.cpoCertificateId === car.cpoCertificateId) || null;
+  const certRaw = records
+    .filter((r) => r.cpoCertificateId === car.cpoCertificateId && r.result === 'PASSED')
+    .sort((a, b) => new Date(b.createdAt ?? 0) - new Date(a.createdAt ?? 0) ||
+      String(b._id).localeCompare(String(a._id)))[0];
 
   const inspectorIds = Array.from(new Set(
     records.map((r) => r.submittedBy || r.inspectorId).filter(Boolean).map(String),
@@ -139,9 +143,16 @@ const loadInspections = async (car) => {
     ? inspectorNames[String(certRaw.submittedBy || certRaw.inspectorId || '')]
     : null;
 
-  const certRecord = certRaw
-    ? buildPublicReport({ car, record: certRaw, inspectorName: certInspectorName })
-    : null;
+  let certRecord = null;
+  if (certRaw) {
+    try {
+      const certificateCriteria = await readCertificateCriteria(certRaw);
+      certRecord = buildPublicReport({ car, record: certRaw, inspectorName: certInspectorName, ...certificateCriteria });
+    } catch (error) {
+      if (error?.code === 'INSPECTION_REPORT_NOT_FOUND') throw notFound();
+      throw error;
+    }
+  }
 
   return { certRecord, inspectionRecords: records, inspectorNames };
 };

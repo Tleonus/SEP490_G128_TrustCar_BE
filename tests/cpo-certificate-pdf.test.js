@@ -20,6 +20,17 @@ const allTrue = {
 };
 const pdfOf = (idOrCode) => api().get(`/api/v1/public/cars/${idOrCode}/cpo-certificate.pdf`);
 
+test('paginates certificates with more criteria than fit on one page', () => {
+  const groups = Array.from({ length: 40 }, (_, index) => ({
+    key: `CRITERION_${index + 1}`, label: `Tieu chi ${index + 1}`, passed: true,
+  }));
+  const pdf = renderCertificatePdf({ certificateId: CODE, groups }, { idOrCode: 'TC-2026-0042' }).toString('latin1');
+
+  expect(pdf).toMatch(/\/Count [2-9]\b/);
+  expect(pdf).toContain('Tieu chi 40');
+  expect(pdf).toContain('Quet ma de xem chung nhan goc');
+});
+
 let inspector;
 
 const certifiedCar = (carOverrides = {}, recordOverrides = {}) => {

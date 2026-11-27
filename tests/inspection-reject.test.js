@@ -1,11 +1,3 @@
-/**
- * @file inspection-reject.test.js
- * @description Integration tests (real app, in-memory persistence) for KAN-53:
- * admin rejects a submitted biên bản and returns it to the sale staff for
- * revision. The record flips back to DRAFT with rejection trace fields; the
- * car status is intentionally left untouched.
- */
-
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { setupInspectionHarness } from './helpers/fakeInspectionModels.js';
@@ -13,40 +5,21 @@ import { setupInspectionHarness } from './helpers/fakeInspectionModels.js';
 const h = await setupInspectionHarness();
 const api = () => request(h.app);
 const BASE = '/api/v1/inspections';
+const REASON = 'Thiếu ảnh odo, cần bổ sung trước khi duyệt';
 
-const REASON = 'Thiếu ảnh odo nhóm G3, cần chụp lại trước khi duyệt';
-
-/** Seeds a SUBMITTED inspection for a car that stayed UNDER_INSPECTION. */
-const seedSubmitted = (overrides = {}) => {
-  const carId = h.createCar({ status: 'UNDER_INSPECTION', mileage: 50000, ...overrides.car });
+function seedPending(status = 'PENDING_APPROVAL') {
+  const carId = h.createCar({ status: 'UNDER_INSPECTION', mileage: 50000 });
   const inspectorId = new mongoose.Types.ObjectId();
   const recordId = h.insertRecord({
-    carId,
-    inspectorId,
-    status: 'SUBMITTED',
-    source: 'STAFF',
-    criteria: {
-      noMajorAccident: true,
-      noWaterDamage: true,
-      engineGearboxIntact: true,
-      verifiedOdo: true,
-      electricalSystemPassed: true,
-    },
-    odo: 50000,
-    notes: 'OK',
-    evidenceImages: [],
-    result: 'PASSED',
-    cpoCertificateId: null,
-    submittedBy: inspectorId,
-    submittedAt: new Date(),
-    createdBy: inspectorId,
-    updatedBy: inspectorId,
-    ...overrides.record,
+    carId, inspectorId, status, source: 'STAFF', submittedBy: inspectorId, submittedAt: new Date(),
+    templateKey: 'GASOLINE', checklistVersion: '1',
+    checklistSnapshot: { templateKey: 'GASOLINE', revision: 1, groups: [] },
+    answers: [{ questionId: 'GASOLINE-G1_BODY_FRAME', value: 'pass' }],
   });
   return { carId, recordId };
-};
+}
 
-const reject = (recordId, body, who) =>
+const reject = (recordId, body, who = admin) =>
   api().put(`${BASE}/${recordId}/reject`).set('Authorization', who.auth).send(body);
 
 let admin;
@@ -57,111 +30,57 @@ beforeEach(async () => {
   sale = await h.loginAs('SALES_STAFF');
 });
 
-describe('PUT /inspections/:id/reject (KAN-53)', () => {
-  test('admin with a valid reason → 200, record DRAFT with trace, car still UNDER_INSPECTION', async () => {
-    const { carId, recordId } = seedSubmitted();
+test('admin returns a pending record to DRAFT, keeping answers and audit while leaving the car unchanged', async () => {
+  const { carId, recordId } = seedPending();
+  const beforeCar = JSON.stringify(h.car(carId));
+  const answers = h.record(recordId).answers;
+  await reject(recordId, { reason: `  ${REASON}  ` }).expect(200);
+  const record = h.record(recordId);
+  expect(record).toMatchObject({ status: 'DRAFT', rejectedReason: REASON, checklistSnapshot: null, answers });
+  expect(String(record.rejectedByUserId)).toBe(admin.id);
+  expect(record.rejectedAt).toBeInstanceOf(Date);
+  expect(JSON.stringify(h.car(carId))).toBe(beforeCar);
+  expect(h.activity).toMatchObject([
+    { eventType: 'INSPECTION_REJECTED', metadata: { carId, reason: REASON } },
+  ]);
+});
 
-    const res = await reject(recordId, { reason: REASON }, admin);
+test('sales staff cannot reject a pending record', async () => {
+  const { recordId } = seedPending();
+  const before = JSON.stringify(h.record(recordId));
+  await reject(recordId, { reason: REASON }, sale).expect(403);
+  expect(JSON.stringify(h.record(recordId))).toBe(before);
+  expect(h.activity).toHaveLength(0);
+});
 
-    expect(res.status).toBe(200);
-    const stored = h.record(recordId);
-    expect(stored.status).toBe('DRAFT');
-    expect(stored.rejectedReason).toBe(REASON);
-    expect(String(stored.rejectedByUserId)).toBe(admin.id);
-    expect(stored.rejectedAt).toBeInstanceOf(Date);
-    // Car MUST stay untouched — the lifecycle of the vehicle is unaffected.
-    expect(h.car(carId).status).toBe('UNDER_INSPECTION');
-    expect(h.activity.map((a) => a.eventType)).toEqual(['INSPECTION_REJECTED']);
-    expect(h.activity[0].metadata).toMatchObject({ carId: String(carId), reason: REASON });
-  });
+test.each([{ reason: 'ngắn' }, {}, { reason: 'x'.repeat(1001) }])('validates rejection reason', async (payload) => {
+  const { recordId } = seedPending();
+  const res = await reject(recordId, payload).expect(422);
+  expect(res.body.code).toBe('VALIDATION_ERROR');
+  expect(res.body.errors.map(({ field }) => field)).toContain('reason');
+  expect(h.record(recordId).status).toBe('PENDING_APPROVAL');
+});
 
-  test('reason is trimmed before storing', async () => {
-    const { recordId } = seedSubmitted();
+test.each(['DRAFT', 'SUBMITTED'])('reject returns 409 for %s', async (status) => {
+  const { carId, recordId } = seedPending(status);
+  const res = await reject(recordId, { reason: REASON }).expect(409);
+  expect(res.body.code).toBe('INSPECTION_NOT_PENDING_APPROVAL');
+  expect(h.record(recordId).status).toBe(status);
+  expect(h.record(recordId).rejectedReason).toBeUndefined();
+  expect(h.car(carId).status).toBe('UNDER_INSPECTION');
+  expect(h.activity).toHaveLength(0);
+});
 
-    const res = await reject(recordId, { reason: `   ${REASON}   ` }, admin);
+test('returns 404 for an unknown record and 422 for an invalid ID', async () => {
+  const res = await reject('65f000000000000000000099', { reason: REASON }).expect(404);
+  expect(res.body.code).toBe('INSPECTION_NOT_FOUND');
+  await reject('not-an-id', { reason: REASON }).expect(422);
+});
 
-    expect(res.status).toBe(200);
-    expect(h.record(recordId).rejectedReason).toBe(REASON);
-  });
-
-  test('sale staff → 403 FORBIDDEN, record unchanged', async () => {
-    const { carId, recordId } = seedSubmitted();
-
-    const res = await reject(recordId, { reason: REASON }, sale);
-
-    expect(res.status).toBe(403);
-    expect(h.record(recordId).status).toBe('SUBMITTED');
-    expect(h.record(recordId).rejectedReason).toBeUndefined();
-    expect(h.car(carId).status).toBe('UNDER_INSPECTION');
-    expect(h.activity).toHaveLength(0);
-  });
-
-  test('reason shorter than 10 chars → 422 VALIDATION_ERROR, nothing changes', async () => {
-    const { recordId } = seedSubmitted();
-
-    const res = await reject(recordId, { reason: 'ngắn' }, admin);
-
-    expect(res.status).toBe(422);
-    expect(res.body.code).toBe('VALIDATION_ERROR');
-    expect(res.body.errors.map((e) => e.field)).toContain('reason');
-    expect(h.record(recordId).status).toBe('SUBMITTED');
-    expect(h.record(recordId).rejectedReason).toBeUndefined();
-  });
-
-  test('missing reason → 422 VALIDATION_ERROR', async () => {
-    const { recordId } = seedSubmitted();
-
-    const res = await reject(recordId, {}, admin);
-
-    expect(res.status).toBe(422);
-    expect(res.body.code).toBe('VALIDATION_ERROR');
-  });
-
-  test('reason longer than 1000 chars → 422 VALIDATION_ERROR', async () => {
-    const { recordId } = seedSubmitted();
-
-    const res = await reject(recordId, { reason: 'x'.repeat(1001) }, admin);
-
-    expect(res.status).toBe(422);
-    expect(res.body.code).toBe('VALIDATION_ERROR');
-  });
-
-  test('record is already a DRAFT → 409 INSPECTION_NOT_SUBMITTED, nothing changes', async () => {
-    const { carId, recordId } = seedSubmitted({ record: { status: 'DRAFT' } });
-
-    const res = await reject(recordId, { reason: REASON }, admin);
-
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('INSPECTION_NOT_SUBMITTED');
-    expect(h.record(recordId).status).toBe('DRAFT');
-    expect(h.record(recordId).rejectedReason).toBeUndefined();
-    expect(h.car(carId).status).toBe('UNDER_INSPECTION');
-    expect(h.activity).toHaveLength(0);
-  });
-
-  test('unknown inspection id → 404', async () => {
-    const res = await reject('65f000000000000000000099', { reason: REASON }, admin);
-
-    expect(res.status).toBe(404);
-    expect(res.body.code).toBe('INSPECTION_NOT_FOUND');
-  });
-
-  test('invalid ObjectId → 422 from params validator', async () => {
-    const res = await reject('not-an-id', { reason: REASON }, admin);
-
-    expect(res.status).toBe(422);
-  });
-
-  test('sale staff may reopen the rejected record as a draft (read)', async () => {
-    const { recordId } = seedSubmitted();
-    await reject(recordId, { reason: REASON }, admin);
-
-    const read = await api().get(`${BASE}/${recordId}`).set('Authorization', sale.auth);
-
-    expect(read.status).toBe(200);
-    expect(read.body.data).toMatchObject({
-      status: 'DRAFT',
-      rejectedReason: REASON,
-    });
-  });
+test('inspector can read the returned draft and its reason', async () => {
+  const { recordId } = seedPending();
+  await reject(recordId, { reason: REASON }).expect(200);
+  const inspector = await h.loginAs('INSPECTOR');
+  const read = await api().get(`${BASE}/${recordId}`).set('Authorization', inspector.auth).expect(200);
+  expect(read.body.data).toMatchObject({ status: 'DRAFT', rejectedReason: REASON });
 });
