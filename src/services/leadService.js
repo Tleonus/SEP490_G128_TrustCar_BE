@@ -26,6 +26,9 @@ import {
   ActivityEventType,
   Roles,
 } from '../constants/appConstants.js';
+import {
+  HOT_LEADS_MAX_LIMIT, SCORE_BAND, SCORABLE_STAGES,
+} from '../constants/leadScoringConstants.js';
 
 /** Attempts to allocate a unique LD-NNNN before giving up (concurrent submits). */
 const LEAD_CODE_ATTEMPTS = 5;
@@ -325,6 +328,34 @@ export const claimableBy = (userId) => ({
 /** Roles allowed to read the lead pipeline. */
 export const LEAD_READER_ROLES = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
 
+/**
+ * KAN-97 — danh sách lead HOT đang mở cho sale.
+ * @param {object} query - { limit }
+ * @returns {Promise<{ items: object[], pagination: object }>}
+ */
+export const listHotLeads = async (query = {}) => {
+  const limit = Math.min(HOT_LEADS_MAX_LIMIT, Math.max(1, parseInt(query.limit, 10) || 20));
+
+  const filter = {
+    isActive: true,
+    stage: { $in: [...SCORABLE_STAGES] },
+    scoreBand: SCORE_BAND.HOT,
+  };
+
+  const [items, total] = await Promise.all([
+    Lead.find(filter)
+      .populate('customer', 'fullName phone email')
+      .populate('car', 'vehicleCode make model variant year price')
+      .populate('assignedTo', 'fullName email')
+      .sort({ score: -1, lastInteractionAt: -1 })
+      .limit(limit)
+      .lean(),
+    Lead.countDocuments(filter),
+  ]);
+
+  return { items, pagination: buildPaginationMeta(total, 1, limit) };
+};
+
 export default {
   createPublicEnquiry,
   listLeads,
@@ -332,4 +363,5 @@ export default {
   addLeadNote,
   claimableBy,
   LEAD_READER_ROLES,
+  listHotLeads,
 };

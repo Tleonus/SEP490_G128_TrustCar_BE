@@ -28,7 +28,9 @@ import inventoryRoutes   from './inventoryRoutes.js';
 import inspectionRoutes  from './inspectionRoutes.js';
 import customerCarRoutes from './customerCarRoutes.js';
 import customerAppointmentRoutes from './customerAppointmentRoutes.js';
+import serviceAppointmentRoutes from './serviceAppointmentRoutes.js';
 import appointmentRoutes from './appointmentRoutes.js';
+import staffAttendanceRoutes from './staffAttendanceRoutes.js';
 import baseSettingsRoutes   from './baseSettingsRoutes.js';
 import publicSettingsRoutes from './publicSettingsRoutes.js';
 import wishlistRoutes       from './wishlistRoutes.js';
@@ -37,11 +39,16 @@ import leadPublicRoutes     from './leadPublicRoutes.js';
 import leadRoutes           from './leadRoutes.js';
 import emailLogRoutes       from './emailLogRoutes.js';
 import activityLogRoutes    from './activityLogRoutes.js';
+import auditLogRoutes       from './auditLogRoutes.js';
 import marketingRoutes      from './marketingRoutes.js';
 import loanSettingsRoutes   from './loanSettingsRoutes.js';
 import publicChatRoutes     from './publicChatRoutes.js';
 import profileRoutes        from './profileRoutes.js';
 import depositRoutes        from './depositRoutes.js';
+import { publicRouter as publicServiceRoutes, manageRouter as manageServiceRoutes } from './serviceRoutes.js';
+import trackRoutes          from './trackRoutes.js';
+import vehicleHistoryRoutes from './vehicleHistoryRoutes.js';
+import analyticsRoutes      from './analyticsRoutes.js';  // KAN-100
 
 const router = Router();
 
@@ -58,11 +65,15 @@ router.use('/users', userRoutes);
 // ── Protected Inventory Management (Staff & Admin) ─────────────────────────
 router.use('/manage/cars', carRoutes);
 
+// ── Audit Log Explorer (Admin only, read-only) – KAN-92 ─────────────────────
+router.use('/manage/audit-logs', auditLogRoutes);
+
 // ── Public Catalog (No Auth) ───────────────────────────────────────────────
 router.use('/public/cars', publicCarRoutes);
 router.use('/public/wishlist', publicWishlistRoutes);
 router.use('/public/chat', publicChatRoutes);
 router.use('/public', publicSettingsRoutes);
+router.use('/public', vehicleHistoryRoutes); // KAN-98: /public/history/:code/pdf + /public/verify/:hash
 router.use('/settings', loanSettingsRoutes);
 
 // ── Inventory Aging & Markdown (Staff & Admin) ───────────────────────────
@@ -84,18 +95,34 @@ router.use('/admin', activityLogRoutes);
 // authenticated router's GET /:id. See leadPublicRoutes.js.
 router.use('/leads', leadPublicRoutes);
 router.use('/leads', leadRoutes);
+// KAN-97: alias để FE /admin/sales (gọi /manage/leads) hết rơi về demo fallback.
+router.use('/manage/leads', leadRoutes);
+
+// KAN-100 — Admin analytics dashboard
+router.use('/manage/analytics', analyticsRoutes);
 
 // ── Marketing Tooling (Admin & Sales staff) ────────────────────────────────
 router.use('/marketing', marketingRoutes);
 
 // ── Test-drive Booking: customer side (CUSTOMER) and staff side (Staff & Admin) ──
+// KAN-96 service routes mount first so "/service" is not swallowed by the
+// test-drive router's "/:id" catch-all.
+router.use('/customer/appointments/service', serviceAppointmentRoutes);
 router.use('/customer/appointments', customerAppointmentRoutes);
 router.use('/appointments', appointmentRoutes);
+router.use('/staff-attendance', staffAttendanceRoutes); // who is at work → test-drive staffing
 
 // ── Own profile & settings (signed-in account) ─────────────────────────────
 router.use('/profile', profileRoutes);
 
 // ── Deposit & Online Hold (KAN-22) + VNPay payment (KAN-99) ────────────────
 router.use('/deposits', depositRoutes);
+
+// ── Showroom Services (KAN-96) ─────────────────────────────────────────────
+router.use('/public/services', publicServiceRoutes);
+router.use('/manage/services', manageServiceRoutes);
+
+// ── Interaction Tracking (KAN-97) ──────────────────────────────────────────
+router.use('/track', trackRoutes);
 
 export default router;

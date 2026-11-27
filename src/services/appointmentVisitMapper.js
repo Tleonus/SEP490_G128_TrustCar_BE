@@ -68,11 +68,13 @@ const commonFields = (visit) => {
  * Customer view of a visit.
  * @param {{visitId, scheduledAt, rows}} visit
  * @param {Map<string, object>} carsById lean Car docs keyed by string id
- * @param {{ rescheduleCount?: number, canReschedule?: boolean }} [extras] Computed by the service.
+ * @param {{ rescheduleCount?: number, customerRescheduleCount?: number, canReschedule?: boolean }} [extras]
+ *   Computed by the service.
  */
 export const toCustomerVisit = (visit, carsById, extras = {}) => ({
   ...commonFields(visit),
   rescheduleCount: extras.rescheduleCount ?? 0,
+  customerRescheduleCount: extras.customerRescheduleCount ?? extras.rescheduleCount ?? 0,
   canReschedule: extras.canReschedule ?? false,
   appointments: visit.rows.map((row) => appointmentItem(row, carsById, false)),
 });
@@ -87,6 +89,7 @@ const person = (user) => (user ? { _id: idOf(user._id), fullName: user.fullName 
  */
 export const toStaffVisit = (visit, carsById, customersById, usersById, extras = {}) => {
   const rows = visit.rows;
+  const first = rows[0];
   const customer = customersById.get(idOf(visit.customer));
   const assigned = rows.find((row) => row.assignedTo)?.assignedTo;
   const confirmed = rows.find((row) => row.confirmedBy);
@@ -103,8 +106,19 @@ export const toStaffVisit = (visit, carsById, customersById, usersById, extras =
     needsReminderCall: extras.needsReminderCall ?? false,
     needsOutcome: extras.needsOutcome ?? false,
     isNewRequest: extras.isNewRequest ?? false,
+    needsStaff: extras.needsStaff ?? false, // open, upcoming and nobody at work assigned
     completedAt: iso(rows.find((row) => row.completedAt)?.completedAt),
     outcome: rows.find((row) => row.outcome)?.outcome ?? null,
+    // KAN-96: present on SERVICE visits, null otherwise. The snapshot is frozen
+    // at booking time, so staff see the package the customer actually booked.
+    service: first.serviceSnapshot ? {
+      id: first.service ? idOf(first.service) : null,
+      code: first.serviceSnapshot.code ?? null,
+      serviceName: first.serviceSnapshot.serviceName ?? null,
+      referencePrice: first.serviceSnapshot.referencePrice ?? null,
+      estimatedMinutes: first.serviceSnapshot.estimatedMinutes ?? null,
+    } : null,
+    vehiclePlate: first.serviceVehiclePlate ?? null,
     appointments: rows.map((row) => appointmentItem(row, carsById, true)),
   };
 };

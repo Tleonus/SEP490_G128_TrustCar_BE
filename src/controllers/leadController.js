@@ -88,4 +88,18 @@ export const addNote = async (req, res, next) => {
   }
 };
 
-export default { submitEnquiry, listLeads, getLead, addNote };
+/**
+ * @route   GET /api/v1/leads/hot (KAN-97)
+ * @access  ADMIN, SALES_STAFF
+ * @query   { limit }
+ */
+export const listHotLeads = async (req, res, next) => {
+  try {
+    const { items, pagination } = await leadService.listHotLeads(req.query);
+    return sendPaginated(res, 'Hot leads retrieved successfully.', items, pagination);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export default { submitEnquiry, listLeads, getLead, addNote, listHotLeads };

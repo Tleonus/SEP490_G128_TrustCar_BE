@@ -283,8 +283,42 @@ const CarSchema = new mongoose.Schema(
     cpoCertificateId: {
       type:    String,
       trim:    true,
-      unique:  true,
-      sparse:  true,
+      default: null,
+    },
+
+    // ── Vehicle History Report (KAN-98) ───────────────────────────────
+    /** Number of previous owners before TrustCar took intake. Staff-declared. */
+    previousOwnersCount: {
+      type:    Number,
+      default: 0,
+      min:     [0, 'previousOwnersCount cannot be negative.'],
+      max:     [20, 'previousOwnersCount cannot exceed 20.'],
+    },
+    /** First registration date on the vehicle papers. Staff-declared, nullable. */
+    registrationDate: {
+      type:    Date,
+      default: null,
+    },
+    /**
+     * Service / maintenance history declared by the previous owner at intake.
+     * Distinct from derived ActivityLog MAINTENANCE events.
+     */
+    serviceHistory: {
+      type: [new mongoose.Schema({
+        performedAt: { type: Date, required: true },
+        odometer:    { type: Number, min: 0, default: null },
+        description: { type: String, trim: true, maxlength: 300, required: true },
+        provider:    { type: String, trim: true, maxlength: 120, default: null },
+      }, { _id: true, versionKey: false })],
+      default: [],
+    },
+    /**
+     * Opaque QR verify hash. Derived from (carId, cpoCertificateId, secret) in
+     * services/vehicleHistoryService.js. A partial index keeps assigned hashes unique.
+     */
+    historyVerifyHash: {
+      type:    String,
+      trim:    true,
       default: null,
     },
 
@@ -380,6 +414,22 @@ CarSchema.index({ price: 1 });
 CarSchema.index({ mileage: 1 });
 CarSchema.index({ status: 1, isActive: 1 });
 CarSchema.index({ make: 1, status: 1, price: 1 }); // Public filter compound index
+CarSchema.index(
+  { cpoCertificateId: 1 },
+  {
+    unique: true,
+    name: 'uniq_car_cpo_certificate_string',
+    partialFilterExpression: { cpoCertificateId: { $type: 'string' } },
+  },
+);
+CarSchema.index(
+  { historyVerifyHash: 1 },
+  {
+    unique: true,
+    name: 'uniq_car_history_verify_hash_string',
+    partialFilterExpression: { historyVerifyHash: { $type: 'string' } },
+  },
+); // KAN-98: reverse lookup from QR hash
 
 // ── Virtual: primaryImage ─────────────────────────────────────────────────
 CarSchema.virtual('primaryImage').get(function () {

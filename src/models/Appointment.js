@@ -42,7 +42,12 @@ const AppointmentSchema = new mongoose.Schema(
     car: {
       type:     mongoose.Schema.Types.ObjectId,
       ref:      'Car',
-      required: [true, 'Car reference is required.'],
+      // KAN-96: SERVICE appointments don't bind to a showroom car; every other
+      // appointment type still requires one.
+      required: [
+        function () { return this.type !== AppointmentType.SERVICE; },
+        'Car reference is required.',
+      ],
       index:    true,
     },
 
@@ -118,6 +123,23 @@ const AppointmentSchema = new mongoose.Schema(
       default: null,
     },
 
+    // ── Reschedule counters (test-drive-booking C17) ───────────────────
+    // Copied forward (+1) onto the new rows each time the visit is moved. Rows written before
+    // these fields existed have neither; their count is read from the RESCHEDULED: chain.
+    rescheduleCount: {
+      type:    Number,
+      min:     0,
+      default: 0,
+      // Every move: by the customer and by staff. Shown on every screen.
+    },
+
+    customerRescheduleCount: {
+      type:    Number,
+      min:     0,
+      default: 0,
+      // Moves the customer made online; at MAX_RESCHEDULES_PER_VISIT they must call the showroom.
+    },
+
     // ── Test-Drive Slot & Reminder ─────────────────────────────────────
     slotSeat: {
       type: Number,
@@ -151,6 +173,31 @@ const AppointmentSchema = new mongoose.Schema(
       maxlength: 1000,
       default:   null,
       // Outcome notes recorded after completion
+    },
+
+    // ── Service appointment (KAN-96) ──────────────────────────────────
+    // Only set when `type === SERVICE`. The snapshot freezes the package's
+    // name and price at booking time so a later admin edit of the gói
+    // cannot retroactively change what the customer booked.
+    service: {
+      type:    mongoose.Schema.Types.ObjectId,
+      ref:     'ShowroomService',
+      default: null,
+    },
+    serviceSnapshot: {
+      type: new mongoose.Schema(
+        {
+          code:             { type: String, trim: true },
+          serviceName:      { type: String, trim: true },
+          referencePrice:   { type: Number, min: 0 },
+          estimatedMinutes: { type: Number, min: 0 },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
+    serviceVehiclePlate: {
+      type: String, trim: true, uppercase: true, maxlength: 15, default: null,
     },
 
     // ── Status ────────────────────────────────────────────────────────
@@ -196,6 +243,22 @@ AppointmentSchema.index({ customer: 1 });
 AppointmentSchema.index({ assignedTo: 1 });
 AppointmentSchema.index({ status: 1, scheduledAt: 1 });
 AppointmentSchema.index({ appointmentCode: 1 });
+
+// KAN-96: a customer can only hold ONE open SERVICE appointment at a given slot.
+// The partial filter means the index does not interfere with TEST_DRIVE rows
+// (same (customer, scheduledAt) can host test-drive + service in different docs).
+AppointmentSchema.index(
+  { customer: 1, scheduledAt: 1 },
+  {
+    name:   'uniq_service_open_per_customer_slot',
+    unique: true,
+    partialFilterExpression: {
+      type:     AppointmentType.SERVICE,
+      status:   { $in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
+      isActive: true,
+    },
+  },
+);
 
 // Concurrent bookings: the database refuses a second holder of the same car, staff
 // member or seat at the same time, whichever request got there first.

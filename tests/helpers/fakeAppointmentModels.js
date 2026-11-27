@@ -29,6 +29,11 @@
  * Settings: `fakes.capacity = n` sets `testDrive.maxGuestsPerSlot` (default 2, the old fixed value,
  * so existing tests keep their numbers).
  *
+ * Staffing (appointmentStaffing.js) is OFF by default, so older tests keep their numbers and
+ * assignments: only the Admin capacity applies and nobody is picked automatically.
+ * `fakes.enableStaffing()` turns it on against the fake users (SALES_STAFF, active) and the fake
+ * attendance records (`fakes.attendance`, StaffAttendance find/findOne/findOneAndUpdate).
+ *
  * Supported filters: equality, $in, $gt, $gte, $lt, $lte, $ne, $nin, $exists, $type, $regex
  * (+$options), $or (ObjectId/Date aware). Supported updates: $set, $unset.
  * Query chain: select (top-level names), sort, skip, limit, lean, populate/session (ignored).
@@ -58,6 +63,14 @@ const INDEX_RULES = {
     applies: (row) => typeof row.visitSeat === 'number',
     clash: (a, b) => a.visitSeat === b.visitSeat && SAME_TIME(a, b),
   },
+  // KAN-96: one open SERVICE appointment per customer per slot.
+  service: {
+    name: 'uniq_service_open_per_customer_slot',
+    keyPattern: { customer: 1, scheduledAt: 1 },
+    applies: (row) => row.type === 'SERVICE'
+      && ['PENDING', 'CONFIRMED'].includes(row.status) && row.isActive !== false,
+    clash: (a, b) => String(a.customer) === String(b.customer) && SAME_TIME(a, b),
+  },
 };
 
 const transientConflict = () => Object.assign(new Error('WriteConflict (simulated)'), {
@@ -81,10 +94,17 @@ export const setupAppointmentFakes = async () => {
   const { default: Customer } = await import('../../src/models/Customer.js');
   const { default: User } = await import('../../src/models/User.js');
   const { default: SystemSetting } = await import('../../src/models/system-setting.model.js');
+  const { default: ShowroomService } = await import('../../src/models/showroom-service.model.js');
+  const { default: ActivityLog } = await import('../../src/models/ActivityLog.js');
+  const { default: StaffAttendance } = await import('../../src/models/StaffAttendance.js');
   const { getDefaultBaseSettings } = await import('../../src/config/baseSettings.js');
+  const staffing = await import('../../src/services/appointmentStaffing.js');
+  const staffingOff = async () => null;
+  staffing.setStaffDirectory(staffingOff);
 
   const state = {
-    appointments: [], cars: [], customers: [], users: [], calls: [], hook: null, now: () => new Date(),
+    appointments: [], cars: [], customers: [], users: [], services: [], activityLogs: [], attendance: [],
+    calls: [], hook: null, now: () => new Date(),
     capacity: 2, indexes: new Set(), locks: new Map(), sessions: [], codeUnique: true,
   };
 
@@ -178,6 +198,45 @@ export const setupAppointmentFakes = async () => {
   jest.spyOn(Customer, 'findOne').mockImplementation(findQuery('Customer', 'customers', 'findOne', true));
   jest.spyOn(User, 'find').mockImplementation(findQuery('User', 'users', 'find', false));
   jest.spyOn(User, 'findOne').mockImplementation(findQuery('User', 'users', 'findOne', true));
+  jest.spyOn(User, 'updateOne').mockImplementation(async (filter, update) => {
+    await record('User', 'updateOne', filter);
+    const hit = state.users.find((doc) => matches(doc, filter));
+    if (hit) Object.assign(hit, update.$set ?? {});
+    return { acknowledged: true, matchedCount: hit ? 1 : 0, modifiedCount: hit ? 1 : 0 };
+  });
+  jest.spyOn(StaffAttendance, 'find').mockImplementation(findQuery('StaffAttendance', 'attendance', 'find', false));
+  jest.spyOn(StaffAttendance, 'findOne').mockImplementation(findQuery('StaffAttendance', 'attendance', 'findOne', true));
+  jest.spyOn(StaffAttendance, 'findOneAndUpdate').mockImplementation((filter, update) => new FakeQuery(async () => {
+    await record('StaffAttendance', 'findOneAndUpdate', filter);
+    let hit = state.attendance.find((doc) => matches(doc, filter));
+    if (!hit) { hit = { _id: new ObjectId(), ...filter }; state.attendance.push(hit); }
+    Object.assign(hit, update.$set ?? {});
+    return [hit];
+  }, true));
+
+  // KAN-96: showroom service packages read by the booking flow.
+  jest.spyOn(ShowroomService, 'find').mockImplementation(findQuery('ShowroomService', 'services', 'find', false));
+  jest.spyOn(ShowroomService, 'findOne').mockImplementation(findQuery('ShowroomService', 'services', 'findOne', true));
+  jest.spyOn(ShowroomService, 'findById').mockImplementation((id) => new FakeQuery(async () => {
+    await record('ShowroomService', 'findById', { _id: id });
+    return state.services.filter((doc) => String(doc._id) === String(id));
+  }, true));
+  jest.spyOn(ShowroomService, 'countDocuments').mockImplementation(async (filter = {}) => {
+    await record('ShowroomService', 'countDocuments', filter);
+    return state.services.filter((doc) => matches(doc, filter)).length;
+  });
+
+  // KAN-96: the service booking flow writes audit rows directly (not via ActivityLog.log).
+  jest.spyOn(ActivityLog, 'create').mockImplementation(async (data) => {
+    const items = Array.isArray(data) ? data : [data];
+    const created = items.map((item) => {
+      const row = { _id: new ObjectId(), createdAt: state.now(), ...item };
+      state.activityLogs.push(row);
+      return row;
+    });
+    await record('ActivityLog', 'create', data);
+    return Array.isArray(data) ? created : created[0];
+  });
 
   // Showroom settings (`getBaseSettings` reads this record). Only the capacity is configurable.
   jest.spyOn(SystemSetting, 'findOne').mockImplementation(() => new FakeQuery(async () => {
@@ -239,6 +298,17 @@ export const setupAppointmentFakes = async () => {
     return { acknowledged: true, matchedCount: hit.length, modifiedCount: hit.length };
   });
 
+  // KAN-96: service capacity counts open rows with countDocuments. The service chains
+  // `.session(session)`, so this returns a thenable that also accepts `.session()`.
+  jest.spyOn(Appointment, 'countDocuments').mockImplementation((filter = {}) => {
+    const counted = (async () => {
+      await record('Appointment', 'countDocuments', filter);
+      return state.appointments.filter((doc) => matches(doc, filter)).length;
+    })();
+    counted.session = () => counted;
+    return counted;
+  });
+
   jest.spyOn(Appointment, 'updateOne').mockImplementation(async (filter, update, options = {}) => {
     await record('Appointment', 'updateOne', filter);
     const hit = state.appointments.find((doc) => matches(doc, filter));
@@ -288,6 +358,20 @@ export const setupAppointmentFakes = async () => {
     }),
     addCustomer: (extra = {}) => add('customers', { _id: id(), fullName: 'Khách Test', phone: '0900000000', email: 'k@example.com', ...extra }),
     addUser: (extra = {}) => add('users', { _id: id(), fullName: 'Nhân viên Test', ...extra }),
+    /** An active SALES_STAFF user (counted by staffing once `enableStaffing()` is on). */
+    addStaff: (extra = {}) => add('users', {
+      _id: id(), fullName: 'Sales Test', roleName: 'SALES_STAFF', roleNames: ['SALES_STAFF'], isActive: true, ...extra,
+    }),
+    /** Staffing reads the fake users and `attendance` (database loader against the fakes). */
+    enableStaffing: () => staffing.setStaffDirectory(null),
+    /** Marks `user` absent (or present) on a Vietnam day `YYYY-MM-DD`. */
+    markAttendance: (user, date, present = false) => add('attendance', { _id: id(), date, user: user._id ?? user, present }),
+    get attendance() { return state.attendance; },
+    addService: (extra = {}) => add('services', {
+      _id: id(), code: `SVC_${++seq}`, serviceName: 'Gói test', description: null,
+      estimatedDuration: 60, referencePrice: 100_000, status: 'ACTIVE', ...extra,
+    }),
+    get activityLogs() { return state.activityLogs; },
     addAppointment: (extra = {}) => {
       const doc = new Appointment({
         appointmentCode: `APT-${String(1000 + ++seq)}`, type: 'TEST_DRIVE', durationMinutes: 90, createdBy: id(), ...extra,
@@ -297,13 +381,17 @@ export const setupAppointmentFakes = async () => {
       const raw = doc.toObject();
       raw.createdAt = extra.createdAt ?? state.now();
       raw.updatedAt = extra.updatedAt ?? raw.createdAt;
+      // A seeded row stands for data already in the database: like rows written before the
+      // reschedule counters existed, it has none unless the test gives them.
+      ['rescheduleCount', 'customerRescheduleCount'].forEach((key) => { if (!(key in extra)) delete raw[key]; });
       return add('appointments', raw);
     },
 
     /** Number of recorded queries matching `{model, method}`. */
     count: (model, method) => state.calls.filter((c) => c.model === model && (!method || c.method === method)).length,
     reset() {
-      ['appointments', 'cars', 'customers', 'users', 'calls', 'sessions'].forEach((k) => { state[k].length = 0; });
+      ['appointments', 'cars', 'customers', 'users', 'services', 'activityLogs', 'calls', 'sessions', 'attendance'].forEach((k) => { state[k].length = 0; });
+      staffing.setStaffDirectory(staffingOff);
       state.hook = null;
       state.now = () => new Date();
       state.capacity = 2;

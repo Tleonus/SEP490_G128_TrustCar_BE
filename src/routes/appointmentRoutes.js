@@ -16,7 +16,7 @@ import { validateParams, objectIdParamSchema } from '../middlewares/validateMidd
 import { Permissions } from '../constants/appConstants.js';
 import {
   validateBodyStrict, validateQueryStrict, staffListQuery, statusSchema,
-  rescheduleSchema, staffSlotsQuery, customerSearchQuery, staffCreateSchema,
+  rescheduleSchema, staffSlotsQuery, customerSearchQuery, staffCreateSchema, assigneeSchema,
 } from './appointmentSchemas.js';
 
 const router = Router();
@@ -70,6 +70,23 @@ router.patch(
   validateParams(objectIdParamSchema),
   validateBodyStrict(statusSchema),
   controller.changeStatus,
+);
+
+/** @route GET /appointments/:id/assignees — sales staff at work that day, busy or free in the slot */
+router.get(
+  '/:id/assignees',
+  requirePermission(Permissions.APPOINTMENT_READ),
+  validateParams(objectIdParamSchema),
+  controller.assignees,
+);
+
+/** @route PATCH /appointments/:id/assignee  { staffId } — another free staff member goes with the customer */
+router.patch(
+  '/:id/assignee',
+  requirePermission(Permissions.APPOINTMENT_UPDATE),
+  validateParams(objectIdParamSchema),
+  validateBodyStrict(assigneeSchema),
+  controller.reassign,
 );
 
 /** @route PATCH /appointments/:id/reschedule  { scheduledAt (with offset) } — 1.1.0 */

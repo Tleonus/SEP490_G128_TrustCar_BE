@@ -24,6 +24,11 @@ import { AppError } from '../utils/apiResponse.js';
 import { ActivityEventType } from '../constants/appConstants.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
 import {
+  recordLoginFailure,
+  resetLoginFailures,
+  LOGIN_FAILURE_THRESHOLD,
+} from './loginAttemptTracker.js';
+import {
   TokenType,
   signAccessToken,
   signRefreshToken,
@@ -33,6 +38,39 @@ import {
 
 const invalidCredentials = () =>
   new AppError(MSG.MSG07.message, MSG.MSG07.httpStatus, MSG.MSG07.code);
+
+const accountLocked = () =>
+  new AppError(
+    MSG.MSG_ACCOUNT_LOCKED.message,
+    MSG.MSG_ACCOUNT_LOCKED.httpStatus,
+    MSG.MSG_ACCOUNT_LOCKED.code,
+  );
+
+/**
+ * KAN-101 — auto-lock after N failed attempts in the sliding window.
+ * Writes lockedUntil + lockedReason, bumps tokenVersion, audits.
+ */
+const autoLockUser = async (user, { ipAddress, userAgent, failedCount }) => {
+  const lockedUntil = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  user.lockedUntil     = lockedUntil;
+  user.lockedReason    = 'AUTO_RATE_LIMIT';
+  user.lockedBy        = null;
+  user.failedLoginAttempts = failedCount;
+  user.tokenVersion    = (user.tokenVersion ?? 0) + 1;
+  await user.save({ validateBeforeSave: false });
+
+  await ActivityLog.log({
+    eventType:        ActivityEventType.ACCOUNT_LOCKED,
+    performedBy:      null,                            // system
+    performedByEmail: user.email,
+    targetModel:      'User',
+    targetId:         user._id,
+    summary:          `Auto-locked after ${failedCount} failed login attempts`,
+    ipAddress,
+    userAgent,
+    metadata:         { reason: 'AUTO_RATE_LIMIT', failedAttempts: failedCount },
+  });
+};
 
 /** Escapes user-controlled text before it is placed into an HTML email body. */
 const escapeHtml = (value = '') =>
@@ -60,12 +98,20 @@ const escapeHtml = (value = '') =>
 export const login = async ({ email, password, ipAddress, userAgent }) => {
   const user = await User.findOne({ email: email.toLowerCase() })
     .select('+password +tokenVersion')
-    .populate('role');
+    .populate('role')
+    .populate('roles');   // KAN-93: full role set for the JWT + profile
 
   // ── Unknown email → generic error, nothing to audit against
   if (!user) throw invalidCredentials();
 
-  // ── Wrong password, or account without a password (Google-only) → generic error (no lock)
+  // ── KAN-101: account already locked (admin lock or still inside the 1h auto-lock
+  //    window) — return a dedicated error BEFORE checking the password so we do not
+  //    silently extend an existing lock through further counter bumps.
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    throw accountLocked();
+  }
+
+  // ── Wrong password, or account without a password (Google-only)
   const isPasswordCorrect = Boolean(user.password) && await user.comparePassword(password);
   if (!isPasswordCorrect) {
     await ActivityLog.log({
@@ -78,12 +124,28 @@ export const login = async ({ email, password, ipAddress, userAgent }) => {
       ipAddress,
       userAgent,
     });
+
+    // KAN-101: bump the per-(email,ip) counter; auto-lock when the threshold is hit.
+    const state = recordLoginFailure({ email: user.email, ip: ipAddress });
+    if (state.exceeded) {
+      await autoLockUser(user, { ipAddress, userAgent, failedCount: state.count });
+      // The user is now locked but, on the very attempt that tripped the threshold,
+      // we keep the response as INVALID_CREDENTIALS so this call cannot be used as
+      // an oracle to confirm the email exists. Subsequent attempts will see the
+      // lockedUntil guard above and receive ACCOUNT_LOCKED.
+    }
     throw invalidCredentials();
   }
 
   // ── Correct password but account deactivated (GBR-21)
   if (!user.isActive) {
     throw new AppError(MSG.MSG06.message, MSG.MSG06.httpStatus, MSG.MSG06.code);
+  }
+
+  // KAN-101: success wipes the failure counter and clears any stale legacy counter.
+  resetLoginFailures({ email: user.email, ip: ipAddress });
+  if (user.failedLoginAttempts) {
+    user.failedLoginAttempts = 0;
   }
 
   user.lastLoginAt = new Date();
@@ -131,7 +193,7 @@ export const refreshAccessToken = async (refreshToken) => {
     throw invalidRefresh();
   }
 
-  const user = await User.findById(decoded.userId).select('+tokenVersion');
+  const user = await User.findById(decoded.userId).select('+tokenVersion').lean();
   if (!user || !user.isActive || !isTokenCurrent(decoded, user)) {
     throw invalidRefresh();
   }
@@ -315,6 +377,7 @@ export const getMyProfile = async (userId) => {
   const user = await User.findById(userId)
     .select('+password') // only to compute profile status; never returned
     .populate('role', 'name permissions')
+    .populate('roles', 'name description permissions')  // KAN-93
     .lean();
 
   if (!user) throw new AppError(MSG.MSG17.message, 404, MSG.MSG17.code);

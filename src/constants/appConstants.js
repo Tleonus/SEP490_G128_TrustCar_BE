@@ -41,10 +41,11 @@ export const CAR_STATUS_TRANSITIONS = Object.freeze({
 });
 
 // ── Inspection Record Lifecycle ───────────────────────────────────────────────
-// A DRAFT record is editable; SUBMITTED is locked and carries the CPO verdict.
+// A draft is editable, a pending record awaits approval, and a submitted record carries the verdict.
 export const InspectionStatus = Object.freeze({
-  DRAFT:     'DRAFT',
-  SUBMITTED: 'SUBMITTED',
+  DRAFT:            'DRAFT',
+  PENDING_APPROVAL: 'PENDING_APPROVAL',
+  SUBMITTED:        'SUBMITTED',
 });
 
 /**
@@ -85,6 +86,7 @@ export const AppointmentType = Object.freeze({
   TEST_DRIVE:  'TEST_DRIVE',
   VIEWING:     'VIEWING',
   MAINTENANCE: 'MAINTENANCE', // Intake scheduling ONLY – NO garage execution (LI-05)
+  SERVICE:     'SERVICE',     // KAN-96: showroom service appointment (wash, polish, …)
 });
 
 export const AppointmentStatus = Object.freeze({
@@ -96,15 +98,16 @@ export const AppointmentStatus = Object.freeze({
 });
 
 // ── User Roles ────────────────────────────────────────────────────────────────
-// Ref: FE-12, FE-13, GBR-02, GBR-03
+// Ref: FE-12, FE-13, GBR-02, GBR-03, KAN-93, KAN-94
 export const Roles = Object.freeze({
   ADMIN:       'ADMIN',
   SALES_STAFF: 'SALES_STAFF',
-  CUSTOMER:    'CUSTOMER', // self-registered website customer – no internal permissions
+  CUSTOMER:    'CUSTOMER',   // self-registered website customer – no internal permissions
+  INSPECTOR:   'INSPECTOR',  // CPO vehicle inspector – KAN-94
 });
 
 // Internal (staff) roles – the only roles Admin can assign via user management.
-export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF]);
+export const StaffRoles = Object.freeze([Roles.ADMIN, Roles.SALES_STAFF, Roles.INSPECTOR]);
 
 // ── Granular Permissions ───────────────────────────────────────────────────────
 // Ref: FE-13
@@ -138,6 +141,16 @@ export const Permissions = Object.freeze({
   // ── Reporting / Analytics ──
   REPORT_VIEW:       'report:view',
   REPORT_EXPORT:     'report:export',
+
+  // ── Inspection (CPO checklist) — KAN-94 ──
+  INSPECTION_READ:   'inspection:read',
+  INSPECTION_WRITE:  'inspection:write',  // create, edit, sign and quick inspect
+  INSPECTION_SUBMIT: 'inspection:submit',
+  INSPECTION_ADMIN:  'inspection:admin',  // manage templates, approve, reject, approve sale
+
+  // ── Showroom Service (KAN-96) ──
+  SERVICE_READ:      'service:read',
+  SERVICE_WRITE:     'service:write',     // create/update/deactivate service packages
 });
 
 // ── Role → Permission Matrix ───────────────────────────────────────────────────
@@ -160,6 +173,16 @@ export const ROLE_PERMISSIONS = Object.freeze({
     Permissions.APPOINTMENT_CREATE,
     Permissions.APPOINTMENT_UPDATE,
     Permissions.REPORT_VIEW,
+    Permissions.INSPECTION_READ,
+    Permissions.INSPECTION_SUBMIT,
+    Permissions.SERVICE_READ,      // KAN-96: read service packages while consulting
+  ],
+
+  [Roles.INSPECTOR]: [             // KAN-94
+    Permissions.CAR_READ,
+    Permissions.INSPECTION_READ,
+    Permissions.INSPECTION_WRITE,
+    Permissions.INSPECTION_SUBMIT,
   ],
 
   [Roles.CUSTOMER]: [],
@@ -222,6 +245,12 @@ export const ActivityEventType = Object.freeze({
   USER_UPDATED:          'USER_UPDATED',
   USER_DEACTIVATED:      'USER_DEACTIVATED',
   USER_ACTIVATED:        'USER_ACTIVATED',
+  // KAN-101: admin-driven account actions, audited separately from USER_UPDATED
+  // so the "Nhật ký" explorer can filter them without scanning the free-text summary.
+  USER_LOCKED:           'USER_LOCKED',
+  USER_UNLOCKED:         'USER_UNLOCKED',
+  USER_PASSWORD_RESET:   'USER_PASSWORD_RESET',
+  USER_ROLE_CHANGED:     'USER_ROLE_CHANGED',
 
   // Vehicle
   CAR_CREATED:           'CAR_CREATED',
@@ -230,6 +259,7 @@ export const ActivityEventType = Object.freeze({
   CAR_PRICE_UPDATED:     'CAR_PRICE_UPDATED',
   CAR_IMAGE_ADDED:       'CAR_IMAGE_ADDED',
   CAR_IMAGE_REMOVED:     'CAR_IMAGE_REMOVED',
+  CAR_PUBLISHED_FACEBOOK: 'CAR_PUBLISHED_FACEBOOK', // KAN-91: đăng bài lên Facebook Page
 
   // Customer & Lead
   CUSTOMER_CREATED:      'CUSTOMER_CREATED',
@@ -247,11 +277,25 @@ export const ActivityEventType = Object.freeze({
   APPOINTMENT_RESCHEDULED: 'APPOINTMENT_RESCHEDULED',
   APPOINTMENT_REASSIGNED: 'APPOINTMENT_REASSIGNED',
   APPOINTMENT_NO_SHOW_CORRECTED: 'APPOINTMENT_NO_SHOW_CORRECTED',
+  STAFF_ATTENDANCE_MARKED: 'STAFF_ATTENDANCE_MARKED',
+  STAFF_ATTENDANCE_KEEPER_CHANGED: 'STAFF_ATTENDANCE_KEEPER_CHANGED',
+
+  // Showroom Service (KAN-96)
+  SERVICE_CREATED:        'SERVICE_CREATED',
+  SERVICE_UPDATED:        'SERVICE_UPDATED',
+  SERVICE_DEACTIVATED:    'SERVICE_DEACTIVATED',
+  SERVICE_APPOINTMENT_CREATED:   'SERVICE_APPOINTMENT_CREATED',
+  SERVICE_APPOINTMENT_CANCELLED: 'SERVICE_APPOINTMENT_CANCELLED',
+
+  // Lead Scoring (KAN-97)
+  LEAD_SCORE_UPDATED:     'LEAD_SCORE_UPDATED',
+  INTERACTION_TRACKED:    'INTERACTION_TRACKED',
 
   // Inspection (CPO checklist)
   INSPECTION_DRAFT_CREATED: 'INSPECTION_DRAFT_CREATED',
   INSPECTION_SUBMITTED:     'INSPECTION_SUBMITTED',
   INSPECTION_REJECTED:      'INSPECTION_REJECTED',
+  INSPECTION_TEMPLATE_PUBLISHED: 'INSPECTION_TEMPLATE_PUBLISHED',
 
   // Wishlist & Price Drop Alerts
   CAR_SAVED_WISHLIST:       'CAR_SAVED_WISHLIST',

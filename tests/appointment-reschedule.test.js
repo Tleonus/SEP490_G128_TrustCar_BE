@@ -30,7 +30,7 @@ beforeEach(() => {
   fakes.reset(); logSpy.mockClear();
   me = fakes.addCustomer({ fullName: 'Nguyễn An', email: 'an@example.com' });
   rival = fakes.addCustomer({ fullName: 'Khách Khác' });
-  fakes.addUser({ _id: staffId, fullName: 'Lan Sales' });
+  fakes.addUser({ _id: staffId, fullName: 'Lan Sales', roleName: 'SALES_STAFF' });
 });
 
 const row = (who, scheduledAt, extra = {}) =>
@@ -173,6 +173,18 @@ describe('customer reschedule: refusals leave everything as it was (AC-31)', () 
     await expectRefused(move({ id: a._id }), 'APPOINTMENT_RESCHEDULE_LIMIT_REACHED');
   });
 
+  it('stored counters: 2 own moves → refused, however many staff moves', async () => {
+    const [a] = myVisit(1, { rescheduleCount: 2, customerRescheduleCount: 2 });
+    await expectRefused(move({ id: a._id }), 'APPOINTMENT_RESCHEDULE_LIMIT_REACHED');
+  });
+
+  it('moves made by staff never use up the customer\'s 2 online moves; the total keeps counting', async () => {
+    const [a] = myVisit(1, { rescheduleCount: 5, customerRescheduleCount: 1 });
+    const { visit } = await move({ id: a._id });
+    expect(visit).toMatchObject({ rescheduleCount: 6, customerRescheduleCount: 2, canReschedule: false });
+    visible().forEach((r) => expect(r).toMatchObject({ rescheduleCount: 6, customerRescheduleCount: 2 }));
+  });
+
   it('moved once is still allowed', async () => {
     const [a] = myVisit(1, { appointmentCode: 'APT-0003' });
     row(me, new Date('2026-11-11T03:00:00Z'), { appointmentCode: 'APT-0002', isActive: false, status: 'CANCELLED', cancellationReason: 'RESCHEDULED:APT-0003' });
@@ -254,6 +266,21 @@ describe('customer reschedule: refusals leave everything as it was (AC-31)', () 
 });
 
 describe('staff reschedule (REQ-034, AC-33)', () => {
+  it('counts in the total (shown, uncapped) but not in the customer\'s own moves', async () => {
+    myVisit(1, { rescheduleCount: 4, customerRescheduleCount: 2 });
+    const { visit } = await moveByStaff();
+    expect(visit.rescheduleCount).toBe(5);
+    visible().forEach((r) => expect(r).toMatchObject({ rescheduleCount: 5, customerRescheduleCount: 2 }));
+  });
+
+  it('an old visit (no stored counters) continues from its chain', async () => {
+    myVisit(1, { appointmentCode: 'APT-0003' });
+    row(me, new Date('2026-11-11T03:00:00Z'), { appointmentCode: 'APT-0002', isActive: false, status: 'CANCELLED', cancellationReason: 'RESCHEDULED:APT-0003', updatedBy: staffId });
+    const { visit } = await moveByStaff({ id: visible()[0]._id });
+    expect(visit.rescheduleCount).toBe(2);
+    visible().forEach((r) => expect(r).toMatchObject({ rescheduleCount: 2, customerRescheduleCount: 0 }));
+  });
+
   // The scenario this feature exists for: 09:45, the 10:00 customer says they cannot come; move to 13:00.
   const TEN = new Date('2026-11-12T03:00:00Z');
   const ONE_PM = new Date('2026-11-12T06:00:00Z');

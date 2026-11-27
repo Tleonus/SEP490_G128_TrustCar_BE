@@ -116,3 +116,36 @@ describe('input validation still applies (no Car query is made)', () => {
     expect(findCalls).toHaveLength(0);
   });
 });
+
+describe('POST /api/v1/public/cars/compare/ai-insight (On-Demand AI recommendation)', () => {
+  const postAi = (body) =>
+    request(h.app)
+      .post(`${URL}/ai-insight`)
+      .set('X-Forwarded-For', h.nextIp())
+      .send(body);
+
+  test('returns grounded comparison insight with AI warning disclaimer and no internal fields', async () => {
+    delete process.env.CHAT_LLM_API_KEY;
+    delete process.env.CAPTION_LLM_API_KEY;
+
+    const [a, b] = [oid(), oid()];
+    const res = await postAi({ ids: [a, b], preference: 'economy' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.preference).toBe('economy');
+    expect(res.body.data.summary).toEqual(expect.any(String));
+    expect(res.body.data.recommendation).toEqual(expect.any(String));
+    expect(res.body.data.carInsights).toHaveLength(2);
+    expect(res.body.data.disclaimer).toMatch(/AI có thể sai/i);
+    expect(JSON.stringify(res.body)).not.toMatch(/floorPrice|originalPrice|SECRETVIN/i);
+    expect(JSON.stringify(res.body)).not.toMatch(/% phù hợp/i);
+  });
+
+  test('rejects invalid ids or unsupported preference → 422 VALIDATION_ERROR', async () => {
+    const resTooFew = await postAi({ ids: [oid()] });
+    expect(resTooFew.status).toBe(422);
+
+    const resBadPref = await postAi({ ids: [oid(), oid()], preference: 'invalid_pref' });
+    expect(resBadPref.status).toBe(422);
+  });
+});

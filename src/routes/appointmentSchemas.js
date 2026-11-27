@@ -11,7 +11,7 @@
 import Joi from 'joi';
 import { sendError } from '../utils/apiResponse.js';
 import { SystemMessages as MSG } from '../constants/systemMessages.js';
-import { AppointmentStatus } from '../constants/appConstants.js';
+import { AppointmentStatus, AppointmentType } from '../constants/appConstants.js';
 import {
   MAX_CARS_PER_VISIT, NOTES_MAX_LENGTH, REASON_MAX_LENGTH, OUTCOME_MAX_LENGTH, CancellationType, CancelReasonCode,
   STAFF_CUSTOMER_SEARCH_MIN_CHARS,
@@ -97,16 +97,22 @@ export const cancelSchema = Joi.object({ reason: optionalText(REASON_MAX_LENGTH)
 
 export const staffListQuery = Joi.object({
   status: Joi.string().valid(...statuses),
+  // KAN-96: narrow the staff list to one appointment type (e.g. SERVICE).
+  type: Joi.string().valid(...Object.values(AppointmentType)),
   carId: objectId,
   from: dateKey,
   to: dateKey,
   cancellationType: Joi.string().valid(...Object.values(CancellationType)),
   needsReminderCall: Joi.boolean(),
   needsOutcome: Joi.boolean(),
+  needsStaff: Joi.boolean(),
   sort: Joi.string().valid('asc', 'desc'),
   page,
   limit: page,
 });
+
+/** PATCH /appointments/:id/assignee — the sales staff member who goes with the customer. */
+export const assigneeSchema = Joi.object({ staffId: objectId.required() });
 
 export const statusSchema = Joi.object({
   status: Joi.string().valid(
@@ -117,6 +123,29 @@ export const statusSchema = Joi.object({
   }),
   reason: optionalText(REASON_MAX_LENGTH),
   outcome: optionalText(OUTCOME_MAX_LENGTH),
+});
+
+// ── KAN-96: showroom service appointments ─────────────────────────────────
+export const createServiceAppointmentSchema = Joi.object({
+  serviceId:           objectId.required(),
+  scheduledAt:         Joi.string().isoDate().required(),
+  serviceVehiclePlate: Joi.string().trim().uppercase().min(5).max(15).required(),
+  notes:               optionalText(NOTES_MAX_LENGTH),
+});
+
+export const serviceSlotsQuery = Joi.object({
+  from: dateKey.required(),
+  to:   dateKey.required(),
+});
+
+export const serviceListQuery = Joi.object({
+  status: Joi.string().valid(...Object.values(AppointmentStatus)),
+  page,
+  limit: page,
+});
+
+export const cancelServiceSchema = Joi.object({
+  reason: optionalText(REASON_MAX_LENGTH),
 });
 
 const formatErrors = (error) => error.details.map((detail) => ({

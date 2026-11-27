@@ -23,13 +23,17 @@ import { SystemMessages as MSG } from '../constants/systemMessages.js';
  * Returns an Express middleware that verifies the authenticated user holds
  * AT LEAST ONE of the specified permissions.
  *
+ * KAN-93: permissions are the UNION over every role the user holds, computed
+ * by authMiddleware into req.userPermissions. Falls back to the static
+ * ROLE_PERMISSIONS table for the primary role when that array is absent.
+ *
  * Usage:
  *   router.post('/cars', verifyToken, requirePermission('car:create'), carController.create);
  *
  * @param {...string} permissions - One or more permission strings from appConstants.Permissions.
  * @returns {import('express').RequestHandler}
  *
- * Ref: GBR-02
+ * Ref: GBR-02, KAN-93
  */
 export const requirePermission = (...permissions) => {
   return (req, _res, next) => {
@@ -38,8 +42,9 @@ export const requirePermission = (...permissions) => {
       return next(new AppError(MSG.MSG01.message, 401, MSG.MSG01.code));
     }
 
-    const userRole        = req.user.roleName;
-    const userPermissions = ROLE_PERMISSIONS[userRole] || [];
+    const userPermissions = Array.isArray(req.userPermissions)
+      ? req.userPermissions
+      : (ROLE_PERMISSIONS[req.user.roleName] || []);
 
     const hasPermission = permissions.some((p) => userPermissions.includes(p));
 
@@ -59,7 +64,10 @@ export const requirePermission = (...permissions) => {
 
 /**
  * Returns an Express middleware that verifies the authenticated user's role
- * matches one of the specified role names (exact match).
+ * matches one of the specified role names.
+ *
+ * KAN-93: matches against ANY of the user's roles (req.userRoleNames), not
+ * just the primary one.
  *
  * Usage:
  *   router.get('/users', verifyToken, requireRole('ADMIN'), userController.list);
@@ -67,7 +75,7 @@ export const requirePermission = (...permissions) => {
  * @param {...string} roles - One or more role names from appConstants.Roles.
  * @returns {import('express').RequestHandler}
  *
- * Ref: GBR-02, GBR-03
+ * Ref: GBR-02, GBR-03, KAN-93
  */
 export const requireRole = (...roles) => {
   return (req, _res, next) => {
@@ -75,7 +83,11 @@ export const requireRole = (...roles) => {
       return next(new AppError(MSG.MSG01.message, 401, MSG.MSG01.code));
     }
 
-    if (!roles.includes(req.user.roleName)) {
+    const userRoleNames = Array.isArray(req.userRoleNames) && req.userRoleNames.length
+      ? req.userRoleNames
+      : (req.user.roleName ? [req.user.roleName] : []);
+
+    if (!roles.some((r) => userRoleNames.includes(r))) {
       return next(
         new AppError(
           `${MSG.MSG05.message} Required role(s): [${roles.join(' | ')}]`,
@@ -108,7 +120,10 @@ export const requireOwnerOrAdmin = (paramName = 'id') => {
       return next(new AppError(MSG.MSG01.message, 401, MSG.MSG01.code));
     }
 
-    const isAdmin    = req.user.roleName === Roles.ADMIN;
+    const userRoleNames = Array.isArray(req.userRoleNames) && req.userRoleNames.length
+      ? req.userRoleNames
+      : (req.user.roleName ? [req.user.roleName] : []);
+    const isAdmin    = userRoleNames.includes(Roles.ADMIN);
     const isOwner    = req.userId === req.params[paramName];
 
     if (!isAdmin && !isOwner) {
@@ -125,8 +140,12 @@ export const authorizeRoles = (...allowedRoles) => {
       // Should have passed verifyToken first
       return next(new AppError('Token missing or invalid', 401, 'UNAUTHORIZED'));
     }
-    const userRole = req.user.roleName || (typeof req.user.role === 'object' ? req.user.role?.name : req.user.role);
-    if (!allowedRoles.includes(userRole)) {
+    // KAN-93: accept if ANY of the user's roles is in the allow-list.
+    const userRoleNames = Array.isArray(req.userRoleNames) && req.userRoleNames.length
+      ? req.userRoleNames
+      : [req.user.roleName || (typeof req.user.role === 'object' ? req.user.role?.name : req.user.role)]
+          .filter(Boolean);
+    if (!allowedRoles.some((r) => userRoleNames.includes(r))) {
       return next(new AppError('Access denied: insufficient permissions', 403, 'FORBIDDEN'));
     }
     next();

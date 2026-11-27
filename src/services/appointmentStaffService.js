@@ -14,7 +14,7 @@ import { OPEN_STATUSES, NEEDS_OUTCOME_LOOKBACK_DAYS } from '../constants/appoint
 import { fail } from './appointmentErrors.js';
 import { RELEASE_HOLDS } from './appointmentHolds.js';
 import { invalid, normalizeOutcome, normalizeStaffCancel, paginateVisits } from './appointmentInput.js';
-import { parseDateKey, startOfVnDay, vnInstant } from './appointmentSlotRules.js';
+import { parseDateKey, startOfVnDay, vnInstant, vnDateKey } from './appointmentSlotRules.js';
 import {
   findRowsInRange, findVisitRowsByAnyId, loadVisitContext,
 } from './appointmentQueries.js';
@@ -29,23 +29,30 @@ import { assertCarsSellable, reconcileOpenAppointments } from './appointmentReco
 import { isNewRequest, orderForStaff } from './appointmentStaffOrder.js';
 import { MailEvent } from './appointmentMailTemplates.js';
 import { dispatchMail, describeVisit } from './appointmentMailService.js';
+import { loadStaffing, needsStaff } from './appointmentStaffing.js';
+import { assignOnConfirm } from './appointmentAssigneeService.js';
 
 const DAY_MS = 24 * 3600 * 1000;
 
+/** Staffing of the days of these visits (for the `needsStaff` flag). */
+const staffingOf = (visits) => loadStaffing(visits.map((visit) => vnDateKey(visit.scheduledAt)));
+
 /**
  * Staff DTOs for a page of visits, with the reschedule count (3 reads for the whole page, not
- * per visit) and the two reminder flags. `context` may be passed when already loaded.
+ * per visit) and the reminder/staff flags. `context` / `staffing` may be passed when already loaded.
  */
-const present = async (visits, now, context = null) => {
-  const [loaded, counts] = await Promise.all([
+const present = async (visits, now, context = null, staffing = undefined) => {
+  const [loaded, counts, staff] = await Promise.all([
     context ?? loadVisitContext(visits, { staff: true }),
     countReschedules(visits),
+    staffing === undefined ? staffingOf(visits) : staffing,
   ]);
   return visits.map((visit) => toStaffVisit(visit, loaded.carsById, loaded.customersById, loaded.usersById, {
     rescheduleCount: counts.get(visit.visitId),
     needsReminderCall: needsReminderCall(visit, now),
     needsOutcome: needsOutcome(visit, now),
     isNewRequest: isNewRequest(visit, now),
+    needsStaff: needsStaff(visit, staff, now),
   }));
 };
 
@@ -68,13 +75,17 @@ const boundsOf = ({ from, to, needsOutcome: wantsOutcome }, now) => {
 /** Query booleans arrive as `true` (validated) or the string 'true'. */
 const isTrue = (value) => value === true || value === 'true';
 
-const matchesFilters = (visit, query, now) => {
-  const { status, carId, cancellationType } = query;
+const matchesFilters = (visit, query, now, staffing) => {
+  const { status, carId, cancellationType, type } = query;
   if (status && deriveVisitStatus(visit.rows) !== status) return false;
   if (carId && !visit.rows.some((row) => String(row.car) === String(carId))) return false;
+  // KAN-96: filter by appointment type (e.g. SERVICE). A visit matches when every
+  // row shares the requested type, which is always true for a single-row service visit.
+  if (type && !visit.rows.every((row) => row.type === type)) return false;
   if (cancellationType && cancellationOf(visit.rows)?.type !== cancellationType) return false;
   if (isTrue(query.needsReminderCall) && !needsReminderCall(visit, now)) return false;
   if (isTrue(query.needsOutcome) && !needsOutcome(visit, now)) return false;
+  if (isTrue(query.needsStaff) && !needsStaff(visit, staffing, now)) return false;
   return true;
 };
 
@@ -89,10 +100,12 @@ const matchesFilters = (visit, query, now) => {
 export const listVisits = async ({ query = {}, userId = null, ipAddress, now = new Date() }) => {
   const { start, end } = boundsOf(query, now);
   await reconcileOpenAppointments({ userId, ipAddress, now }); // never throws
-  const matching = groupIntoVisits(await findRowsInRange(start, end)).filter((visit) => matchesFilters(visit, query, now));
+  const all = groupIntoVisits(await findRowsInRange(start, end));
+  const staffing = isTrue(query.needsStaff) ? await staffingOf(all) : undefined;
+  const matching = all.filter((visit) => matchesFilters(visit, query, now, staffing));
   const visits = orderForStaff(matching, { sort: query.sort, now });
   const { items, pagination } = paginateVisits(visits, query);
-  return { visits: await present(items, now), pagination };
+  return { visits: await present(items, now, null, staffing), pagination };
 };
 
 const loadVisit = async (id) => {
@@ -162,9 +175,7 @@ export const changeVisitStatus = async ({
   );
   if (update.modifiedCount === 0) throw fail(MSG.MSG81); // changed by somebody else meanwhile
 
-  if (status === AppointmentStatus.CONFIRMED) {
-    await Appointment.updateMany({ _id: { $in: open.map((row) => row._id) }, assignedTo: null }, { $set: { assignedTo: userId } });
-  }
+  if (status === AppointmentStatus.CONFIRMED) await assignOnConfirm({ visit, open, prefer: userId });
   await logStatusChanges(open.map((row) => ({ appointment: row, from: row.status })), {
     status, userId, ipAddress, metadata: note ? { reason: note } : null,
   });
