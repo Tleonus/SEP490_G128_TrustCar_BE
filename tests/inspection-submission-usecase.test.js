@@ -71,7 +71,14 @@ function harness({ savedRecord = record(), savedCar = car(), currentTemplate = t
               return next;
             },
           },
-          cars: { findById: async (id) => id === carId ? working.car : null },
+          cars: {
+            findById: async (id) => id === carId ? working.car : null,
+            updateIfCurrent: async (_id, expected, changes) => {
+              if (expected.status !== working.car.status) return null;
+              working.car = { ...working.car, ...changes };
+              return working.car;
+            },
+          },
           templates: {
             findCurrent: async (key) => key === currentTemplate.templateKey ? currentTemplate : null,
             findRevision: async (key, revision) => revisions.find((item) =>
@@ -90,30 +97,31 @@ function harness({ savedRecord = record(), savedCar = car(), currentTemplate = t
     }),
   };
   const isInspectionImageUrl = (url, id) => id === inspectionId && typeof url === 'string' && url.startsWith(`${imageBase}/`);
-  const submit = createSubmitInspection({ unitOfWork, isInspectionImageUrl, now: () => new Date(submittedAt) });
+  const submit = createSubmitInspection({
+    unitOfWork, isInspectionImageUrl, now: () => new Date(submittedAt), listRecordImages: () => [],
+    generateCpoCertificate: () => 'CPO-FIXTURE', buildHistoryVerifyHash: () => 'fixture-hash',
+    isCertificateCollision: () => false,
+  });
   return { submit, state: () => state, unitOfWork, updateIfCurrent };
 }
 
 describe('submit inspection use case', () => {
-  test('moves a complete draft to PENDING_APPROVAL and snapshots the current template without deciding the verdict or changing the car', async () => {
+  test('finalizes a complete draft, snapshots the template and publishes the car', async () => {
     const h = harness();
 
-    const result = await h.submit(inspectionId, staffId, 1);
+    const { inspectionRecord: result } = await h.submit(inspectionId, staffId, 1);
 
     expect(result).toMatchObject({
-      status: 'PENDING_APPROVAL', templateRevision: 1, templateSnapshot: template(),
+      status: 'SUBMITTED', result: 'PASSED', odo: 50_100, templateRevision: 1, templateSnapshot: template(),
       submittedBy: staffId, submittedAt, updatedBy: staffId,
     });
     expect(result.answers).toEqual(record().answers);
-    expect(result).not.toHaveProperty('criteria');
-    expect(result).not.toHaveProperty('result');
-    expect(result).not.toHaveProperty('odo');
-    expect(h.state().car).toEqual(car());
-    expect(h.state().events).toEqual([expect.objectContaining({
+    expect(h.state().car).toMatchObject({ status: 'AVAILABLE', cpoCertificateId: 'CPO-FIXTURE' });
+    expect(h.state().events).toContainEqual(expect.objectContaining({
       eventType: ActivityEventType.INSPECTION_SUBMITTED, performedBy: staffId,
       targetModel: 'InspectionRecord', targetId: inspectionId,
-      metadata: expect.objectContaining({ fromStatus: InspectionStatus.DRAFT, toStatus: 'PENDING_APPROVAL', templateRevision: 1 }),
-    })]);
+      metadata: expect.objectContaining({ fromStatus: InspectionStatus.DRAFT, toStatus: 'SUBMITTED', templateRevision: 1 }),
+    }));
   });
 
   test('uses the latest form revision and requires answers added since the saved revision', async () => {
@@ -150,7 +158,7 @@ describe('submit inspection use case', () => {
     const latest = template(2);
     const h = harness({ savedRecord: saved, currentTemplate: latest, history: [original, latest] });
 
-    const result = await h.submit(inspectionId, staffId, 2);
+    const { inspectionRecord: result } = await h.submit(inspectionId, staffId, 2);
 
     expect(result.archivedAnswers).toContainEqual({
       questionId: 'retired-question', value: 'giữ trong lịch sử', sourceRevision: 1,
@@ -212,7 +220,7 @@ describe('submit inspection use case', () => {
     expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
     expect(results.filter(({ status }) => status === 'rejected').map(({ reason }) => reason.code))
       .toEqual(['INSPECTION_LOCKED']);
-    expect(h.state().events).toHaveLength(1);
+    expect(h.state().events).toHaveLength(2);
   });
 
   test('rolls back the status update when audit persistence fails', async () => {

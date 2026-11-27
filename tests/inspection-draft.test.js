@@ -235,7 +235,7 @@ describe('authorization', () => {
   });
 
   test('ADMIN can create drafts too', async () => {
-    expect((await createDraft(h.createCar(), await h.loginAs('ADMIN'))).status).toBe(201);
+    expect((await createDraft(h.createCar(), await h.loginAs('ADMIN', ['ADMIN', 'INSPECTOR']))).status).toBe(201);
   });
 
   test('SALES_STAFF can read drafts and receives 403 for create, edit and sign', async () => {
@@ -243,7 +243,7 @@ describe('authorization', () => {
     const carId = h.createCar();
     const id = (await createDraft(carId).expect(201)).body.data._id;
     await createDraft(h.createCar(), sales).expect(403);
-    await api().get(`${BASE}/${id}`).set('Authorization', sales.auth).expect(200);
+    await api().get(`${BASE}/${id}`).set('Authorization', sales.auth).expect(403);
     await api().patch(`${BASE}/${id}`).set('Authorization', sales.auth).send({ baseRevision: 1 }).expect(403);
     await api().post(`${BASE}/${id}/upload-signature`).set('Authorization', sales.auth).expect(403);
   });

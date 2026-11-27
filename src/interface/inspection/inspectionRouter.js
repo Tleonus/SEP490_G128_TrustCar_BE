@@ -1,19 +1,20 @@
 import { Router } from 'express';
-import { Permissions } from '../../constants/appConstants.js';
-import { requireAdmin, requirePermission } from '../../middlewares/roleMiddleware.js';
+import { Permissions, Roles, StaffRoles } from '../../constants/appConstants.js';
+import { requireAdmin, requirePermission, requireRole } from '../../middlewares/roleMiddleware.js';
 import { objectIdParamSchema } from '../../middlewares/validateMiddleware.js';
+import { sendPaginated } from '../../utils/apiResponse.js';
 import { quickInspectSchema, rejectInspectionSchema } from '../../routes/inspectionSchemas.js';
 import {
-  draftPatch, emptyProposalAction, proposalCreateBody, proposalDraftBody, proposalListQuery,
+  certificateListQuery, draftPatch, emptyProposalAction, inspectionQueueQuery, proposalCreateBody, proposalDraftBody, proposalListQuery,
   proposalReturnBody, submitBody, templateBody, templateKeyParams,
 } from './inspectionSchemas.js';
-import { inspectionResponse, result, sendInspectionError, verdictResponse } from './inspectionResponses.js';
+import { carResponse, inspectionResponse, result, sendInspectionError, verdictResponse } from './inspectionResponses.js';
 
-// T023 adds the permission to the default role matrix when this router is mounted.
-const SUBMIT_PERMISSION = 'inspection:submit';
-const read = requirePermission(Permissions.INSPECTION_READ);
-const write = requirePermission(Permissions.INSPECTION_WRITE);
-const submit = requirePermission(SUBMIT_PERMISSION);
+const inspector = requireRole(Roles.INSPECTOR);
+const read = [requireRole(...StaffRoles), requirePermission(Permissions.INSPECTION_READ)];
+const readInspection = [requireRole(Roles.INSPECTOR, Roles.ADMIN), requirePermission(Permissions.INSPECTION_READ)];
+const write = [inspector, requirePermission(Permissions.INSPECTION_WRITE)];
+const submit = [inspector, requirePermission(Permissions.INSPECTION_SUBMIT)];
 const admin = [requireAdmin, requirePermission(Permissions.INSPECTION_ADMIN)];
 
 function validate(schema, property, options) {
@@ -51,12 +52,23 @@ function handle(run, { status = 200, message, project, conflictingCarStatus = fa
   };
 }
 
+function list(run, message) {
+  return async (req, res) => {
+    try {
+      const { items, ...pagination } = await run(req.query);
+      return sendPaginated(res, message, items, pagination);
+    } catch (error) {
+      return sendInspectionError(res, error);
+    }
+  };
+}
+
 /** Protected router. Mount once under /api/v1/inspections with the application's verifyToken. */
 export function createInspectionRouter({ useCases, authenticate }) {
   const router = Router();
   router.use(authenticate);
 
-  router.get('/form-templates/:templateKey', read, byTemplateKey, handle(
+  router.get('/form-templates/:templateKey', readInspection, byTemplateKey, handle(
     (req) => useCases.getTemplate(req.params.templateKey),
     { message: 'Inspection form template retrieved.' },
   ));
@@ -67,10 +79,11 @@ export function createInspectionRouter({ useCases, authenticate }) {
 
   const proposals = '/form-template-proposals';
   const proposalAccess = requirePermission(Permissions.INSPECTION_WRITE, Permissions.INSPECTION_ADMIN);
-  router.get(proposals, proposalAccess, validate(proposalListQuery, 'query'), handle(
+  const proposalRoles = requireRole(Roles.INSPECTOR, Roles.ADMIN);
+  router.get(proposals, proposalRoles, proposalAccess, validate(proposalListQuery, 'query'), handle(
     (req) => useCases.listTemplateProposals(actor(req), req.query), { message: 'Template proposals retrieved.' },
   ));
-  router.get(`${proposals}/:id`, proposalAccess, byId, handle(
+  router.get(`${proposals}/:id`, proposalRoles, proposalAccess, byId, handle(
     (req) => useCases.getTemplateProposal(req.params.id, actor(req)), { message: 'Template proposal retrieved.' },
   ));
   router.post(proposals, write, strictBody(proposalCreateBody), handle(
@@ -89,8 +102,24 @@ export function createInspectionRouter({ useCases, authenticate }) {
     (req) => useCases.approveTemplateProposal(req.params.id, req.userId), { message: 'Template revision published.' },
   ));
 
+  router.get('/queue', inspector, read, validate(inspectionQueueQuery, 'query'),
+    list(useCases.listQueue, 'Vehicles for inspection retrieved.'));
+  router.get('/certificates', read, validate(certificateListQuery, 'query'),
+    list(useCases.listCertificates, 'CPO certificates retrieved.'));
+  router.get('/certificates/:id', read, byId, handle(
+    (req) => useCases.getCertificateDetail(req.params.id),
+    { message: 'CPO certificate retrieved.', project: ({ car, ...certificate }) => ({
+      ...certificate, car: carResponse(car),
+    }) },
+  ));
   router.get('/cars/:id/current-certificate', read, byId, handle(
     (req) => useCases.getCurrentCertificate(req.params.id), { message: 'Current CPO certificate retrieved.' },
+  ));
+  router.get('/cars/:id', inspector, read, byId, handle(
+    (req) => useCases.getInspectionCar(req.params.id),
+    { message: 'Vehicle for inspection retrieved.', project: ({ car, openInspection }) => ({
+      car: carResponse(car), openInspection,
+    }) },
   ));
   router.post('/cars/:id/draft', write, byId, handle(
     (req) => useCases.createDraft(req.params.id, req.userId),
@@ -104,12 +133,12 @@ export function createInspectionRouter({ useCases, authenticate }) {
     (req) => useCases.signQuickInspectionUpload(req.params.id, actor(req)),
     { message: 'Upload signature issued.' },
   ));
-  router.put('/cars/:id/approve-sale', admin, byId, handle(
+  router.put('/cars/:id/approve-sale', submit, byId, handle(
     (req) => useCases.approveSale(req.params.id),
     { message: 'Car approved for sale successfully.' },
   ));
 
-  router.get('/:id', read, byId, handle(
+  router.get('/:id', readInspection, byId, handle(
     (req) => useCases.getInspection(req.params.id),
     { message: 'Inspection retrieved.', project: inspectionResponse },
   ));
@@ -123,11 +152,7 @@ export function createInspectionRouter({ useCases, authenticate }) {
   ));
   router.post('/:id/submit', submit, byId, strictBody(submitBody), handle(
     (req) => useCases.submitInspection(req.params.id, req.userId, req.body.baseRevision),
-    { message: 'Inspection submitted for approval.', project: inspectionResponse, conflictingCarStatus: true },
-  ));
-  router.post('/:id/approve', admin, byId, handle(
-    (req) => useCases.approveInspection(req.params.id, actor(req)),
-    { message: 'Inspection approved.', project: verdictResponse, conflictingCarStatus: true },
+    { message: 'Inspection finalized.', project: verdictResponse, conflictingCarStatus: true },
   ));
   router.put('/:id/reject', admin, byId, compatibleBody(rejectInspectionSchema), handle(
     (req) => useCases.rejectInspection(req.params.id, req.userId, req.body.reason),

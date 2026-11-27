@@ -24,7 +24,6 @@ const save = (id, data) => api().patch(`${base}/${id}`).set('Authorization', ins
   .send({ baseRevision: 2, ...data });
 const submit = (id) => api().post(`${base}/${id}/submit`).set('Authorization', inspector.auth)
   .send({ baseRevision: 2 });
-const approve = (id) => api().post(`${base}/${id}/approve`).set('Authorization', admin.auth);
 const results = (outcome = 'PASS') => groups.map(({ key }) => ({
   criterionId: key, outcome: key === 'G6_BODYWORK' ? outcome : 'PASS',
 }));
@@ -63,25 +62,29 @@ test('creates and finalizes a compact inspection without legacy fields, using th
   expect(saved.data.results).toHaveLength(groups.length);
   expect(saved.data.template).toMatchObject({ format: 'CRITERIA', revision: 2 });
   expect(saved.data).toMatchObject({ odo, templateRevision: 2 });
+  const opened = await api().get(`${base}/cars/${carId}`).set('Authorization', inspector.auth).expect(200);
+  expect(opened.body.data.openInspection).toMatchObject({ _id: id, status: 'DRAFT' });
 
-  await submit(id).expect(200);
+  const { body: verdict } = await submit(id).expect(200);
   await save(id, { odo: 52_000 }).expect(409);
-  const { body: verdict } = await approve(id).expect(200);
   expect(verdict.data.inspectionRecord).toMatchObject({ result: 'PASSED', status: 'SUBMITTED', odo, templateRevision: 2 });
-  expect(verdict.data.car).toMatchObject({ status: 'APPROVED_CPO', mileage: odo, cpoCertificateId: expect.any(String) });
+  expect(verdict.data.car).toMatchObject({ status: 'AVAILABLE', mileage: odo, cpoCertificateId: expect.any(String),
+    listedDate: expect.any(String) });
   expect(h.records.get(id)).not.toHaveProperty('checklistSnapshot');
   expect(h.records.get(id)).not.toHaveProperty('criteria');
   expect((await get(id).expect(200)).body.data.results).toHaveLength(groups.length);
-  await approve(id).expect(409);
+  const certificate = await api().get(`${base}/certificates/${carId}`).set('Authorization', inspector.auth).expect(200);
+  expect(certificate.body.data).toMatchObject({ templateRevision: 2, inspectionId: id,
+    verificationPath: expect.stringMatching(/^\/verify\/[a-f\d]{24}$/) });
+  await submit(id).expect(409);
 });
 
-test('renews a listed car certificate only after approval, preserving the selling status', async () => {
+test('renews a listed car certificate on passing submission, preserving the selling status', async () => {
   const carId = listedCar();
   const id = await open(carId);
   await save(id, { odo, results: results() }).expect(200);
-  await submit(id).expect(200);
   expect(h.car(carId)).toMatchObject({ status: 'AVAILABLE', cpoCertificateId: previousCode, historyVerifyHash: previousHash });
-  const { body } = await approve(id).expect(200);
+  const { body } = await submit(id).expect(200);
   expect(body.data.car.status).toBe('AVAILABLE');
   expect(body.data.car.cpoCertificateId).not.toBe(previousCode);
   expect(body.data.inspectionRecord.cpoCertificateId).toBe(body.data.car.cpoCertificateId);
@@ -97,23 +100,21 @@ test.each(['FAIL', 'NOT_CHECKABLE'])('keeps the previous certificate when a requ
   const carId = listedCar();
   const id = await open(carId);
   await save(id, { odo, results: results(outcome) }).expect(200);
-  await submit(id).expect(200);
-  const { body } = await approve(id).expect(200);
+  const { body } = await submit(id).expect(200);
   expect(body.data.inspectionRecord).toMatchObject({ result: 'FAILED', cpoCertificateId: null });
   expect(h.car(carId)).toMatchObject({
     status: 'AVAILABLE', mileage: 50_000, cpoCertificateId: previousCode, historyVerifyHash: previousHash,
   });
 });
 
-test('refuses renewal when the car becomes reserved before approval', async () => {
+test('refuses renewal when the car becomes reserved before submission', async () => {
   const carId = listedCar();
   const id = await open(carId);
   await save(id, { odo, results: results() }).expect(200);
-  await submit(id).expect(200);
   h.cars.get(carId).status = 'RESERVED';
-  const response = await approve(id).expect(409);
+  const response = await submit(id).expect(409);
   expect(response.body.code).toBe('INVALID_CAR_STATUS');
-  expect(h.records.get(id).status).toBe('PENDING_APPROVAL');
+  expect(h.records.get(id).status).toBe('DRAFT');
   expect(h.car(carId)).toMatchObject({ status: 'RESERVED', cpoCertificateId: previousCode, historyVerifyHash: previousHash });
 });
 
@@ -121,20 +122,19 @@ test('rolls back the finalized inspection if the car update cannot match its sta
   const carId = listedCar();
   const id = await open(carId);
   await save(id, { odo, results: results() }).expect(200);
-  await submit(id).expect(200);
   h.Car.findOneAndUpdate.mockReturnValueOnce({ lean: async () => null });
-  await approve(id).expect(409);
+  await submit(id).expect(409);
   expect(h.Car.findOneAndUpdate.mock.calls.at(-1)[0]).toMatchObject({
     status: 'AVAILABLE', cpoCertificateId: previousCode,
   });
-  expect(h.records.get(id)).toMatchObject({ status: 'PENDING_APPROVAL', cpoCertificateId: null });
+  expect(h.records.get(id)).toMatchObject({ status: 'DRAFT', cpoCertificateId: null });
   expect(h.car(carId)).toMatchObject({ cpoCertificateId: previousCode, historyVerifyHash: previousHash });
 });
 
 test('returns a criteria inspection to draft with its saved results', async () => {
   const id = await open(listedCar());
   await save(id, { odo, results: results() }).expect(200);
-  await submit(id).expect(200);
+  Object.assign(h.record(id), { status: 'PENDING_APPROVAL', submittedBy: inspector.id, submittedAt: new Date() });
   await api().put(`${base}/${id}/reject`).set('Authorization', admin.auth)
     .send({ reason: 'Cần kiểm tra lại tình trạng thân vỏ' }).expect(200);
   const { body } = await get(id).expect(200);
@@ -146,7 +146,7 @@ test('returns a criteria inspection to draft with its saved results', async () =
 
 test('rejects the legacy quick inspection route for a car using the criteria template', async () => {
   const carId = h.createCar({ status: 'INCOMING', mileage: 50_000 });
-  const response = await api().post(`${base}/cars/${carId}/inspect`).set('Authorization', admin.auth).send({
+  const response = await api().post(`${base}/cars/${carId}/inspect`).set('Authorization', inspector.auth).send({
     criteria: {
       noMajorAccident: true, noWaterDamage: true, engineGearboxIntact: true,
       verifiedOdo: true, electricalSystemPassed: true,
@@ -167,7 +167,7 @@ test('serializes result writes and submission so locked results cannot be overwr
   expect(submitted.status).toBe(200);
   expect([200, 409]).toContain(write.status);
   const { body } = await get(id).expect(200);
-  expect(body.data.status).toBe('PENDING_APPROVAL');
+  expect(body.data.status).toBe('SUBMITTED');
   expect(body.data.results.find(({ criterionId }) => criterionId === 'G6_BODYWORK').outcome)
     .toBe(write.status === 200 ? 'FAIL' : 'PASS');
   await save(id, { results: results() }).expect(409);
@@ -182,8 +182,8 @@ test('allows a saved questionnaire draft to submit against v1 after the head swi
     },
   });
   h.fillDraft(id, { mileage: odo });
-  await api().post(`${base}/${id}/submit`).set('Authorization', inspector.auth).send({ baseRevision: 1 }).expect(200);
+  const { body } = await api().post(`${base}/${id}/submit`).set('Authorization', inspector.auth)
+    .send({ baseRevision: 1 }).expect(200);
   expect(h.records.get(id).checklistSnapshot).toMatchObject({ revision: 1 });
-  const { body } = await approve(id).expect(200);
   expect(body.data.inspectionRecord).toMatchObject({ checklistVersion: '1', odo, result: 'PASSED' });
 });
