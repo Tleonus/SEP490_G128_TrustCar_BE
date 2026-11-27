@@ -128,6 +128,9 @@ export const toDepositDto = (deposit, { forStaff = false, customer = null, now =
     currency: deposit.currency,
     status: deposit.status,
     paymentStatus: deposit.paymentStatus,
+    // KAN-99: cổng khách đã chọn lúc tạo cọc. FE dùng để mời thanh toán lại qua VNPay
+    // và để nhân viên biết tiền cọc đến từ cổng nào (bản ghi cũ mặc định MANUAL).
+    paymentProvider: deposit.paymentProvider ?? PaymentProvider.MANUAL,
     holdActive: Boolean(deposit.holdActive),
     createdAt: deposit.createdAt,
     reservedAt: deposit.reservedAt,
@@ -202,32 +205,32 @@ const toPublicCarDto = (car) => (car ? {
  */
 const auditEntry = ({ action, actor, deposit, carBefore = null, carAfter = null, summary,
   ipAddress = null, userAgent = null, extra = {} }) => ({
-  eventType: carBefore || carAfter ? ActivityEventType.CAR_STATUS_CHANGED : ActivityEventType.CAR_UPDATED,
-  performedBy: actor?._id ?? null,
-  performedByEmail: actor?.email ?? null,
-  targetModel: 'Car',
-  targetId: deposit.carId,
-  targetCode: deposit.carVehicleCode ?? null,
-  changes: carBefore || carAfter ? { before: { status: carBefore }, after: { status: carAfter } } : null,
-  summary: String(summary).slice(0, 500),
-  ipAddress,
-  userAgent,
-  metadata: {
-    module: 'DEPOSIT',
-    action,
-    result: 'SUCCESS',
-    depositId: id(deposit._id),
-    depositCode: deposit.depositCode,
-    customerUserId: id(deposit.userId),
-    customerId: id(deposit.customerId),
-    depositAmount: deposit.depositAmount,
-    depositStatus: deposit.status,
-    paymentStatus: deposit.paymentStatus,
-    reservedAt: deposit.reservedAt,
-    expiresAt: deposit.expiresAt,
-    ...extra,
-  },
-});
+    eventType: carBefore || carAfter ? ActivityEventType.CAR_STATUS_CHANGED : ActivityEventType.CAR_UPDATED,
+    performedBy: actor?._id ?? null,
+    performedByEmail: actor?.email ?? null,
+    targetModel: 'Car',
+    targetId: deposit.carId,
+    targetCode: deposit.carVehicleCode ?? null,
+    changes: carBefore || carAfter ? { before: { status: carBefore }, after: { status: carAfter } } : null,
+    summary: String(summary).slice(0, 500),
+    ipAddress,
+    userAgent,
+    metadata: {
+      module: 'DEPOSIT',
+      action,
+      result: 'SUCCESS',
+      depositId: id(deposit._id),
+      depositCode: deposit.depositCode,
+      customerUserId: id(deposit.userId),
+      customerId: id(deposit.customerId),
+      depositAmount: deposit.depositAmount,
+      depositStatus: deposit.status,
+      paymentStatus: deposit.paymentStatus,
+      reservedAt: deposit.reservedAt,
+      expiresAt: deposit.expiresAt,
+      ...extra,
+    },
+  });
 
 const runAtomic = (work) => runDepositAtomic(work, { maxAttempts: getDepositSettings().maxTxAttempts });
 
@@ -864,8 +867,9 @@ export const reconcileHolds = async () => {
  *
  * Side effects (one DB write): the generated `vnpTxnRef` is persisted on the
  * Deposit so `vnpayIpnService` can match the webhook back to the row. The
- * stamp is unique sparse — regenerating the URL writes a fresh ref, which is
- * fine because only the LATEST txnRef is accepted by the IPN handler.
+ * stamp is unique per non-empty value (partial unique index) — regenerating the
+ * URL writes a fresh ref, which is fine because only the LATEST txnRef is
+ * accepted by the IPN handler.
  *
  * @param {object} args
  * @param {object} args.user       JWT user (from verifyToken)
@@ -921,7 +925,7 @@ export const createVnpayPaymentIntent = async ({ user, depositId, ipAddress }) =
     throw new AppError('Không tạo được liên kết thanh toán VNPay.', 500, 'VNPAY_URL_BUILD_FAILED');
   }
 
-  // Unique sparse index on vnpayTxnRef is the hard guard — the random ms
+  // Partial unique index on vnpayTxnRef is the hard guard — the random ms
   // suffix makes collisions essentially impossible. We retry once in the
   // astronomical case of a collision.
   for (let attempt = 1; attempt <= 2; attempt += 1) {

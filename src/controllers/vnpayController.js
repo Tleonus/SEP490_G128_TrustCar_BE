@@ -15,7 +15,7 @@ import Deposit from '../models/Deposit.js';
 import { createVnpayPaymentIntent } from '../services/depositService.js';
 import { handleVnpayIpn } from '../services/vnpayIpnService.js';
 import { verifySignature } from '../services/vnpayService.js';
-import { getVnpayConfig, isIpAllowed, assertVnpayEnabled } from '../config/vnpay.js';
+import { getVnpayConfig, isIpAllowed } from '../config/vnpay.js';
 import { sendSuccess, AppError } from '../utils/apiResponse.js';
 import {
   DepositErrorCode,
@@ -139,12 +139,15 @@ export const vnpayReturn = handle(async (req, res) => {
 
 /** @route GET /api/v1/deposits/vnpay-policy (public) — show params the FE needs before redirect */
 export const getVnpayPolicy = handle(async (req, res) => {
-  const cfg = assertVnpayEnabled();
+  // Status endpoint: cổng tắt là trạng thái bình thường (máy dev chưa có merchant
+  // sandbox), không phải lỗi. Trả 200 với enabled:false để FE ẩn lựa chọn VNPay
+  // mà không biến mỗi lần mở trang thành một dòng 503 + stack trong log.
+  const cfg = getVnpayConfig();
   return sendSuccess(res, 200, 'VNPay policy.', {
     enabled: cfg.enabled,
     timeoutMinutes: cfg.timeoutMinutes,
     locale: cfg.locale,
-    returnUrl: cfg.returnUrl,
+    returnUrl: cfg.enabled ? cfg.returnUrl : null,
   });
 });
 

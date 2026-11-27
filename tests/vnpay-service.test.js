@@ -71,10 +71,12 @@ describe('canonicalise: VNPay signed-string contract', () => {
     expect(str).not.toMatch(/vnp_SecureHashType/);
   });
 
-  test('url-encodes values the same way URLSearchParams does', () => {
-    // 'Dat coc' with a space + 'TC/01' with a slash.
+  test('url-encodes values form-urlencoded style (space → "+", slash → %2F)', () => {
+    // VNPay's official Node sample uses application/x-www-form-urlencoded, so
+    // space is `+` not `%20`. Any drift here means outbound signatures will
+    // fail verification on VNPay's side with "Sai chữ ký".
     const str = canonicalise({ vnp_OrderInfo: 'Dat coc', vnp_TxnRef: 'TC/01' });
-    expect(str).toBe('vnp_OrderInfo=Dat%20coc&vnp_TxnRef=TC%2F01');
+    expect(str).toBe('vnp_OrderInfo=Dat+coc&vnp_TxnRef=TC%2F01');
   });
 
   test('is deterministic when called twice on the same input', () => {
