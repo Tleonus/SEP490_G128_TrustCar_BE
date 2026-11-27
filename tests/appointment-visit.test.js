@@ -220,8 +220,16 @@ describe('needsReminderCall / needsOutcome', () => {
 
   it('customerExtras bundles the count with whether a move is still possible', () => {
     const early = new Date(SLOT.getTime() - 48 * 3600e3);
-    expect(customerExtras(visitOf([mkRow(1)]), 1, early)).toEqual({ rescheduleCount: 1, canReschedule: true });
-    expect(customerExtras(visitOf([mkRow(1)]), 2, early)).toEqual({ rescheduleCount: 2, canReschedule: false });
+    expect(customerExtras(visitOf([mkRow(1)]), 1, early)).toEqual({ rescheduleCount: 1, customerRescheduleCount: 1, canReschedule: true });
+    expect(customerExtras(visitOf([mkRow(1)]), 2, early)).toEqual({ rescheduleCount: 2, customerRescheduleCount: 2, canReschedule: false });
+  });
+
+  it('customerExtras: only the customer\'s own moves use up the limit; the total is shown uncapped', () => {
+    const early = new Date(SLOT.getTime() - 48 * 3600e3);
+    expect(customerExtras(visitOf([mkRow(1)]), { total: 7, byCustomer: 1 }, early))
+      .toEqual({ rescheduleCount: 7, customerRescheduleCount: 1, canReschedule: true });
+    expect(customerExtras(visitOf([mkRow(1)]), { total: 5, byCustomer: 2 }, early))
+      .toEqual({ rescheduleCount: 5, customerRescheduleCount: 2, canReschedule: false });
   });
 });
 
@@ -274,8 +282,8 @@ describe('DTO mappers (REQ-024, AC-01, AC-14)', () => {
   it('customer view shows exactly the contracted keys and no forbidden or internal field', () => {
     const dto = toCustomerVisit(visit, carsById);
     expect(Object.keys(dto).sort()).toEqual([
-      'appointments', 'canReschedule', 'cancellationReason', 'cancellationType', 'createdAt', 'durationMinutes', 'isLateCancellation',
-      'location', 'notes', 'rescheduleCount', 'scheduledAt', 'status', 'type', 'visitCode', 'visitId', // 1.1.0: canReschedule, rescheduleCount
+      'appointments', 'canReschedule', 'cancellationReason', 'cancellationType', 'createdAt', 'customerRescheduleCount', 'durationMinutes',
+      'isLateCancellation', 'location', 'notes', 'rescheduleCount', 'scheduledAt', 'status', 'type', 'visitCode', 'visitId', // 1.1.0: canReschedule, rescheduleCount
     ]);
     expect(Object.keys(dto.appointments[0].car).sort()).toEqual(
       ['_id', 'make', 'model', 'primaryImageUrl', 'variant', 'vehicleCode', 'year'],
