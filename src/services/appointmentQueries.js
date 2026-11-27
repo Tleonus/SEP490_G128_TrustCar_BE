@@ -15,7 +15,7 @@ import { CarStatus } from '../constants/appConstants.js';
 import { OPEN_STATUSES } from '../constants/appointmentRules.js';
 
 const OPEN_FILTER = { status: { $in: OPEN_STATUSES }, isActive: true };
-const LIGHT_FIELDS = 'customer car scheduledAt status isActive visitSeat slotSeat';
+const LIGHT_FIELDS = 'customer car scheduledAt status isActive visitSeat slotSeat assignedTo type';
 const CAR_FIELDS = 'vehicleCode make model variant year status isActive images';
 const CUSTOMER_FIELDS = 'fullName phone email';
 const USER_FIELDS = 'fullName';
@@ -33,9 +33,9 @@ export const findCustomerOpen = (customerId, now, { session = null } = {}) =>
     .select(LIGHT_FIELDS).session(session).lean();
 
 /** Open rows of every customer with `from <= scheduledAt < toExclusive` (one query for /slots). */
-export const findOpenInRange = (from, toExclusive) =>
+export const findOpenInRange = (from, toExclusive, { session = null } = {}) =>
   Appointment.find({ ...OPEN_FILTER, scheduledAt: { $gte: from, $lt: toExclusive } })
-    .select(LIGHT_FIELDS).lean();
+    .select(LIGHT_FIELDS).session(session).lean();
 
 /** Like `findOpenInRange` plus the appointment code (staff slot view shows visit codes). */
 export const findOpenInRangeWithCode = (from, toExclusive) =>
@@ -131,7 +131,7 @@ export const findCustomerContact = (customerId) =>
  */
 export const findHiddenReschedules = ({ customerIds, reasons }) =>
   Appointment.find({ customer: { $in: customerIds }, isActive: false, cancellationReason: { $in: reasons } })
-    .select('customer appointmentCode cancellationReason scheduledAt').lean();
+    .select('customer appointmentCode cancellationReason scheduledAt updatedBy').lean();
 
 /**
  * The customer when they exist AND have an active CUSTOMER account, else null. Staff may only

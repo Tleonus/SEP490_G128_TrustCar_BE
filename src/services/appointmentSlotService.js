@@ -16,9 +16,10 @@ import {
   parseDateKey, vnInstant, startOfVnDay, vnDateKey, slotStartsForDate, windowReason, formatVnIso,
 } from './appointmentSlotRules.js';
 import { findOpenInRange, findVisitRowsByAnyId } from './appointmentQueries.js';
-import { getSlotCapacity } from './appointmentCapacity.js';
+import { getDayCapacities } from './appointmentCapacity.js';
 
 const DAY_MS = 24 * 3600 * 1000;
+const dayKeysOf = (first, days) => Array.from({ length: days }, (_, i) => vnDateKey(new Date(first.getTime() + i * DAY_MS)));
 
 /** Validates `from`/`to` (YYYY-MM-DD, Vietnam days) and returns the instants of both days. */
 export const parseRange = (from, to, now) => {
@@ -83,7 +84,8 @@ const describeSlot = (start, rows, { customerId, wanted, now, capacity }) => {
 export const getSlots = async ({ customerId, carIds, from, to, excludeVisitId = null, now = new Date() }) => {
   if (!customerId) throw fail(MSG.MSG31);
   const { first, days } = parseRange(from, to, now);
-  const capacity = await getSlotCapacity();
+  const dateKeys = dayKeysOf(first, days);
+  const { capacityOn } = await getDayCapacities(dateKeys); // Admin ceiling and staff at work each day
   let rows = await findOpenInRange(first, new Date(first.getTime() + days * DAY_MS));
   if (excludeVisitId) {
     const own = await findVisitRowsByAnyId(excludeVisitId, { customerId });
@@ -95,12 +97,12 @@ export const getSlots = async ({ customerId, carIds, from, to, excludeVisitId = 
   const wanted = carIds.map(String);
 
   const result = [];
-  for (let i = 0; i < days; i += 1) {
-    const date = vnDateKey(new Date(first.getTime() + i * DAY_MS));
+  dateKeys.forEach((date) => {
+    const capacity = capacityOn(date);
     const slots = slotStartsForDate(date).map((start) =>
       describeSlot(start, byTime.get(start.getTime()) ?? [], { customerId, wanted, now, capacity }));
     result.push({ date, slots });
-  }
+  });
   return { days: result };
 };
 

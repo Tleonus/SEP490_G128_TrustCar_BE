@@ -35,7 +35,7 @@ describe('read queries', () => {
     base(c2, b, LATER);
     const rows = await findOpenAtSlot(SLOT);
     expect(rows).toHaveLength(1);
-    expect(Object.keys(rows[0]).sort()).toEqual(['_id', 'car', 'customer', 'isActive', 'scheduledAt', 'status']);
+    expect(Object.keys(rows[0]).sort()).toEqual(['_id', 'assignedTo', 'car', 'customer', 'isActive', 'scheduledAt', 'status', 'type']);
   });
 
   it('findCustomerOpen is limited to one customer and to the future', async () => {

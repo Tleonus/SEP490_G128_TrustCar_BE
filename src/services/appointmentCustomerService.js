@@ -15,7 +15,7 @@ import { RELEASE_HOLDS } from './appointmentHolds.js';
 import { normalizeReason, paginateVisits } from './appointmentInput.js';
 import { findCustomerRows, findVisitRowsByAnyId, loadVisitContext } from './appointmentQueries.js';
 import { groupIntoVisits, deriveVisitStatus, isOpenRow, customerExtras, visitContaining } from './appointmentVisitRules.js';
-import { countReschedules } from './appointmentRescheduleChain.js';
+import { rescheduleCountsOf } from './appointmentRescheduleChain.js';
 import { toCustomerVisit } from './appointmentVisitMapper.js';
 import { logStatusChanges } from './appointmentAudit.js';
 
@@ -25,7 +25,7 @@ const requireCustomer = (customerId) => {
 
 /** DTOs of a page of visits, with how often each was rescheduled and whether it still can be (REQ-024). */
 const present = async (visits, now) => {
-  const [{ carsById }, counts] = await Promise.all([loadVisitContext(visits), countReschedules(visits)]);
+  const [{ carsById }, counts] = await Promise.all([loadVisitContext(visits), rescheduleCountsOf(visits)]);
   return visits.map((visit) => toCustomerVisit(visit, carsById, customerExtras(visit, counts.get(visit.visitId), now)));
 };
 
@@ -96,7 +96,7 @@ export const cancelMyVisit = async ({ customerId, userId, id, reason, ipAddress,
   await logStatusChanges(changes, { status: AppointmentStatus.CANCELLED, userId, ipAddress, metadata: { reason: note } });
   const { carsById } = await loadVisitContext([fresh]);
   // No e-mail when the customer cancels their own visit (they just did it on screen).
-  const counts = await countReschedules([fresh]);
+  const counts = await rescheduleCountsOf([fresh]);
   return toCustomerVisit(fresh, carsById, customerExtras(fresh, counts.get(fresh.visitId), now));
 };
 
