@@ -54,17 +54,25 @@ export const toAscii = (input) => {
 
 /**
  * Build the canonical string VNPay expects as the HMAC input.
- * Sorts the keys alphabetically and encodes values using `URLSearchParams`,
- * which follows the same `application/x-www-form-urlencoded` rules VNPay uses.
+ *
+ * ── IMPORTANT ─────────────────────────────────────────────────────────────────
+ * VNPay's official Node sample uses `application/x-www-form-urlencoded` style
+ * where SPACE is encoded as `+`, not `%20`. `encodeURIComponent` emits `%20`,
+ * so we post-process every encoded value to swap `%20` → `+`. Without this,
+ * every request containing a space in `vnp_OrderInfo` (which is always, since
+ * we send "Dat coc xe ...") fails sandbox verification with "Sai chữ ký".
+ *
+ * The exact same canonical string MUST be used both when computing the HMAC
+ * and when building the redirect URL, otherwise the hash we send and the hash
+ * VNPay recomputes on their side will not match.
  *
  * @param {Record<string, string|number>} params
  * @returns {string}
  */
 export const canonicalise = (params) => {
   const keys = Object.keys(params).filter((k) => !HASH_FIELDS.includes(k)).sort();
-  return keys
-    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(params[k]))}`)
-    .join('&');
+  const enc = (v) => encodeURIComponent(String(v)).replace(/%20/g, '+');
+  return keys.map((k) => `${enc(k)}=${enc(params[k])}`).join('&');
 };
 
 /**
@@ -176,17 +184,17 @@ export const buildPaymentUrl = ({ deposit, ipAddress, now = new Date(), config }
   const ipAddr = (ipAddress || '').replace(/^::ffff:/i, '').trim() || '127.0.0.1';
 
   const params = {
-    vnp_Version:    '2.1.0',
-    vnp_Command:    'pay',
-    vnp_TmnCode:    cfg.tmnCode,
-    vnp_Amount:     String(amount),
-    vnp_CurrCode:   'VND',
-    vnp_TxnRef:     vnpTxnRef,
-    vnp_OrderInfo:  orderInfo,
-    vnp_OrderType:  'other',
-    vnp_Locale:     cfg.locale,
-    vnp_ReturnUrl:  cfg.returnUrl,
-    vnp_IpAddr:     ipAddr,
+    vnp_Version: '2.1.0',
+    vnp_Command: 'pay',
+    vnp_TmnCode: cfg.tmnCode,
+    vnp_Amount: String(amount),
+    vnp_CurrCode: 'VND',
+    vnp_TxnRef: vnpTxnRef,
+    vnp_OrderInfo: orderInfo,
+    vnp_OrderType: 'other',
+    vnp_Locale: cfg.locale,
+    vnp_ReturnUrl: cfg.returnUrl,
+    vnp_IpAddr: ipAddr,
     vnp_CreateDate: createDate,
     vnp_ExpireDate: expireDate,
   };
@@ -195,6 +203,9 @@ export const buildPaymentUrl = ({ deposit, ipAddress, now = new Date(), config }
   const query = canonicalise(params);
   const paymentUrl = `${cfg.paymentUrl}?${query}&vnp_SecureHash=${secureHash}`;
 
+  console.log('[VNPAY] secretLen:', cfg.hashSecret?.length);
+  console.log('[VNPAY] signData:', canonicalise(params));
+  console.log('[VNPAY] finalUrl:', paymentUrl);
   return { paymentUrl, vnpTxnRef, expiresAt, params };
 };
 
@@ -209,14 +220,14 @@ export const summariseIpnForLog = (query) => {
   const hash = typeof query?.vnp_SecureHash === 'string' ? query.vnp_SecureHash : '';
   const maskedHash = hash.length <= 12 ? '***' : `${hash.slice(0, 6)}…${hash.slice(-4)} (${hash.length} chars)`;
   return {
-    vnp_TxnRef:         query?.vnp_TxnRef ?? null,
-    vnp_TransactionNo:  query?.vnp_TransactionNo ?? null,
-    vnp_ResponseCode:   query?.vnp_ResponseCode ?? null,
+    vnp_TxnRef: query?.vnp_TxnRef ?? null,
+    vnp_TransactionNo: query?.vnp_TransactionNo ?? null,
+    vnp_ResponseCode: query?.vnp_ResponseCode ?? null,
     vnp_TransactionStatus: query?.vnp_TransactionStatus ?? null,
-    vnp_Amount:         query?.vnp_Amount ?? null,
-    vnp_BankCode:       query?.vnp_BankCode ?? null,
-    vnp_PayDate:        query?.vnp_PayDate ?? null,
-    vnp_SecureHash:     maskedHash,
+    vnp_Amount: query?.vnp_Amount ?? null,
+    vnp_BankCode: query?.vnp_BankCode ?? null,
+    vnp_PayDate: query?.vnp_PayDate ?? null,
+    vnp_SecureHash: maskedHash,
   };
 };
 

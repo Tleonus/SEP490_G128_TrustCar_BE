@@ -32,11 +32,11 @@ const { Schema } = mongoose;
 
 const DepositHistorySchema = new Schema(
   {
-    action:  { type: String, enum: Object.values(DepositAction), required: true },
-    at:      { type: Date, default: () => new Date() },
+    action: { type: String, enum: Object.values(DepositAction), required: true },
+    at: { type: Date, default: () => new Date() },
     actorId: { type: Schema.Types.ObjectId, ref: 'User', default: null }, // null = system job
-    result:  { type: String, enum: ['SUCCESS'], default: 'SUCCESS' },
-    note:    { type: String, maxlength: 500, default: null },
+    result: { type: String, enum: ['SUCCESS'], default: 'SUCCESS' },
+    note: { type: String, maxlength: 500, default: null },
   },
   { _id: false, versionKey: false },
 );
@@ -46,69 +46,70 @@ const DepositSchema = new Schema(
     depositCode: { type: String, required: true, trim: true, uppercase: true },
 
     // ── Relations ───────────────────────────────────────────────────────
-    carId:      { type: Schema.Types.ObjectId, ref: 'Car', required: true },
-    userId:     { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    carId: { type: Schema.Types.ObjectId, ref: 'Car', required: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     customerId: { type: Schema.Types.ObjectId, ref: 'Customer', required: true },
 
     // ── Snapshots at deposit time (car data may change later) ───────────
-    carVehicleCode:   { type: String, default: null },
-    carTitle:         { type: String, maxlength: 300, default: null },
+    carVehicleCode: { type: String, default: null },
+    carTitle: { type: String, maxlength: 300, default: null },
     carPriceSnapshot: { type: Number, required: true, min: 0 },
 
     // ── Money ───────────────────────────────────────────────────────────
     depositAmount: { type: Number, required: true, min: 1 },
-    currency:      { type: String, enum: ['VND'], default: 'VND' },
+    currency: { type: String, enum: ['VND'], default: 'VND' },
 
     // ── State ───────────────────────────────────────────────────────────
-    status:        { type: String, enum: Object.values(DepositStatus), default: DepositStatus.PENDING_PAYMENT, required: true },
+    status: { type: String, enum: Object.values(DepositStatus), default: DepositStatus.PENDING_PAYMENT, required: true },
     paymentStatus: { type: String, enum: Object.values(DepositPaymentStatus), default: DepositPaymentStatus.UNPAID, required: true },
-    holdActive:    { type: Boolean, default: true },
+    holdActive: { type: Boolean, default: true },
 
     // ── Timeline ────────────────────────────────────────────────────────
     // createdAt (timestamps) = request time; reservedAt = car became RESERVED (same request)
-    reservedAt:         { type: Date, required: true },
-    expiresAt:          { type: Date, required: true },
+    reservedAt: { type: Date, required: true },
+    expiresAt: { type: Date, required: true },
     carStatusChangedAt: { type: Date, required: true },
 
     // Deposit payment verified by staff (bank transfer / cash at showroom)
-    paidAt:             { type: Date, default: null },
+    paidAt: { type: Date, default: null },
     paymentConfirmedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
-    paymentReference:   { type: String, trim: true, maxlength: 100, default: null },
-    paymentNote:        { type: String, trim: true, maxlength: 500, default: null },
+    paymentReference: { type: String, trim: true, maxlength: 100, default: null },
+    paymentNote: { type: String, trim: true, maxlength: 500, default: null },
 
     // Full payment of the car verified by staff → car SOLD
-    completedAt:              { type: Date, default: null },
-    completedBy:              { type: Schema.Types.ObjectId, ref: 'User', default: null },
-    fullPaymentReference:     { type: String, trim: true, maxlength: 100, default: null },
-    fullPaymentNote:          { type: String, trim: true, maxlength: 500, default: null },
+    completedAt: { type: Date, default: null },
+    completedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    fullPaymentReference: { type: String, trim: true, maxlength: 100, default: null },
+    fullPaymentNote: { type: String, trim: true, maxlength: 500, default: null },
 
-    cancelledAt:  { type: Date, default: null },
-    cancelledBy:  { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    cancelledAt: { type: Date, default: null },
+    cancelledBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     cancelReason: { type: String, trim: true, maxlength: 500, default: null },
 
     expiredAt: { type: Date, default: null },
 
-    refundedAt:      { type: Date, default: null },
-    refundedBy:      { type: Schema.Types.ObjectId, ref: 'User', default: null },
-    refundAmount:    { type: Number, min: 0, default: null },
+    refundedAt: { type: Date, default: null },
+    refundedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    refundAmount: { type: Number, min: 0, default: null },
     refundReference: { type: String, trim: true, maxlength: 100, default: null },
-    refundNote:      { type: String, trim: true, maxlength: 500, default: null },
+    refundNote: { type: String, trim: true, maxlength: 500, default: null },
 
     // ── VNPay integration (KAN-99) ──────────────────────────────────────
     // paymentProvider is the gateway the customer PICKED (not necessarily paid through).
     // A MANUAL deposit left unpaid stays MANUAL; upgrading to VNPAY on retry re-writes it.
-    paymentProvider:    { type: String, enum: Object.values(PaymentProvider), default: PaymentProvider.MANUAL },
-    // vnp_TxnRef sent to VNPay. Shape `DEP-{depositCode}-{timestampMs}`. Unique sparse —
-    // a MANUAL deposit never sets it, so the index does not conflict.
-    vnpayTxnRef:        { type: String, trim: true, maxlength: 100, default: null },
+    paymentProvider: { type: String, enum: Object.values(PaymentProvider), default: PaymentProvider.MANUAL },
+    // vnp_TxnRef sent to VNPay. Shape `DEP-{depositCode}-{timestampMs}`. Unique partial —
+    // a MANUAL deposit never sets it (default null), and null is EXCLUDED by the partial
+    // filter below, so any number of un-paid deposits can coexist.
+    vnpayTxnRef: { type: String, trim: true, maxlength: 100, default: null },
     // vnp_TransactionNo — VNPay's own transaction id, only known after a successful payment.
     vnpayTransactionNo: { type: String, trim: true, maxlength: 50, default: null },
     // vnp_BankCode — the bank the customer actually used (NCB, VCB, …). Used for display only.
-    vnpayBankCode:      { type: String, trim: true, maxlength: 20, default: null },
+    vnpayBankCode: { type: String, trim: true, maxlength: 20, default: null },
     // vnp_PayDate parsed from yyyyMMddHHmmss (Asia/Ho_Chi_Minh in the sandbox).
-    vnpayPayDate:       { type: Date, default: null },
+    vnpayPayDate: { type: Date, default: null },
     // vnp_ResponseCode kept verbatim so support can look up VNPay failure codes later.
-    vnpayResponseCode:  { type: String, trim: true, maxlength: 10, default: null },
+    vnpayResponseCode: { type: String, trim: true, maxlength: 10, default: null },
 
     // true/false once the hold is closed: whether the car went back to AVAILABLE.
     // null while open, or while the release is still pending (picked up by the job).
@@ -117,7 +118,7 @@ const DepositSchema = new Schema(
     // Set when the job closed the hold because the car status was changed outside this
     // flow (e.g. sold through the sales checkout) – staff should double-check it.
     reviewRequired: { type: Boolean, default: false },
-    reviewNote:     { type: String, maxlength: 500, default: null },
+    reviewNote: { type: String, maxlength: 500, default: null },
 
     history: { type: [DepositHistorySchema], default: [] },
   },
@@ -135,9 +136,21 @@ export const DEPOSIT_INDEXES = [
   [{ status: 1, expiresAt: 1 }, { name: 'expiry_scan' }],
   [{ paymentStatus: 1, createdAt: -1 }, { name: 'payment_status_list' }],
   [{ holdActive: 1, reservedAt: 1 }, { name: 'active_holds_reconcile' }],
-  // KAN-99: unique sparse — two VNPay URL requests for the SAME deposit reuse the field,
-  // the unique constraint only triggers across different deposits.
-  [{ vnpayTxnRef: 1 }, { unique: true, sparse: true, name: 'uniq_vnpayTxnRef' }],
+  // KAN-99: một vnp_TxnRef chỉ thuộc một deposit, hai lần xin URL cho CÙNG deposit thì ghi đè.
+  // PARTIAL trên chuỗi khác rỗng, KHÔNG dùng sparse: sparse chỉ bỏ qua field khiếm khuyết,
+  // còn `null` (default của cọc MANUAL) vẫn được đánh index → cọc thứ hai trở đi vi phạm
+  // E11000 dup key { vnpayTxnRef: null }. Điều kiện loại null/undefined (không phải string)
+  // và chuỗi rỗng; viết dạng $and vì đây là operator được partialFilterExpression hỗ trợ rõ ràng.
+  [{ vnpayTxnRef: 1 }, {
+    unique: true,
+    partialFilterExpression: {
+      $and: [
+        { vnpayTxnRef: { $type: 'string' } },
+        { vnpayTxnRef: { $gt: '' } },
+      ],
+    },
+    name: 'uniq_vnpayTxnRef',
+  }],
 ];
 
 DEPOSIT_INDEXES.forEach(([keys, options]) => DepositSchema.index(keys, options));

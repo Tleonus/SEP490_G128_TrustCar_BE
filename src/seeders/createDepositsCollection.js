@@ -9,8 +9,11 @@
  *
  * Safety:
  *   - Dry run by default; nothing is written without --apply.
- *   - Idempotent: existing collection is kept (validator updated with collMod), existing
- *     indexes with the same name are skipped. No data is inserted, changed or deleted.
+ *   - Idempotent: existing collection is kept (validator updated with collMod), indexes with a
+ *     matching name AND matching options are skipped; an index whose options drifted (e.g.
+ *     uniq_vnpayTxnRef created with `sparse` but now requiring a partialFilterExpression) is
+ *     dropped and recreated so the old constraint cannot keep rejecting valid deposits.
+ *     No data is inserted, changed or deleted.
  *   - Aborts if existing data would violate the unique indexes.
  *
  * Ref: KAN-22
@@ -37,16 +40,16 @@ const validator = {
     required: ['depositCode', 'carId', 'userId', 'customerId', 'depositAmount', 'status', 'paymentStatus',
       'holdActive', 'reservedAt', 'expiresAt', 'carStatusChangedAt'],
     properties: {
-      depositCode:   { bsonType: 'string' },
-      carId:         { bsonType: 'objectId' },
-      userId:        { bsonType: 'objectId' },
-      customerId:    { bsonType: 'objectId' },
+      depositCode: { bsonType: 'string' },
+      carId: { bsonType: 'objectId' },
+      userId: { bsonType: 'objectId' },
+      customerId: { bsonType: 'objectId' },
       depositAmount: { bsonType: ['int', 'long', 'double', 'decimal'], minimum: 1 },
-      status:        { enum: Object.values(DepositStatus) },
+      status: { enum: Object.values(DepositStatus) },
       paymentStatus: { enum: Object.values(DepositPaymentStatus) },
-      holdActive:    { bsonType: 'bool' },
-      reservedAt:    { bsonType: 'date' },
-      expiresAt:     { bsonType: 'date' },
+      holdActive: { bsonType: 'bool' },
+      reservedAt: { bsonType: 'date' },
+      expiresAt: { bsonType: 'date' },
     },
   },
 };
@@ -85,13 +88,29 @@ async function run() {
   }
 
   // 2) Indexes
-  const existing = exists || apply
-    ? (await db.collection(COLLECTION).indexes().catch(() => [])).map((i) => i.name)
+  const liveIndexes = exists || apply
+    ? (await db.collection(COLLECTION).indexes().catch(() => []))
     : [];
   console.log('\n🗂️   Indexes:');
   for (const [keys, options] of DEPOSIT_INDEXES) {
-    if (existing.includes(options.name)) {
-      console.log(`   = ${options.name} (already present)`);
+    const live = liveIndexes.find((i) => i.name === options.name);
+    if (live) {
+      // So sánh cả key lẫn option (bỏ name): index cùng tên nhưng tạo bằng `sparse` trong khi
+      // code nay cần `partialFilterExpression` thì phải drop rồi tạo lại, nếu không ràng buộc
+      // cũ vẫn chặn mọi cọc MANUAL (E11000 dup key { vnpayTxnRef: null }).
+      const drift = JSON.stringify(live.key) !== JSON.stringify(keys)
+        || Object.entries(options).some(([k, v]) => k !== 'name' && JSON.stringify(live[k]) !== JSON.stringify(v));
+      if (!drift) {
+        console.log(`   = ${options.name} (already present)`);
+        continue;
+      }
+      console.log(`   ~ ${options.name} exists with different options → will be dropped and recreated`);
+      console.log(`     old: ${JSON.stringify({ key: live.key, unique: live.unique, sparse: live.sparse, partialFilterExpression: live.partialFilterExpression })}`);
+      console.log(`     new: ${JSON.stringify({ key: keys, ...options })}`);
+      if (apply) {
+        await db.collection(COLLECTION).dropIndex(options.name);
+        await db.collection(COLLECTION).createIndex(keys, options);
+      }
       continue;
     }
     console.log(`   + ${options.name} ${JSON.stringify(keys)} ${JSON.stringify({ ...options, name: undefined })}`);
@@ -104,6 +123,6 @@ async function run() {
 
 run().catch(async (error) => {
   console.error('❌  Failed:', error.message);
-  await mongoose.disconnect().catch(() => {});
+  await mongoose.disconnect().catch(() => { });
   process.exit(1);
 });

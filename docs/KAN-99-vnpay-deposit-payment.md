@@ -51,13 +51,17 @@ Những cái KHÔNG làm trong KAN-99 (để tránh scope creep):
 | Trường | Kiểu | Giải thích |
 |---|---|---|
 | `paymentProvider` | `String` enum `['MANUAL', 'VNPAY']`, default `'MANUAL'` | Cọc được trả thủ công hay qua cổng nào. `MANUAL` là flow cũ (sale confirm bằng tay) — vẫn giữ nguyên để fallback. |
-| `vnpayTxnRef` | `String` unique sparse, max 100 | `vnp_TxnRef` gửi sang VNPay — chúng ta sinh theo pattern `DEP-{depositCode}-{randomSuffix}` để tra ngược được. Index unique sparse để chặn double-charge. |
+| `vnpayTxnRef` | `String` unique **partial** (chỉ chuỗi khác rỗng), max 100 | `vnp_TxnRef` gửi sang VNPay — chúng ta sinh theo pattern `DEP-{depositCode}-{randomSuffix}` để tra ngược được. Index unique để chặn double-charge. **Không dùng `sparse`**: `sparse` chỉ bỏ qua field khiếm khuyết, còn `null` (default của cọc MANUAL) vẫn được đánh index nên cọc MANUAL thứ hai vi phạm `E11000 dup key { vnpayTxnRef: null }`; nay dùng `partialFilterExpression` loại `null`/`''`. |
 | `vnpayTransactionNo` | `String`, max 50 | `vnp_TransactionNo` do VNPay trả về sau khi khách thanh toán thành công. Chỉ có sau khi webhook/return URL về. |
 | `vnpayBankCode` | `String`, max 20 | Ngân hàng khách thực tế dùng (NCB, VCB, MB…). VNPay trả về trong response. |
 | `vnpayPayDate` | `Date` | `vnp_PayDate` do VNPay parse từ string `yyyyMMddHHmmss` — mốc thời gian khách hoàn tất thanh toán tại VNPay. |
 | `vnpayResponseCode` | `String`, max 10 | `vnp_ResponseCode` thô ('00' = success, các mã khác là lỗi) để debug. |
 
-Không thêm index mới ngoài `vnpayTxnRef` (unique sparse). Index hiện có `uniq_active_hold_per_car` vẫn là barrier chính.
+Không thêm index mới ngoài `vnpayTxnRef` (unique partial). Index hiện có `uniq_active_hold_per_car` vẫn là barrier chính.
+
+> DB dev tạo index trước bản sửa 27/11 đang mang `sparse: true` — phải chạy lại seeder để drop + tạo lại:
+> `node src/seeders/createDepositsCollection.js` (dry run) rồi `node src/seeders/createDepositsCollection.js --apply`.
+> Seeder so sánh cả key lẫn option nên tự phát hiện index lệch và tạo lại.
 
 ### 2.2. Collection mới `vnpay_ipn_logs` (idempotency + audit)
 
