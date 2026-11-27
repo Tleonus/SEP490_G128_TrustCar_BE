@@ -1,6 +1,18 @@
 # Bàn giao frontend · Kiểm định CPO
 
-Áp dụng cho backend `feature/cpo-inspection-db-redesign`, theo phần kiểm định showroom đã nghiệm thu ngày 26/11/2026. Tài liệu mô tả hành vi màn hình và hợp đồng HTTP để đội FE áp dụng vào giao diện hiện có. Backend đã kiểm thử với dữ liệu mô phỏng. Trước khi kiểm thử tích hợp, kiểm tra phiên bản backend, mẫu nhiên liệu và chỉ mục đã có trên môi trường FE đang gọi. [Hướng dẫn triển khai](../kan-52-inspection-rollout.md)
+Luồng UC-31 đến UC-34 cập nhật ngày 27/11/2026. Khi kiểm định viên nộp và các tiêu chí bắt buộc đều đạt, xe được cấp CPO và xuất hiện trên danh mục ngay. Tài liệu mô tả hợp đồng backend mới để nối vào FE. [Danh sách UC-27 đến UC-51](staff-use-cases.md)
+
+## Phân công trên tài khoản nhiều vai trò
+
+| Vai trò | Mục CPO trong menu | Công việc |
+| --- | --- | --- |
+| `ADMIN` | **Chứng nhận CPO**, **Duyệt đề xuất mẫu** | Tra cứu chứng nhận theo UC-34. Duyệt đề xuất thay đổi tiêu chí theo quy trình cấu hình mẫu hiện hành. |
+| `INSPECTOR` | **Kiểm định xe**, **Mẫu kiểm định**, **Chứng nhận CPO** | Bắt đầu, tiếp tục, kiểm định lại và nộp phiếu. Xem mẫu hiện hành, soạn và gửi đề xuất thay đổi mẫu. Tra cứu chứng nhận theo UC-34. |
+| `SALES_STAFF` | **Chứng nhận CPO** | Xem danh sách xe đã được cấp CPO, mở chi tiết, tải PDF và in tem QR khi có mã xác minh. |
+
+Một tài khoản có nhiều vai trò nhận tập chức năng hợp nhất. Hiện **Chứng nhận CPO** một lần nếu tài khoản có từ hai vai trò trở lên. FE đọc toàn bộ `roleNames` và quyền hiệu lực, áp dụng cùng điều kiện cho menu, URL trực tiếp và nút thao tác.
+
+Phạm vi thay đổi được hiểu là bỏ duyệt **phiếu từng xe**. Phần **Duyệt đề xuất mẫu** ở trên dựa trên quy trình cấu hình mẫu đã chốt trước đó. Đề xuất mẫu và phiếu của xe có hai vòng đời riêng.
 
 ## 1. Ba giá trị phiên bản FE cần dùng đúng
 
@@ -14,11 +26,24 @@ Các đường dẫn rút gọn trong tài liệu đều nối sau **`/api/v1/in
 
 Trong DB, `inspection_form_template_heads` trỏ đến phiên bản đang dùng trong `inspection_form_template_revisions`. Bản nhân viên đang soạn nằm ở `inspection_form_template_proposals`. Khi kiểm định, `inspectionrecords` lưu xe và phiên bản của lần chấm, còn `inspection_results` lưu từng kết quả theo cặp phiếu và mã tiêu chí. Backend ghép các phần này trong API chi tiết phiếu. Sự kiện công bố mẫu do backend ghi vào `activity_logs` cùng giao dịch. FE chỉ cần gửi thao tác nghiệp vụ một lần.
 
-Ví dụ, một xe đang rao có CPO v1. Sau khi admin phát hành mẫu v2 có thêm mục phanh, màn cấu hình hiển thị **Mẫu v2**. Khi mở phiếu tái kiểm định, màn chấm hiển thị **Phiếu v2**. Trong cả hai bước đó, trang xe vẫn hiển thị **CPO v1**. Chỉ sau khi admin duyệt phiếu tái kiểm định đạt, trang xe mới hiển thị **CPO v2**.
+Ví dụ, một xe đang rao có CPO v3. Sau khi phát hành mẫu v4, màn cấu hình hiển thị **Mẫu v4** và xe vẫn hiển thị **CPO v3**. Khi kiểm định viên nộp phiếu tái kiểm định đạt theo v4, xe hiển thị **CPO v4**.
 
 ## 2. Màn xe và phiếu kiểm định showroom
 
-**Điểm vào từ xe.** Màn chi tiết xe hiển thị thông tin nhận dạng từ hồ sơ xe, số km đã ghi nhận và chứng nhận hiện hành nếu có. Nút **Bắt đầu kiểm định** gọi `POST /cars/:carId/draft` với body trống. HTTP 201 trả phiếu ở `data`, trong đó `data._id` là mã phiếu cho các thao tác tiếp theo. Backend chọn mẫu theo nhiên liệu của xe. Xe `DRAFT`, `INCOMING`, `REJECTED` hoặc `UNDER_INSPECTION` có thể vào luồng kiểm định lần đầu. Với xe đang hoạt động, đã có mã và ở `APPROVED_CPO` hoặc `AVAILABLE`, dùng nút **Tái kiểm định** khi mẫu hiện hành là `CRITERIA`.
+### Danh sách xe và nút theo trạng thái
+
+| Trạng thái trên màn Kiểm định xe | Điều kiện | Nút và đích đến |
+| --- | --- | --- |
+| **Mới nhập** | Xe `INCOMING` hoặc hồ sơ xe `DRAFT`, đủ điều kiện kiểm định và chưa có phiếu mở. | **Bắt đầu kiểm định** gọi `POST /cars/:carId/draft`. Mở phiếu vừa tạo từ `data._id`. |
+| **Không đạt** | Xe `REJECTED` sau kiểm định lần đầu và chưa có phiếu mở. | **Kiểm định lại** gọi `POST /cars/:carId/draft` để tạo lượt mới. Phiếu không đạt trước đó vẫn tra được theo ID cũ. |
+| **Đang kiểm định** | Xe có phiếu mở `DRAFT`. | **Tiếp tục kiểm định** mở đúng `inspectionId` đã có qua `GET /:inspectionId` để chấm, lưu hoặc nộp tiếp. |
+| **Chờ xử lý phiếu cũ** | Xe có phiếu `PENDING_APPROVAL` từ luồng đã triển khai trước đây. | **Xem hồ sơ** mở phiếu đã lưu ở chế độ chỉ đọc. Xử lý theo phương án chuyển tiếp trước khi xe có thể nộp theo luồng mới. |
+
+Ưu tiên trạng thái phiếu mở khi hiển thị danh sách. Kết quả đã chốt thành công xuất hiện ở **Chứng nhận CPO** và xe `AVAILABLE` xuất hiện trên danh mục công khai. Nếu xe `UNDER_INSPECTION` thiếu phiếu mở, hiển thị trạng thái dữ liệu cần kiểm tra. Khi xe có phiếu tái kiểm định đang mở, hiển thị tiến độ của phiếu và chứng nhận hiện hành trên hai vị trí riêng.
+
+Tên xe hiển thị hãng, dòng và phiên bản xe. Trạng thái xuất hiện ở cột hoặc nhãn riêng. Khi cập nhật bộ demo, đưa các hậu tố như “Không đạt”, “Chờ duyệt” và “Đang chấm” ra khỏi tên xe mẫu.
+
+**Điểm vào từ xe.** Màn chi tiết xe hiển thị dữ liệu nhận dạng, số km ghi nhận và chứng nhận hiện hành. Khi tạo phiếu, backend chọn mẫu theo nhiên liệu. Nếu có phiếu mở do thao tác ở tab khác, FE tải lại danh sách và mở phiếu hiện có theo ID phản hồi.
 
 **Màn chấm phiếu.** Khi mở màn hình từ liên kết hoặc tải lại trang, gọi `GET /:inspectionId`. Nếu `data.template.format === "CRITERIA"`, sắp dòng theo thứ tự `data.template.groups[]`. Mỗi dòng lấy tên từ `label`, dấu bắt buộc từ `required` và ghép kết quả qua `group.key === result.criterionId`. Mẫu ban đầu có năm tiêu chí về khung gầm/thân vỏ, ngập nước, động cơ/hộp số, ODO và điện/an toàn. Mục thứ sáu, thứ bảy sẽ xuất hiện tự động theo mẫu của phiếu.
 
@@ -50,15 +75,16 @@ Ví dụ, một xe đang rao có CPO v1. Sau khi admin phát hành mẫu v2 có 
 
 | Trạng thái phiếu | Thao tác và phản hồi |
 | --- | --- |
-| `DRAFT` · Nháp | **Lưu** gửi PATCH. **Nộp phiếu** gọi `POST /:inspectionId/submit` chỉ với `{"baseRevision":2}` theo revision thực tế. Khi thành công chuyển sang `PENDING_APPROVAL`. |
-| `PENDING_APPROVAL` · Chờ duyệt | Hiện phiếu chỉ đọc. **Duyệt kết quả** gọi `POST /:inspectionId/approve`, body trống. Admin phải khác người nộp (`submittedBy`). **Trả về sửa** gọi `PUT /:inspectionId/reject` với `{"reason":"Cần kiểm tra lại số km thực đo"}`. Lý do từ 10 đến 1.000 ký tự sau khi cắt khoảng trắng. Phiếu về `DRAFT`, hiển thị `rejectedReason` và các kết quả đã lưu. |
-| `SUBMITTED` · Đã chốt | Hiện kết luận từ `result` là `PASSED` hoặc `FAILED`. API duyệt trả `data.inspectionRecord` và `data.car`. Làm mới phiếu, xe và chứng nhận hiện hành. Kiểm định lần đầu đạt đưa xe sang `APPROVED_CPO`, không đạt sang `REJECTED`. Tái kiểm định không đạt vẫn giữ mã CPO cũ. |
+| `DRAFT` · Nháp | **Lưu** gửi PATCH. **Nộp phiếu** gọi `POST /:inspectionId/submit` với `baseRevision` của phiếu. Nộp đủ dữ liệu sẽ tính kết quả và chốt sang `SUBMITTED`. |
+| `SUBMITTED` · Đạt | Hiển thị `result: PASSED` và mã CPO. Backend cập nhật trạng thái xe sang `AVAILABLE`, ghi thời điểm lên sàn nếu chưa có và cập nhật dữ liệu xác minh. FE làm mới danh sách phiếu, chứng nhận và danh mục công khai. |
+| `SUBMITTED` · Không đạt | Hiển thị `result: FAILED` và các tiêu chí không đạt. Kiểm định lần đầu không đạt đưa xe sang `REJECTED`. Tái kiểm định không đạt tiếp tục áp dụng quy tắc giữ chứng nhận và trạng thái kinh doanh đang có cho xe đã cấp CPO. |
+| `PENDING_APPROVAL` · Phiếu cũ | Hiển thị dữ liệu đã lưu ở chế độ chỉ đọc. Admin có thể trả phiếu về nháp để Inspector rà soát và nộp lại theo luồng hiện hành. |
 
 **Phiếu lịch sử.** Dùng màn bảng câu hỏi hiện có khi mẫu là `QUESTIONNAIRE` hoặc phiên bản mẫu cũ thiếu `format`. Phiếu đã nộp theo mẫu đó có thể mang `checklistSnapshot`. Bản ghi `LEGACY` có thể thiếu cả `template` và snapshot, khi đó hiển thị những trường lịch sử thực sự có. Với nháp mở trước khi đổi sang tiêu chí phẳng, luôn đọc lại chính phiếu để chọn giao diện. [Vòng đời đã kiểm thử](../../tests/inspection-criteria-lifecycle.test.js)
 
 ## 3. Màn cấu hình mẫu và duyệt đề xuất
 
-Trên màn **Mẫu kiểm định**, chọn loại nhiên liệu rồi đọc mẫu hiện hành. **Tạo đề xuất** sao chép danh sách tiêu chí vào nháp. Khi chuyển từ mẫu bảng câu hỏi, lấy `key`, `label` của năm nhóm ban đầu và đánh dấu bắt buộc. Cho sửa nhãn, thêm tiêu chí chung và chọn mục bắt buộc. Giữ nguyên `key` khi chỉ sửa tên. Khóa phải duy nhất trong một mẫu, dài tối đa 120 ký tự, dùng chữ Latin không dấu, chữ số, gạch dưới hoặc gạch ngang. Cần ít nhất một tiêu chí bắt buộc.
+Kiểm định viên dùng màn **Mẫu kiểm định** để chọn nhiên liệu, xem mẫu và soạn đề xuất. Admin xử lý tại **Duyệt đề xuất mẫu**. Khi chuyển từ mẫu bảng câu hỏi, lấy `key`, `label` của năm nhóm ban đầu và đánh dấu bắt buộc. Cho sửa nhãn, thêm tiêu chí chung và chọn mục bắt buộc. Giữ nguyên `key` khi chỉ sửa tên. Khóa phải duy nhất trong một mẫu, dài tối đa 120 ký tự, dùng chữ Latin không dấu, chữ số, gạch dưới hoặc gạch ngang. Cần ít nhất một tiêu chí bắt buộc.
 
 | Thao tác | API | Dữ liệu FE sử dụng |
 | --- | --- | --- |
@@ -71,19 +97,17 @@ Trên màn **Mẫu kiểm định**, chọn loại nhiên liệu rồi đọc m�
 
 **Xung đột phiên bản.** Nếu hai đề xuất cùng dựa trên v1, sau khi một đề xuất tạo v2, duyệt đề xuất còn lại trả `409 FORM_REVISION_CONFLICT`. Giữ nội dung đề xuất để đối chiếu. Admin trả về nháp, tác giả tải mẫu hiện hành, rà lại các thay đổi và lưu với phiên bản cơ sở mới trước khi gửi lại. Nút **Công bố** của màn tiêu chí dùng luồng đề xuất trên. Tuyến `PUT /form-templates/:templateKey` dành cho công cụ quản lý bảng câu hỏi cũ. [Kiểm thử đề xuất và phiên bản](../../tests/inspection-template-proposals.test.js)
 
-## 4. Quyền và điều hướng
+## 4. Hợp đồng API cho FE
 
-| Quyền hiệu lực | Chức năng hiển thị |
+| API | Quyền và phản hồi |
 | --- | --- |
-| `inspection:read` | Xem mẫu hiện hành, phiếu theo ID và chứng nhận nội bộ theo xe. |
-| `inspection:write` | Tạo, sửa phiếu nháp và ký ảnh. Tạo, đọc, sửa, gửi đề xuất do tài khoản đứng tên. Quy tắc tác giả áp dụng cho **đề xuất mẫu**. |
-| `inspection:submit` | Nộp phiếu xe đã lưu. Theo cấu hình mặc định, `SALES_STAFF` có thể xem và nộp, `INSPECTOR` có thể chấm và nộp. |
-| Có vai trò `ADMIN` và quyền `inspection:admin` | Duyệt hoặc trả phiếu xe, xem đề xuất đã gửi, duyệt hoặc trả đề xuất. |
+| `GET /queue?status=IN_PROGRESS&page=1&limit=20` | `INSPECTOR` có quyền đọc. Hỗ trợ `NEW`, `FAILED`, `IN_PROGRESS`, `PENDING_APPROVAL` và `search`. `data[]` là xe, có `status` của kho, `inspectionStatus` của danh sách và `openInspection` là `{_id,status,templateKey,checklistVersion}` hoặc `null`. Phân trang theo `meta`. |
+| `GET /cars/:carId` | `INSPECTOR` có quyền đọc. Trả `data.car` và `data.openInspection` để chọn nút ở màn hồ sơ. |
+| `POST /:inspectionId/submit` | `INSPECTOR` có quyền nộp. Gửi `{baseRevision}`. Trả `data.car` và `data.inspectionRecord` đã chốt. FE dùng kết quả trả về để cập nhật màn hình ngay. |
+| `GET /certificates?search=&page=1&limit=20` | Ba vai trò nội bộ có quyền đọc. Trả `data[]` gồm thông tin xe, mã hiện hành, `inspectionId`, `hasVerificationQr` và `meta` phân trang. |
+| `GET /certificates/:carId` | Ba vai trò nội bộ có quyền đọc. Trả thông tin xe, ID phiếu đã cấp, loại mẫu, `templateRevision` và `verificationPath` nếu QR có hiệu lực. Dùng đường dẫn báo cáo và PDF công khai ở mục 6 cho xe đủ điều kiện hiển thị công khai. |
 
-Lấy thông tin tài khoản từ `GET /api/v1/auth/me` và xét quyền của các vai trò đang có. Khi thiết kế màn chọn xe và màn duyệt phiếu, cần tính đến dữ liệu mà từng vai trò truy cập được.
-
-- **Chọn xe để kiểm định.** `GET /api/v1/manage/cars` và `GET /api/v1/manage/cars/:id` đang giới hạn ở vai trò `ADMIN` hoặc `SALES_STAFF`. Người chỉ có vai trò `INSPECTOR` dùng được API phiếu khi đã có ID hợp lệ, nhưng màn tự chọn xe hoặc tải hồ sơ xe cho vai trò này cần một nguồn dữ liệu BE được cấp quyền. [Router quản lý xe](../../src/routes/carRoutes.js)
-- **Tìm phiếu chờ.** Backend có hàng chờ cho *đề xuất mẫu*. Router kiểm định hiện chỉ đọc *phiếu xe* theo ID. FE có thể dùng đường dẫn chi tiết chứa `inspectionId`. Nếu sản phẩm cần danh sách “Tất cả phiếu xe chờ duyệt”, cần bổ sung API danh sách. Với thao tác tạo phiếu gặp `INSPECTION_DRAFT_EXISTS` hoặc `INSPECTION_PENDING_APPROVAL`, lấy `errors[].message` ở phần tử có `field === "inspectionId"` để mở phiếu đã tồn tại. [Router kiểm định](../../src/interface/inspection/inspectionRouter.js)
+FE xác nhận thao tác **Nộp phiếu** vì kết quả đạt sẽ đưa xe lên danh mục. Menu admin dùng **Duyệt đề xuất mẫu**. Tuyến admin duyệt phiếu xe đã được bỏ khỏi router. Admin có thể trả phiếu lịch sử đang `PENDING_APPROVAL` về nháp qua tuyến `PUT /:inspectionId/reject` để kiểm định viên xem lại trước khi nộp. Các phiếu như Mazda 3 demo trên `trustcar_dev` chỉ đổi khi được xử lý chủ động. Tuyến mở bán riêng dành cho xe cũ đã ở `APPROVED_CPO`, do Inspector có quyền nộp thực hiện. [Router kiểm định](../../src/interface/inspection/inspectionRouter.js)
 
 ## 5. Phản hồi lỗi trên màn hình
 
@@ -91,11 +115,11 @@ Lấy thông tin tài khoản từ `GET /api/v1/auth/me` và xét quyền của 
 | --- | --- |
 | `400 INSPECTION_INCOMPLETE`, `422 VALIDATION_ERROR` | Giữ dữ liệu đang nhập. Ánh xạ `errors[].field` tới ô ODO hoặc dòng tiêu chí, ví dụ `results.G6_BRAKES`. |
 | `409 FORM_REVISION_CONFLICT` khi sửa/nộp phiếu | Tải lại chính phiếu theo ID và đối chiếu phần chưa lưu với mẫu mà phiếu trả về. |
-| `409 INSPECTION_LOCKED`, `INSPECTION_NOT_PENDING_APPROVAL`, `TEMPLATE_PROPOSAL_STATE_CONFLICT` | Tải lại đối tượng và cập nhật nút theo trạng thái mới. |
+| `409 INSPECTION_LOCKED` hoặc `TEMPLATE_PROPOSAL_STATE_CONFLICT` | Tải lại đối tượng và cập nhật nút theo trạng thái mới. |
 | `409 INSPECTION_TEMPLATE_NOT_AVAILABLE`, `INSPECTION_FORM_TYPE_MISMATCH` | Hiện loại nhiên liệu và thông báo cần kiểm tra cấu hình mẫu hoặc dữ liệu xe. |
 | `409 INSPECTION_CRITERIA_REQUIRED` trên tuyến kiểm định nhanh | Chuyển người có quyền sang mở phiếu kiểm định theo tiêu chí. |
-| `400/409 INVALID_CAR_STATUS` | Làm mới trạng thái xe. Xe có thể vừa được giữ chỗ khi admin đang duyệt tái kiểm định. |
-| `403 INSPECTION_SELF_APPROVAL` hoặc lỗi quyền khác | Với tự duyệt phiếu xe, yêu cầu admin khác xử lý. Với lỗi quyền, cập nhật thao tác theo tài khoản. |
+| `400/409 INVALID_CAR_STATUS` | Làm mới trạng thái xe. Xe có thể vừa được giữ chỗ trong lúc chốt tái kiểm định. |
+| `403` | Tải lại quyền hiệu lực và cập nhật thao tác theo tài khoản. |
 | `404 CPO_CERTIFICATE_NOT_FOUND` | Hiện “Chưa có chứng nhận hiện hành để hiển thị”. Phân biệt với lỗi tải mạng và `CAR_NOT_FOUND`. |
 
 ## 6. Giao diện dành cho khách
@@ -112,8 +136,12 @@ Khi làm FE đợt showroom, có thể tích hợp báo cáo công khai ngay. Ph
 
 ## 7. Ca nghiệm thu FE
 
-1. Xe đang rao có CPO v1. Tạo đề xuất từ mẫu v1, thêm tiêu chí phanh, gửi duyệt. Trả đề xuất về sửa rồi gửi lại. Sau khi admin công bố, màn mẫu hiện v2 và xe vẫn hiện CPO v1.
-2. Mở phiếu tái kiểm định của xe đó. Thấy đủ sáu dòng theo v2. Lưu riêng một dòng có ảnh và ghi chú, tải lại trang, sửa kết quả. Ảnh và ghi chú đã lưu vẫn còn.
-3. Bỏ trống một mục bắt buộc thì chưa nộp được. Chọn **Không thể kiểm tra** cho mục đó, nộp và để admin duyệt. Phiếu chốt không đạt, xe vẫn có CPO v1.
-4. Ở lần tái kiểm định đạt, trong lúc chờ duyệt xe vẫn hiện v1. Admin khác người nộp duyệt xong, xe hiện CPO v2, giữ trạng thái đang rao và vẫn mở được phiếu v1 qua ID cũ.
-5. Mở một phiếu bảng câu hỏi cũ và một chứng nhận thiếu phiên bản. Phiếu cũ đọc được nội dung đã lưu. Chứng nhận thiếu phiên bản chỉ hiện mã. Kiểm lại bằng tài khoản kiểm định viên, nhân viên bán hàng và admin.
+| Ca test | Kết quả mong đợi |
+| --- | --- |
+| Đăng nhập bằng ba tài khoản đơn vai trò rồi thử tài khoản có cả ba vai trò | Cả ba xem được danh sách chứng nhận. Chỉ tài khoản có `INSPECTOR` thực hiện kiểm định xe. Tài khoản nhiều vai trò thấy các mục hợp nhất một lần, bất kể thứ tự `roleNames`. |
+| Mở xe mới nhập, xe không đạt và xe có phiếu nháp | Thấy **Bắt đầu kiểm định**, **Kiểm định lại**, **Tiếp tục kiểm định**. Nút tiếp tục mở phiếu cũ với kết quả đã lưu. Tên xe chỉ có thông tin nhận dạng. |
+| Nộp phiếu thiếu ODO hoặc thiếu kết quả bắt buộc | Hiện lỗi tại ô tương ứng. Phiếu vẫn là `DRAFT` và xe chưa xuất hiện trên danh mục công khai. |
+| Nộp phiếu lần đầu có tiêu chí bắt buộc `FAIL` hoặc `NOT_CHECKABLE` | Phiếu chốt `FAILED`. Xe chuyển `REJECTED` và hiện nút **Kiểm định lại**. |
+| Nộp phiếu lần đầu đủ điều kiện và đạt | Phiếu chốt `PASSED`, xe chuyển `AVAILABLE`, có mã CPO và xuất hiện công khai. Thử bấm nộp hai lần và xác nhận hệ thống chỉ cấp một chứng nhận cho phiếu. |
+| Đổi mẫu từ v3 lên v4 rồi mở phiếu mới cho xe có CPO v3 | Xe vẫn hiện CPO v3 trước khi nộp. Chỉ khi nộp kết quả tái kiểm định đạt mới hiện CPO v4. Phiếu cũ vẫn mở được theo ID gốc. |
+| Mở phiếu lịch sử và chứng nhận chưa có thông tin phiên bản | Hiển thị được dữ liệu đã lưu. Chứng nhận thiếu revision chỉ hiển thị mã. |

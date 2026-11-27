@@ -21,7 +21,7 @@ const allTrue = {
 let admin;
 beforeEach(async () => {
   h.reset();
-  admin = await h.loginAs('ADMIN');
+  admin = await h.loginAs('ADMIN', ['ADMIN', 'INSPECTOR']);
 });
 
 const inspect = (carId, body, who = admin) =>
@@ -107,11 +107,11 @@ describe('POST /inspections/cars/:id/inspect (admin quick inspection)', () => {
     expect(withPhoto.body.data.inspectionRecord.source).toBe('ADMIN_QUICK');
   });
 
-  test('ADMIN may quick-inspect without photos', async () => {
+  test('ADMIN with INSPECTOR may quick-inspect without photos', async () => {
     expect((await inspect(h.createCar(), { criteria: allTrue, odo: 50000 })).status).toBe(200);
   });
 
-  test.each(['CUSTOMER', 'SALES_STAFF'])('%s → 403', async (role) => {
+  test.each(['CUSTOMER', 'SALES_STAFF', 'ADMIN'])('%s → 403', async (role) => {
     const res = await inspect(h.createCar(), { criteria: allTrue, odo: 50000 }, await h.loginAs(role));
 
     expect(res.status).toBe(403);
@@ -122,7 +122,7 @@ describe('POST /inspections/cars/:id/inspect (admin quick inspection)', () => {
     const created = await api().post(`${BASE}/cars/${carId}/draft`).set('Authorization', admin.auth).expect(201);
     const id = created.body.data._id;
     h.fillDraft(id);
-    await api().post(`${BASE}/${id}/submit`).set('Authorization', admin.auth).send({ baseRevision: 1 }).expect(200);
+    Object.assign(h.record(id), { status: 'PENDING_APPROVAL', submittedBy: admin.id, submittedAt: new Date() });
     const blocked = await inspect(carId, { criteria: allTrue, odo: 50000 }).expect(409);
     const draft = await api().post(`${BASE}/cars/${carId}/draft`).set('Authorization', admin.auth).expect(409);
     for (const response of [blocked, draft]) {

@@ -14,6 +14,15 @@ const groupKeys = CPO_CRITERIA.map(({ key }) => key);
 const templateKey = Joi.string().valid(FuelType.ELECTRIC, FuelType.GASOLINE);
 export const templateKeyParams = Joi.object({ templateKey: templateKey.required() }).required();
 
+export const certificateListQuery = Joi.object({
+  search: Joi.string().trim().allow('').max(100),
+  page: Joi.number().integer().min(1).max(10000).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(20),
+});
+export const inspectionQueueQuery = certificateListQuery.keys({
+  status: Joi.string().valid('NEW', 'FAILED', 'IN_PROGRESS', 'PENDING_APPROVAL'),
+});
+
 export const proposalDraftBody = Joi.object({
   baseRevision: revision,
   groups: Joi.array().min(1).unique('key').items(Joi.object({

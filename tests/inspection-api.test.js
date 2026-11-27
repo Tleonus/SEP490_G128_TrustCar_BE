@@ -5,6 +5,7 @@ import { CarStatus, FuelType, InspectionStatus, Permissions, Roles } from '../sr
 import { CPO_CRITERIA, InspectionResult } from '../src/domain/inspection/criteria.js';
 import { createInspectionRouter } from '../src/interface/inspection/inspectionRouter.js';
 import { wireInspection } from '../src/infra/inspection/wireInspection.js';
+import { createInspectionListingRepository } from '../src/infra/inspection/inspectionListingRepository.js';
 import { AppError } from '../src/utils/apiResponse.js';
 
 const base = '/api/v1/inspections';
@@ -52,6 +53,32 @@ const template = {
   retiredIds: { questions: [], options: [] },
 };
 
+test('filters inspection queues by open record state and grants certificate lists to all staff roles', async () => {
+  const item = { _id: carId, inspectionStatus: 'PENDING_APPROVAL', openInspection: { _id: id } };
+  const aggregate = jest.fn().mockResolvedValue([{ items: [item], count: [{ total: 5 }] }]);
+  const api = appFor(createInspectionListingRepository({ carModel: { aggregate } }));
+  await api.get(`${base}/queue`).set('Authorization', 'sales').expect(403);
+  await api.get(`${base}/queue`).set('Authorization', 'admin').expect(403);
+  await api.get(`${base}/queue?status=INVALID`).set('Authorization', 'inspector').expect(422);
+  expect(aggregate).not.toHaveBeenCalled();
+  const response = await api.get(`${base}/queue`).query({ status: 'PENDING_APPROVAL', search: 'a.*', page: 2, limit: 2 })
+    .set('Authorization', 'inspector').expect(200);
+  expect(response.body).toMatchObject({ data: [item], meta: { page: 2, limit: 2, total: 5, totalPages: 3 } });
+  const [queue] = aggregate.mock.calls[0];
+  expect(queue[0].$match.$or).toContainEqual({ model: { $regex: 'a\\.\\*', $options: 'i' } });
+  expect(queue).toContainEqual({ $match: { inspectionStatus: 'PENDING_APPROVAL' } });
+  expect(queue.at(-1).$facet.items).toContainEqual({ $skip: 2 });
+
+  for (const role of ['sales', 'admin', 'inspector']) {
+    await api.get(`${base}/certificates`).set('Authorization', role).expect(200);
+  }
+  const [certificates] = aggregate.mock.calls[1];
+  const [, { $lookup: join }] = certificates;
+  expect(join).toMatchObject({ localField: '_id', foreignField: 'carId', let: { code: '$cpoCertificateId' } });
+  expect(join.pipeline[0].$match).toMatchObject({ result: 'PASSED', $expr: { $eq: ['$cpoCertificateId', '$$code'] } });
+  expect(certificates.find(step => step.$project).$project).not.toHaveProperty('originalPrice');
+});
+
 test.each([
   { answers: [{ questionId: 'q', value: 'updated' }] },
   { overviewPhotos: { FRONT: 'https://example.test/image.jpg' } },
@@ -60,7 +87,7 @@ test.each([
 ])('rejects every extra submit field before calling the use case', async (extra) => {
   const submitInspection = jest.fn();
   const res = await appFor({ submitInspection }).post(`${base}/${id}/submit`)
-    .set('Authorization', 'sales').send({ baseRevision: 1, ...extra }).expect(422);
+    .set('Authorization', 'inspector').send({ baseRevision: 1, ...extra }).expect(422);
   expect(res.body).toMatchObject({
     success: false, code: 'VALIDATION_ERROR', error_code: 'VALIDATION_ERROR',
     request_id: expect.any(String), timestamp: expect.any(String),
@@ -73,18 +100,20 @@ test.each([{}, { baseRevision: '1' }, { baseRevision: 0 }, { baseRevision: 1.1 }
   'rejects a missing or invalid baseRevision', async ({ input }) => {
     const submitInspection = jest.fn();
     await appFor({ submitInspection }).post(`${base}/${id}/submit`)
-      .set('Authorization', 'sales').send(input).expect(422);
+      .set('Authorization', 'inspector').send(input).expect(422);
     expect(submitInspection).not.toHaveBeenCalled();
   },
 );
 
-test('gives Sales Staff read/submit and checks write separately for draft, signatures and quick inspection', async () => {
-  const submitInspection = jest.fn(async () => ({ id, status: 'PENDING_APPROVAL' }));
+test('gives Sales Staff read access and restricts submission and writes to inspectors', async () => {
+  const submitInspection = jest.fn(async () => ({ car: { id: carId }, inspectionRecord: { id, status: 'SUBMITTED' } }));
   const getInspection = jest.fn(async () => ({ id, source: 'STAFF', status: 'DRAFT' }));
   const api = appFor({ submitInspection, getInspection });
-  await api.get(`${base}/${id}`).set('Authorization', 'sales').expect(200);
-  await api.post(`${base}/${id}/submit`).set('Authorization', 'sales').send({ baseRevision: 1 }).expect(200);
-  expect(submitInspection).toHaveBeenCalledWith(id, sales, 1);
+  await api.get(`${base}/${id}`).set('Authorization', 'sales').expect(403);
+  await api.get(`${base}/${id}`).set('Authorization', 'inspector').expect(200);
+  await api.post(`${base}/${id}/submit`).set('Authorization', 'sales').send({ baseRevision: 1 }).expect(403);
+  await api.post(`${base}/${id}/submit`).set('Authorization', 'inspector').send({ baseRevision: 1 }).expect(200);
+  expect(submitInspection).toHaveBeenCalledWith(id, inspector, 1);
   for (const [method, path] of [
     ['post', `/cars/${carId}/draft`], ['patch', `/${id}`], ['post', `/${id}/upload-signature`],
     ['post', `/cars/${carId}/upload-signature`], ['post', `/cars/${carId}/inspect`],
@@ -97,7 +126,7 @@ test('authorizes form writes by full role set and validates configuration shape'
   const getTemplate = jest.fn(() => template);
   const updateTemplate = jest.fn(() => ({ ...template, revision: 2 }));
   const api = appFor({ getTemplate, updateTemplate });
-  await api.get(`${base}/form-templates/ELECTRIC`).set('Authorization', 'sales').expect(200);
+  await api.get(`${base}/form-templates/ELECTRIC`).set('Authorization', 'inspector').expect(200);
   const payload = { baseRevision: 1, groups: template.groups };
   await api.put(`${base}/form-templates/ELECTRIC`).set('Authorization', 'non-admin').send(payload).expect(403);
   const malformed = structuredClone(payload);
@@ -146,17 +175,17 @@ test('routes admin reject, quick inspection and both signatures with verified re
 test('maps error status by operation and hides unexpected driver information', async () => {
   const badStatus = () => { throw Object.assign(new Error('vehicle state'), { code: 'INVALID_CAR_STATUS' }); };
   const api = appFor({
-    submitInspection: badStatus, approveInspection: badStatus, signQuickInspectionUpload: badStatus,
+    submitInspection: badStatus, signQuickInspectionUpload: badStatus,
     getInspection: () => { throw Object.assign(new Error('private driver detail'), { code: 11000 }); },
   });
-  await api.post(`${base}/${id}/submit`).set('Authorization', 'sales').send({ baseRevision: 1 }).expect(409);
-  await api.post(`${base}/${id}/approve`).set('Authorization', 'admin').expect(409);
-  await api.post(`${base}/cars/${carId}/upload-signature`).set('Authorization', 'admin').expect(400);
+  await api.post(`${base}/${id}/submit`).set('Authorization', 'inspector').send({ baseRevision: 1 }).expect(409);
+  await api.post(`${base}/${id}/approve`).set('Authorization', 'admin').expect(404);
+  await api.post(`${base}/cars/${carId}/upload-signature`).set('Authorization', 'inspector').expect(400);
   const failure = await api.get(`${base}/${id}`).set('Authorization', 'admin').expect(500);
   expect(failure.body.code).toBe('INTERNAL_ERROR');
   expect(failure.text).not.toContain('private driver detail');
   await api.get(`${base}/${id}`).expect(401);
-  const malformedId = await api.get(`${base}/not-an-id`).set('Authorization', 'sales').expect(422);
+  const malformedId = await api.get(`${base}/not-an-id`).set('Authorization', 'inspector').expect(422);
   expect(malformedId.body.code).toBe('VALIDATION_ERROR');
 });
 
@@ -167,7 +196,7 @@ test('preserves the open inspection ID and legacy read fields', async () => {
       code: 'INSPECTION_PENDING_APPROVAL', errors: [{ field: 'inspectionId', message: id }],
     }); },
   });
-  const legacy = await api.get(`${base}/${id}`).set('Authorization', 'sales').expect(200);
+  const legacy = await api.get(`${base}/${id}`).set('Authorization', 'inspector').expect(200);
   expect(legacy.body.data).toEqual({ _id: id, criteria: { verifiedOdo: true }, status: 'SUBMITTED', source: 'LEGACY' });
   const open = await api.post(`${base}/cars/${carId}/draft`).set('Authorization', 'inspector').expect(409);
   expect(open.body).toMatchObject({ code: 'INSPECTION_PENDING_APPROVAL', errors: [{ field: 'inspectionId', message: id }] });
@@ -216,7 +245,7 @@ function composedUseCases() {
   return { state, api: appFor({ ...useCases, submitInspection }), submitInspection };
 }
 
-test('composed router preserves the saved draft on invalid submit and completes submit then approval', async () => {
+test('composed router preserves the draft on invalid input and publishes a passing car on submit', async () => {
   const { state, api, submitInspection } = composedUseCases();
   const photo = 'https://example.test/car.jpg';
   await api.post(`${base}/cars/${carId}/draft`).set('Authorization', 'inspector').expect(201);
@@ -229,20 +258,17 @@ test('composed router preserves the saved draft on invalid submit and completes 
     })),
   }).expect(200);
   const before = structuredClone(state);
-  await api.post(`${base}/${id}/submit`).set('Authorization', 'sales').send({
+  await api.post(`${base}/${id}/submit`).set('Authorization', 'inspector').send({
     baseRevision: 1, answers: [{ questionId: CPO_CRITERIA[0].key, value: null }],
   }).expect(422);
   expect(submitInspection).not.toHaveBeenCalled();
   expect(state).toEqual(before);
-  const pending = await api.post(`${base}/${id}/submit`).set('Authorization', 'sales').send({ baseRevision: 1 }).expect(200);
-  expect(pending.body.data).toMatchObject({
-    _id: id, status: 'PENDING_APPROVAL', submittedBy: sales, checklistSnapshot: { revision: 1 },
+  const finalized = await api.post(`${base}/${id}/submit`).set('Authorization', 'inspector')
+    .send({ baseRevision: 1 }).expect(200);
+  expect(finalized.body.data).toMatchObject({
+    car: { _id: carId, status: CarStatus.AVAILABLE },
+    inspectionRecord: { _id: id, status: InspectionStatus.SUBMITTED, result: 'PASSED',
+      submittedBy: inspector, checklistSnapshot: { revision: 1 } },
   });
-  expect(state.car.status).toBe(CarStatus.UNDER_INSPECTION);
-  const approved = await api.post(`${base}/${id}/approve`).set('Authorization', 'admin').expect(200);
-  expect(approved.body.data).toMatchObject({
-    car: { _id: carId, status: CarStatus.APPROVED_CPO },
-    inspectionRecord: { _id: id, status: InspectionStatus.SUBMITTED, result: 'PASSED', approvedBy: admin },
-  });
-  expect(approved.body.data.car.cpoCertificateId).toBe(approved.body.data.inspectionRecord.cpoCertificateId);
+  expect(finalized.body.data.car.cpoCertificateId).toBe(finalized.body.data.inspectionRecord.cpoCertificateId);
 });

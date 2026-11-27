@@ -1,12 +1,12 @@
-import { ActivityEventType, CarStatus, InspectionStatus } from '../../constants/appConstants.js';
+import { CarStatus, InspectionStatus } from '../../constants/appConstants.js';
 import { getChecklist, INSPECTION_LIMITS } from '../../config/inspectionChecklist.js';
 import { InspectionResult } from '../../domain/inspection/criteria.js';
 import { reconcileDraftAnswers, selectInspectionTemplate } from '../../domain/inspection/draftAnswers.js';
 import { collectDefinitionIssues, QuestionType, validateQuestionAnswer } from '../../domain/inspection/formDefinition.js';
 import { collectSubmitViolations } from '../../services/inspectionSubmitRules.js';
 import { assessCriterionResults, findDraftTemplate, isCertifiedForReinspection, isCriteriaTemplate } from './criteriaInspection.js';
+import { buildCriteriaVerdict, buildVerdict, commitInspectionVerdict, withInspectionCertificate } from './approveInspection.js';
 
-export const pendingApprovalStatus = 'PENDING_APPROVAL';
 const evidenceChecklist = getChecklist().map((group) => ({ ...group, items: [] }));
 const confirmedTextFields = ['make', 'model', 'variant', 'color'];
 
@@ -156,9 +156,14 @@ async function answersForSubmission(record, template, templates) {
   return projected;
 }
 
-export function createSubmitInspection({ unitOfWork, isInspectionImageUrl, now = () => new Date() }) {
+export function createSubmitInspection({
+  unitOfWork, isInspectionImageUrl, buildHistoryVerifyHash, listRecordImages,
+  generateCpoCertificate, isCertificateCollision, now = () => new Date(),
+}) {
+  const certificateDependencies = { unitOfWork, generateCpoCertificate, isCertificateCollision };
   /**
-   * Submit the saved answers for approval; only the revision comes from the request.
+   * Finalize the saved inspection and publish a passing vehicle in one transaction.
+   * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-052
    * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-007
    * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-012
    * @ears .sdd/features/kan-6-cpo-inspection-checklist/SPEC.md#REQ-013
@@ -178,7 +183,7 @@ export function createSubmitInspection({ unitOfWork, isInspectionImageUrl, now =
       ]);
     }
 
-    return unitOfWork.run(async ({ cars, records, templates, results, audit }) => {
+    return withInspectionCertificate(certificateDependencies, async ({ cars, records, templates, results, audit }, getCertificateId) => {
       const record = await records.findById(inspectionId);
       if (!record) throw submitError('INSPECTION_NOT_FOUND', 'Inspection not found.');
       if (record.status !== InspectionStatus.DRAFT) throw locked();
@@ -186,7 +191,7 @@ export function createSubmitInspection({ unitOfWork, isInspectionImageUrl, now =
       const car = await cars.findById(record.carId);
       if (!car) throw submitError('CAR_NOT_FOUND', 'Car not found.');
       const reinspection = isCertifiedForReinspection(car);
-      if (car.status !== CarStatus.UNDER_INSPECTION && !reinspection) {
+      if (car.isActive === false || (car.status !== CarStatus.UNDER_INSPECTION && !reinspection)) {
         throw submitError('INVALID_CAR_STATUS', 'Car is no longer under inspection.');
       }
       const selection = selectInspectionTemplate(car.fuelType, record.templateKey);
@@ -215,22 +220,19 @@ export function createSubmitInspection({ unitOfWork, isInspectionImageUrl, now =
       }
       if (violations.length) throw submitError('INSPECTION_INCOMPLETE', 'The inspection is incomplete.', violations);
 
-      const updated = await records.updateIfCurrent(inspectionId, expected, {
-        status: pendingApprovalStatus,
+      const submission = {
         templateRevision: template.revision,
         ...fields,
-        inspectorId: actorId, submittedBy: actorId, submittedAt, updatedBy: actorId,
+        inspectorId: actorId, submittedBy: actorId, submittedAt,
+      };
+      const verdict = compact ? buildCriteriaVerdict(record, template, submittedResults)
+        : buildVerdict({ ...record, ...submission }, listRecordImages);
+      const finalized = await commitInspectionVerdict({ records, cars, audit }, {
+        inspectionId, actorId, car, expected, submission, verdict, reinspection, getCertificateId,
+        buildHistoryVerifyHash, now: () => submittedAt, publishOnPass: true,
       });
-      if (!updated) throw locked();
-      await audit.append({
-        eventType: ActivityEventType.INSPECTION_SUBMITTED, performedBy: actorId,
-        targetModel: 'InspectionRecord', targetId: inspectionId, summary: 'Inspection submitted for approval',
-        metadata: {
-          carId: record.carId, fromStatus: InspectionStatus.DRAFT, toStatus: pendingApprovalStatus,
-          templateRevision: template.revision,
-        },
-      });
-      return compact ? { ...updated, template, results: submittedResults } : updated;
+      if (compact) finalized.inspectionRecord = { ...finalized.inspectionRecord, template, results: submittedResults };
+      return finalized;
     });
   };
 }
