@@ -2,9 +2,10 @@
  * @file appointmentBookingService.js
  * @description Creates a test-drive visit (1..3 cars, one fixed slot) inside ONE transaction:
  *
- *   outside:  pure time checks · cars still for sale · slot capacity (Admin setting)
+ *   outside:  pure time checks · cars still for sale · slot capacity (Admin setting and staff
+ *             at work that day, appointmentCapacity.js)
  *   inside :  touch the customer (their requests queue up) · read the slot and the customer's
- *             open rows · rule check · pick the visit's seat · write every row
+ *             open rows · rule check · pick the visit's seat and a free staff member · write every row
  *   retry  :  a write conflict or a car/seat clash re-runs the whole transaction, which then sees
  *             the winner and answers with the proper business error (appointmentTransaction.js)
  *
@@ -26,7 +27,8 @@ import { assertBookableTime } from './appointmentSlotRules.js';
 import { evaluateBooking, violationToError } from './appointmentBookingRules.js';
 import { findBookableCars, findOpenAtSlot, findCustomerOpen, plain } from './appointmentQueries.js';
 import { allocateCodes } from './appointmentWrite.js';
-import { getSlotCapacity } from './appointmentCapacity.js';
+import { getCapacityAt } from './appointmentCapacity.js';
+import { chooseAssignee } from './appointmentStaffing.js';
 import { holdFields, pickVisitSeat } from './appointmentHolds.js';
 import { runWithRetry } from './appointmentTransaction.js';
 import { groupIntoVisits, customerExtras } from './appointmentVisitRules.js';
@@ -38,7 +40,7 @@ import { logAppointmentEvents } from './appointmentAudit.js';
  * the rows it created. Reads and writes use `session`; the reads are sequential because one
  * transaction session cannot run two operations at once.
  */
-const bookInTransaction = async (session, { userId, customerId, carIds, scheduledAt, notes, now }, { extra, capacity }) => {
+const bookInTransaction = async (session, { userId, customerId, carIds, scheduledAt, notes, now }, { extra, capacity, staffing, preferStaff }) => {
   // Writing the customer's document makes two requests of the same customer collide, so they run one after the other.
   const touched = await Customer.updateOne({ _id: customerId }, { $set: { updatedAt: new Date() } }, { session });
   if (touched.matchedCount === 0) throw fail(MSG.MSG31);
@@ -50,6 +52,8 @@ const bookInTransaction = async (session, { userId, customerId, carIds, schedule
 
   const seat = pickVisitSeat(slotRows, capacity);
   if (seat === null) throw fail(MSG.MSG83); // cannot happen when the rule check passed; kept as a guard
+  // Fewer visits than staff at work → somebody is free (one visit keeps one person busy).
+  const assignedTo = await chooseAssignee({ staffing, scheduledAt, slotRows, prefer: preferStaff, session });
   const codes = await allocateCodes(carIds.length);
 
   const docs = carIds.map((car, index) => ({
@@ -62,6 +66,7 @@ const bookInTransaction = async (session, { userId, customerId, carIds, schedule
     notes: notes?.trim() ? notes.trim() : null,
     createdBy: userId,
     ...extra,
+    assignedTo,
     appointmentCode: codes[index],
     ...holdFields({ lead: index === 0, seat }), // codes count up, so row 0 has the lowest code
   }));
@@ -78,18 +83,19 @@ const bookInTransaction = async (session, { userId, customerId, carIds, schedule
  * @param {object} [options]
  * @param {Function} [options.assertTime]  Throws when the time is not bookable (default: the customer rule).
  * @param {object} [options.extra]         Extra fields for every new row (e.g. status CONFIRMED for staff).
+ * @param {string} [options.preferStaff]   Staff member who gets the visit when free (staff booking).
  * @returns {Promise<{ written: object[], cars: object[] }>}
  */
-export const bookRows = async (p, { assertTime = assertBookableTime, extra = {} } = {}) => {
+export const bookRows = async (p, { assertTime = assertBookableTime, extra = {}, preferStaff = null } = {}) => {
   const { carIds, scheduledAt, now = new Date() } = p;
   assertTime(scheduledAt, now);
 
   const cars = await findBookableCars(carIds);
   if (cars.length !== carIds.length) throw fail(MSG.MSG61); // C14: no distinction of the cause
 
-  const capacity = await getSlotCapacity();
+  const { capacity, staffing } = await getCapacityAt(scheduledAt);
   const written = await runWithRetry(() => withTransaction((session) =>
-    bookInTransaction(session, { ...p, now }, { extra, capacity })));
+    bookInTransaction(session, { ...p, now }, { extra, capacity, staffing, preferStaff })));
   return { written, cars };
 };
 

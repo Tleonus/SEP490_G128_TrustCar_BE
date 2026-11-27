@@ -5,7 +5,8 @@
  *
  *   outside:  who may move it · time rules · cars still for sale · slot capacity
  *   inside :  touch the customer · re-read the visit (it must still be exactly what the caller saw)
- *             · read the new slot · rule check ignoring the visit's own rows · pick the seat ·
+ *             · read the new slot · rule check ignoring the visit's own rows · pick the seat and
+ *             the staff member (the same person when free in the new slot, appointmentStaffing.js) ·
  *             hide the old rows (`RESCHEDULED:<new code>`, holds released) · write the new rows
  *
  * Old rows are hidden, not deleted: the "how many times was this visit moved" count follows the
@@ -32,13 +33,14 @@ import {
   findVisitRowsByAnyId, loadVisitContext, findOpenAtSlot, findCustomerOpen, findVisitRows, plain,
 } from './appointmentQueries.js';
 import { allocateCodes } from './appointmentWrite.js';
-import { getSlotCapacity } from './appointmentCapacity.js';
+import { getCapacityAt } from './appointmentCapacity.js';
+import { chooseAssignee } from './appointmentStaffing.js';
 import { RELEASE_HOLDS, holdFields, pickVisitSeat } from './appointmentHolds.js';
 import { runWithRetry } from './appointmentTransaction.js';
 import {
   groupIntoVisits, isOpenRow, rescheduleBlock, visitCodeOf, customerExtras, needsReminderCall, needsOutcome, visitContaining,
 } from './appointmentVisitRules.js';
-import { countReschedules } from './appointmentRescheduleChain.js';
+import { rescheduleCountsOf } from './appointmentRescheduleChain.js';
 import { assertCarsSellable } from './appointmentReconcileService.js';
 import { toCustomerVisit, toStaffVisit } from './appointmentVisitMapper.js';
 import { logRescheduled } from './appointmentAudit.js';
@@ -58,7 +60,7 @@ const sameIds = (rows, ids) => rows.length === ids.length && rows.every((row) =>
 /**
  * One try of the move transaction. Throws a business error (nothing changes) or returns the new rows.
  */
-const moveInTransaction = async (session, { visit, open, scheduledAt, actor, userId, now, capacity }) => {
+const moveInTransaction = async (session, { visit, open, scheduledAt, actor, userId, now, capacity, staffing, prior }) => {
   // Same customer → requests queue up (a concurrent move/cancel/booking conflicts here and is retried).
   const touched = await Customer.updateOne({ _id: visit.customer }, { $set: { updatedAt: new Date() } }, { session });
   if (touched.matchedCount === 0) throw fail(MSG.MSG31);
@@ -78,6 +80,10 @@ const moveInTransaction = async (session, { visit, open, scheduledAt, actor, use
 
   const seat = pickVisitSeat(slotRows, capacity);
   if (seat === null) throw fail(MSG.MSG83); // cannot happen when the rule check passed; kept as a guard
+  const person = open.find((row) => row.assignedTo)?.assignedTo ?? null;
+  const staff = staffing
+    ? { assignedTo: await chooseAssignee({ staffing, scheduledAt, slotRows, prefer: person, skipRowIds: oldIds, session }) }
+    : {}; // staffing off: the replacement keeps its own rule
   const codes = await allocateCodes(open.length);
 
   // Old rows first: hidden, marked with the new visit code, holds released — all in this transaction.
@@ -94,7 +100,8 @@ const moveInTransaction = async (session, { visit, open, scheduledAt, actor, use
   if (retired.modifiedCount !== open.length) throw fail(MSG.MSG81);
 
   const docs = open.map((old, index) => ({
-    ...replacementOf(old, { actor, userId, now, scheduledAt }),
+    ...replacementOf(old, { actor, userId, now, scheduledAt, prior }),
+    ...staff,
     appointmentCode: codes[index],
     ...holdFields({ lead: index === 0, seat }), // codes count up, so row 0 has the lowest code
   }));
@@ -103,16 +110,16 @@ const moveInTransaction = async (session, { visit, open, scheduledAt, actor, use
 };
 
 /** The shared core. Every access/time rule of the actor has been checked by the caller. */
-const moveVisit = async ({ visit, scheduledAt, actor, userId, ipAddress, now }) => {
+const moveVisit = async ({ visit, scheduledAt, actor, userId, ipAddress, now, prior }) => {
   const open = visit.rows.filter(isOpenRow);
   if (scheduledAt.getTime() === visit.scheduledAt.getTime()) throw violationToError({ kind: Violation.DUPLICATE_SLOT }, scheduledAt);
 
   const carIds = open.map((row) => String(row.car));
   const cars = await assertCarsSellable(carIds, { userId, ipAddress });
 
-  const capacity = await getSlotCapacity();
+  const { capacity, staffing } = await getCapacityAt(scheduledAt);
   const written = await runWithRetry(() => withTransaction((session) =>
-    moveInTransaction(session, { visit, open, scheduledAt, actor, userId, now, capacity })));
+    moveInTransaction(session, { visit, open, scheduledAt, actor, userId, now, capacity, staffing, prior })));
 
   const newCode = visitCodeOf(written);
   const previousVisitCode = visitCodeOf(visit.rows);
@@ -150,14 +157,16 @@ export const rescheduleMyVisit = async ({ customerId, userId, id, scheduledAt, i
   const visit = await loadVisit(id, customerId);
   if (rescheduleBlock(visit, 0, now) === 'NOT_ALLOWED') throw fail(MSG.MSG85);
   if (rescheduleBlock(visit, 0, now) === 'CONFIRMED') throw fail(MSG.MSG89);
-  const count = (await countReschedules([visit])).get(visit.visitId);
-  if (rescheduleBlock(visit, count, now) === 'LIMIT') throw fail(MSG.MSG86);
+  // Only the customer's own moves use up the online limit; moves made by staff never do.
+  const prior = (await rescheduleCountsOf([visit])).get(visit.visitId);
+  if (rescheduleBlock(visit, prior.byCustomer, now) === 'LIMIT') throw fail(MSG.MSG86);
   assertBookableTime(scheduledAt, now);
 
   const { newVisit, previousVisitCode, carsById } = await moveVisit({
-    visit, scheduledAt, actor: Actor.CUSTOMER, userId, ipAddress, now,
+    visit, scheduledAt, actor: Actor.CUSTOMER, userId, ipAddress, now, prior,
   });
-  return { visit: toCustomerVisit(newVisit, carsById, customerExtras(newVisit, count + 1, now)), previousVisitCode };
+  const after = { total: prior.total + 1, byCustomer: prior.byCustomer + 1 };
+  return { visit: toCustomerVisit(newVisit, carsById, customerExtras(newVisit, after, now)), previousVisitCode };
 };
 
 /**
@@ -176,13 +185,14 @@ export const rescheduleVisitAsStaff = async ({ id, userId, scheduledAt, ipAddres
   if (!visit.rows.some(isOpenRow)) throw fail(MSG.MSG85);
   assertStaffBookableTime(scheduledAt, now);
 
+  const prior = (await rescheduleCountsOf([visit])).get(visit.visitId);
   const { newVisit, previousVisitCode } = await moveVisit({
-    visit, scheduledAt, actor: Actor.STAFF, userId, ipAddress, now,
+    visit, scheduledAt, actor: Actor.STAFF, userId, ipAddress, now, prior,
   });
-  const [context, counts] = await Promise.all([loadVisitContext([newVisit], { staff: true }), countReschedules([newVisit])]);
+  const context = await loadVisitContext([newVisit], { staff: true });
   return {
     visit: toStaffVisit(newVisit, context.carsById, context.customersById, context.usersById, {
-      rescheduleCount: counts.get(newVisit.visitId),
+      rescheduleCount: prior.total + 1,
       needsReminderCall: needsReminderCall(newVisit, now),
       needsOutcome: needsOutcome(newVisit, now),
       isNewRequest: isNewRequest(newVisit, now),

@@ -7,7 +7,7 @@
  */
 
 import { setupAppointmentFakes } from './helpers/fakeAppointmentModels.js';
-import { countReschedules } from '../src/services/appointmentRescheduleChain.js';
+import { countReschedules, rescheduleCountsOf } from '../src/services/appointmentRescheduleChain.js';
 import { groupIntoVisits } from '../src/services/appointmentVisitRules.js';
 
 const fakes = await setupAppointmentFakes();
@@ -46,14 +46,35 @@ describe('countReschedules', () => {
     expect(await count()).toEqual([2]);
   });
 
-  it('is capped at MAX + 1 (3) and uses at most 3 queries however long the chain is', async () => {
+  it('is not capped: 5 earlier moves show as 5 (one query per move, plus the last empty one)', async () => {
     current(anna, 'APT-0006', 15);
     ['APT-0005', 'APT-0004', 'APT-0003', 'APT-0002', 'APT-0001'].forEach((code, i, all) => {
       left(anna, code, 14 - i, i === 0 ? 'APT-0006' : all[i - 1]);
     });
     const before = reads();
-    expect(await count()).toEqual([3]);
-    expect(reads() - before).toBe(3);
+    expect(await count()).toEqual([5]);
+    expect(reads() - before).toBe(6);
+  });
+
+  it('old chain: moves made by staff count in the total but not in the customer\'s own moves', async () => {
+    const staff = fakes.addUser({ roleName: 'SALES_STAFF' });
+    const self = fakes.addUser({ roleName: 'CUSTOMER' });
+    current(anna, 'APT-0005', 15);
+    left(anna, 'APT-0004', 14, 'APT-0005', { updatedBy: staff._id });
+    left(anna, 'APT-0003', 13, 'APT-0004', { updatedBy: staff._id });
+    left(anna, 'APT-0002', 12, 'APT-0003', { updatedBy: self._id });
+    left(anna, 'APT-0001', 11, 'APT-0002'); // mover unknown → counted as the customer's (never more online moves than before)
+    const [value] = [...(await rescheduleCountsOf(visitsOf())).values()];
+    expect(value).toEqual({ total: 4, byCustomer: 2 });
+  });
+
+  it('stored counters are used as they are, with no query; a car added later (0) does not lower them', async () => {
+    fakes.addAppointment({ customer: anna._id, car: car._id, scheduledAt: T(20), appointmentCode: 'APT-0031', rescheduleCount: 6, customerRescheduleCount: 1 });
+    fakes.addAppointment({ customer: anna._id, car: fakes.addCar()._id, scheduledAt: T(20), appointmentCode: 'APT-0032', rescheduleCount: 0, customerRescheduleCount: 0 });
+    const before = reads();
+    const [value] = [...(await rescheduleCountsOf(visitsOf())).values()];
+    expect(value).toEqual({ total: 6, byCustomer: 1 });
+    expect(reads() - before).toBe(0);
   });
 
   it('counts every row of the previous visit, not only the first one (a visit with 2 cars)', async () => {

@@ -4,7 +4,8 @@
  * the customer search they need for it.
  *
  * Differences from a customer's own booking (Spec C19): the visit is CONFIRMED at once (the
- * staff member just spoke to the customer) and is assigned to them; the 2-hour lead time does
+ * staff member just spoke to the customer) and is assigned to them when they are free in that slot
+ * (else to a free colleague, appointmentStaffing.js); the 2-hour lead time does
  * not apply (the slot only has to be in the future). Everything else is identical and runs on
  * the same core (`bookRows`): same capacity, same car and limit rules, same all-or-nothing
  * concurrency guarantee.
@@ -63,9 +64,8 @@ export const createVisitForCustomer = async (p) => {
 
   const { written, cars } = await bookRows({ ...p, now }, {
     assertTime: assertStaffBookableTime,
-    extra: {
-      status: AppointmentStatus.CONFIRMED, confirmedBy: userId, confirmedAt: now, assignedTo: userId,
-    },
+    extra: { status: AppointmentStatus.CONFIRMED, confirmedBy: userId, confirmedAt: now },
+    preferStaff: userId, // the booking staff member goes with the customer when free, else a free colleague
   });
 
   // One "created" entry per appointment, by the staff member (status PENDING means "created").

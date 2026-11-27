@@ -165,6 +165,12 @@ export const SystemMessages = Object.freeze({
   MSG87: { code: 'APPOINTMENT_ADD_CAR_NOT_ALLOWED',      message: 'Vehicles can only be added while the visit is waiting for confirmation.', httpStatus: 409 },
   MSG88: { code: 'APPOINTMENT_CAR_LIMIT_REACHED',        message: 'This visit already has the maximum number of vehicles.', httpStatus: 422 },
   MSG89: { code: 'APPOINTMENT_CONFIRMED_CALL_SHOWROOM',  message: 'This visit is already confirmed. Please call the showroom to cancel or change it.', httpStatus: 409 },
+  MSG90: { code: 'APPOINTMENT_STAFF_UNAVAILABLE',  message: 'This staff member is not a sales staff member at work on that day.', httpStatus: 409 },
+  MSG91: { code: 'APPOINTMENT_STAFF_BUSY',         message: 'This staff member already handles another visit in this time slot.', httpStatus: 409 },
+  MSG92: { code: 'ATTENDANCE_DAY_CLOSED',          message: 'Attendance can only be changed for today or a later day.', httpStatus: 409 },
+  MSG93: { code: 'ATTENDANCE_STAFF_NOT_FOUND',     message: 'Sales staff member not found.', httpStatus: 404 },
+  MSG94: { code: 'ATTENDANCE_FORBIDDEN',           message: 'You are not allowed to take staff attendance.', httpStatus: 403 },
+  MSG95: { code: 'APPOINTMENT_STAFF_NOT_OPEN',     message: 'Only an open visit that has not started yet can be reassigned.', httpStatus: 409 },
 });
 
 export default SystemMessages;

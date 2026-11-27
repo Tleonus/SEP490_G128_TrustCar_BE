@@ -126,6 +126,13 @@ const UserSchema = new mongoose.Schema(
       index:   true,
     },
 
+    // Staff attendance: an ADMIN lets this staff account tick who is at work each day
+    // (staffAttendanceService.js). ADMIN accounts can always do it.
+    canTakeAttendance: {
+      type:    Boolean,
+      default: false,
+    },
+
     // ── Legacy Brute-Force Fields (GBR-12, retired) ───────────────────────
     // No longer written by login; kept so existing documents stay valid and
     // admin reactivation can still clear them.
